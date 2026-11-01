@@ -1,0 +1,78 @@
+import { useEffect, useRef, type ReactNode } from 'react';
+import { Icon } from './Icon';
+
+type SheetProps = {
+  open: boolean;
+  onClose: () => void;
+  title?: string;
+  subtitle?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+  className?: string;
+};
+
+export function Sheet({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  wide = false,
+  className = '',
+}: SheetProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const timer = window.setTimeout(() => panelRef.current?.focus(), 60);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.body.style.overflow = previousOverflow;
+      window.clearTimeout(timer);
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="sheet-layer">
+      <button
+        type="button"
+        className="sheet-backdrop"
+        aria-label="Закрыть"
+        onClick={onClose}
+      />
+      <div
+        ref={panelRef}
+        className={`sheet ${wide ? 'sheet--wide' : ''} ${className}`.trim()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title ?? 'Окно'}
+        tabIndex={-1}
+      >
+        <div className="sheet__grip" aria-hidden="true" />
+        {title ? (
+          <header className="sheet__head">
+            <div className="sheet__heading">
+              <h2>{title}</h2>
+              {subtitle ? <p>{subtitle}</p> : null}
+            </div>
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть">
+              <Icon name="x" size={18} />
+            </button>
+          </header>
+        ) : null}
+        <div className="sheet__body">{children}</div>
+        {footer ? <div className="sheet__footer">{footer}</div> : null}
+      </div>
+    </div>
+  );
+}

@@ -198,7 +198,13 @@ XP не начисляется, заявку можно отправить сн�
 ```
 
 Скрипт покажет id, имя и username всех пользователей, которые уже открывали
-приложение. Скопируйте id педагога в `.env`:
+приложение. В Docker используйте ту же команду внутри контейнера:
+
+```bash
+docker compose exec app python tools/list_max_users.py
+```
+
+Скопируйте id педагога в `.env`:
 
 ```dotenv
 TEACHER_MAX_IDS=123456789
@@ -250,7 +256,160 @@ X-Max-Init-Data: <сырая строка window.WebApp.initData>
 X-Client-Id: <идентификатор браузерной демо-сессии>
 ```
 
+## Docker-деплой
+
+В проекте есть `Dockerfile`, `docker-compose.yml` и `docker/Caddyfile`.
+Dockerfile собирает фронтенд в отдельном Node-слое, а затем кладёт готовую
+статику в Python-образ. FastAPI раздаёт и API, и интерфейс с одного порта.
+SQLite хранится в named volume `school_hero_data`, поэтому пересборка
+контейнера не удаляет данные.
+
+Этот вариант рассчитан на реальный MAX с `MAX_BOT_TOKEN`. Для демонстрации в
+обычном браузере без MAX используйте локальный запуск из раздела «Быстрый
+старт».
+
+### Что нужно
+
+- Docker Engine 24+ с Compose v2;
+- домен, A/AAAA-запись которого указывает на сервер;
+- открытые порты 80 и 443, если используете встроенный Caddy.
+
+### 1. Настройка
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Заполните `.env`:
+
+```dotenv
+MAX_BOT_TOKEN=токен_бота
+TEACHER_MAX_IDS=123456789
+APP_DOMAIN=school-hero.example.ru
+```
+
+`APP_DOMAIN` нужен только для Caddy и указывается без `https://`. `HOST` и
+`PORT` в Docker не используются — compose задаёт их сам. Compose намеренно
+не запускается с пустым `MAX_BOT_TOKEN`, чтобы не выставить демо-режим в
+интернет; для локального демо используйте обычный запуск без Docker.
+
+### 2. Вариант A: Caddy и автоматический HTTPS
+
+```bash
+docker compose --profile proxy up -d --build
+docker compose ps
+docker compose logs -f app
+```
+
+Caddy слушает 80/443, получает сертификат Let's Encrypt и проксирует запросы
+на `app:8000`. Проверьте:
+
+```bash
+curl https://school-hero.example.ru/api/health
+# {"status":"ok","mode":"max"}
+```
+
+Этот HTTPS-адрес укажите в настройках мини-приложения бота MAX. Сертификаты
+хранятся в volume `caddy_data`. Если сертификат не выдаётся, проверьте
+A/AAAA-запись домена и логи Caddy:
+
+```bash
+docker compose logs -f caddy
+```
+
+Если порты 80/443 уже заняты другим веб-сервером, используйте вариант B.
+
+### 3. Вариант B: свой reverse proxy
+
+```bash
+docker compose up -d --build
+```
+
+Приложение публикуется только на `127.0.0.1:8000`. Направьте на него
+nginx/Caddy на хосте. Пример nginx:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name school-hero.example.ru;
+
+    ssl_certificate /etc/letsencrypt/live/school-hero.example.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/school-hero.example.ru/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Для проверки без домена:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+### Обслуживание
+
+```bash
+docker compose logs -f app          # логи
+docker compose restart app          # перезапуск процесса
+docker compose build --pull         # пересборка образа
+docker compose up -d                # применить новую сборку
+```
+
+После изменения `.env` пересоздайте контейнер, иначе старые переменные
+останутся в нём:
+
+```bash
+docker compose up -d --force-recreate app
+```
+
+Для Caddy (например, после смены `APP_DOMAIN`) пересоздайте весь стек:
+
+```bash
+docker compose --profile proxy up -d --force-recreate
+```
+
+Обновление кода:
+
+```bash
+git pull
+docker compose build --pull
+docker compose up -d
+```
+
+Данные сохраняются в volume `school_hero_data`. Команда `docker compose down -v`
+удаляет базу — не используйте её на продакшене.
+
+Резервная копия SQLite:
+
+```bash
+docker compose exec app python -c "import sqlite3; s=sqlite3.connect('/data/school_hero.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d); d.close(); s.close()"
+docker compose cp app:/data/backup.db ./school-hero-backup.db
+docker compose exec app rm /data/backup.db
+```
+
+Важно:
+
+- не оставляйте `MAX_BOT_TOKEN` пустым на публичном сервере: приложение
+  включит демо-режим с переключателем роли педагога;
+- не публикуйте порт 8000 напрямую в интернет — MAX требует HTTPS, а
+  демо-режим не предназначен для публичного доступа;
+- `TEACHER_MAX_IDS` задаётся до первого входа педагога или сразу после него;
+  после изменения `.env` пересоздайте контейнер;
+- если меняете named volume на bind-mount, каталог базы на хосте должен быть
+  доступен пользователю с UID `10001`;
+- если меняется схема SQLite, автоматических миграций нет: сделайте бэкап и
+  примените миграцию вручную.
+
 ## Деплой в MAX
+
+Если Docker не используется, запустите приложение вручную по шагам ниже.
+Вариант с Docker описан в предыдущем разделе.
 
 1. Соберите фронтенд: `cd frontend && npm run build`.
 2. Запустите сервер за HTTPS-прокси (Caddy, nginx, Cloudflare и т. п.):
@@ -286,6 +445,9 @@ X-Client-Id: <идентификатор браузерной демо-сесс�
 ```text
 school-hero/
 ├── app.py                 # FastAPI, статика, SPA-fallback, security headers
+├── Dockerfile             # сборка фронтенда + Python runtime
+├── docker-compose.yml     # app, volume, опциональный Caddy
+├── docker/Caddyfile       # HTTPS и reverse proxy для MAX
 ├── backend/
 │   ├── api.py             # HTTP-эндпоинты
 │   ├── config.py          # настройки из окружения

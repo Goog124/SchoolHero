@@ -1,0 +1,59 @@
+name: school-hero
+
+services:
+  app:
+    build:
+      context: .
+    image: school-hero:latest
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      # Fail fast instead of accidentally exposing demo mode on a server.
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Set MAX_BOT_TOKEN in .env}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      STATIC_DIR: /app/static
+      DATABASE_PATH: /data/school_hero.db
+    ports:
+      # Only the host reverse proxy needs access. Do not expose this publicly:
+      # MAX requires HTTPS, and demo mode must never be public.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - school_hero_data:/data
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-school-hero.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  school_hero_data:
+  caddy_data:
+  caddy_config:

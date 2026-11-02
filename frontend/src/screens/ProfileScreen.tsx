@@ -40,6 +40,8 @@ type ProfileScreenProps = {
   onResetDemo: () => Promise<boolean>;
   onShare: () => void;
   onNavigate: (tab: TabId) => void;
+  theme: 'light' | 'dark';
+  onThemeChange: (theme: 'light' | 'dark') => void;
 };
 
 export function ProfileScreen({
@@ -48,6 +50,8 @@ export function ProfileScreen({
   onResetDemo,
   onShare,
   onNavigate,
+  theme,
+  onThemeChange,
 }: ProfileScreenProps) {
   const { viewer, achievements } = state;
   const [xpOpen, setXpOpen] = useState(false);
@@ -241,7 +245,29 @@ export function ProfileScreen({
           </div>
         </div>
         <div className="panel settings-list">
-          <button type="button" className="settings-row" onClick={() => setXpOpen(true)}>
+        <div className="settings-row settings-row--static">
+          <span className="settings-row__icon settings-row__icon--cyan">
+            <Icon name="settings" size={17} />
+          </span>
+          <span className="settings-row__text">
+            <strong>Тема оформления</strong>
+            <small>{theme === 'dark' ? 'Тёмная' : 'Светлая'}</small>
+          </span>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+            aria-label="Сменить тему оформления"
+          >
+            <span className="theme-toggle__option">Светлая</span>
+            <span className="theme-toggle__option">Тёмная</span>
+            <span
+              className={`theme-toggle__thumb theme-toggle__thumb--${theme}`}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+        <button type="button" className="settings-row" onClick={() => setXpOpen(true)}>
             <span className="settings-row__icon settings-row__icon--gold">
               <Icon name="spark" size={18} filled />
             </span>

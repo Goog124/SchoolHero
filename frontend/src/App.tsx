@@ -43,10 +43,21 @@ type LevelUpData = {
   avatar: AvatarConfig;
 };
 
+type Theme = 'light' | 'dark';
+
 const STUDENT_TABS: TabId[] = ['hero', 'challenges', 'leaderboard', 'wardrobe', 'profile'];
 const TEACHER_TABS: TabId[] = ['teacher-class', 'teacher-review', 'teacher-challenges', 'profile'];
 
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      const saved = localStorage.getItem('school-hero:theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      // Use the system preference when storage is unavailable.
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const [state, setState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [bootError, setBootError] = useState('');
@@ -90,6 +101,15 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('school-hero:theme', theme);
+    } catch {
+      // The current DOM theme remains usable in restricted webviews.
+    }
+  }, [theme]);
 
   useEffect(() => {
     void load();
@@ -390,6 +410,8 @@ export default function App() {
               onResetDemo={handleReset}
               onShare={() => void handleShare()}
               onNavigate={navigate}
+              theme={theme}
+              onThemeChange={setTheme}
             />
           ) : null}
 

@@ -108,6 +108,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  overflow-wrap: anywhere;
 }
 
 body::before {
@@ -176,6 +177,55 @@ svg {
 :focus-visible {
   outline: 2px solid var(--violet-bright);
   outline-offset: 2px;
+}
+
+:root[data-theme='dark'] {
+  --bg: #101923;
+  --bg-deep: #0a1119;
+  --bg-soft: #172433;
+  --panel: #182635;
+  --panel-2: #203143;
+  --panel-3: #263b4f;
+  --line: rgba(224, 237, 247, 0.12);
+  --line-strong: rgba(224, 237, 247, 0.24);
+  --text: #edf4f8;
+  --muted: #a7b8c8;
+  --muted-2: #8498ab;
+  --violet: #5da1dc;
+  --violet-bright: #83b9e8;
+  --violet-deep: #326f9f;
+  --magenta: #72b8d5;
+  --cyan: #70c4db;
+  --lime: #8bc69b;
+  --gold: #e6b959;
+  --orange: #e7985b;
+  --red: #df8585;
+  --green: #71bf91;
+  --shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme='dark'] body {
+  background-image:
+    radial-gradient(720px 440px at 100% -10%, rgba(49, 137, 168, 0.12), transparent 65%),
+    linear-gradient(180deg, #101923 0%, #101923 52%, #0a1119 100%);
+}
+
+:root[data-theme='dark'] body::before {
+  background-image: radial-gradient(rgba(224, 237, 247, 0.045) 1px, transparent 1px);
+}
+
+:root[data-theme='dark'] .shell:not(.shell--onboarding),
+:root[data-theme='dark'] .topbar,
+:root[data-theme='dark'] .tabbar {
+  background: rgba(24, 38, 53, 0.96);
+}
+
+:root[data-theme='dark'] .shell--dashboard .tabbar {
+  background: #142231;
+}
+
+:root[data-theme='dark'] .podium {
+  background: linear-gradient(180deg, #1d3448, #182635);
 }
 
 /* ==========================================================================
@@ -5815,6 +5865,212 @@ select {
   border-color: var(--line);
 }
 
+.theme-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  width: 132px;
+  min-width: 132px;
+  height: 34px;
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.theme-toggle__option {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+
+.theme-toggle__thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  z-index: 0;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--violet);
+  transition: transform 0.2s ease;
+}
+
+.theme-toggle__thumb--dark {
+  transform: translateX(100%);
+}
+
+.theme-toggle__thumb--light + .theme-toggle__option,
+.theme-toggle__thumb--dark {
+  color: #fff;
+}
+
+@media (max-width: 899px) {
+  html,
+  body,
+  #root,
+  .app {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  body {
+    font-size: 14px;
+  }
+
+  .shell.shell--dashboard {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .topbar {
+    padding-right: max(14px, var(--safe-right, 0px));
+    padding-left: max(14px, var(--safe-left, 0px));
+  }
+
+  .screen {
+    width: 100%;
+    min-width: 0;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .screen-head,
+  .panel-head,
+  .hero-stage__top,
+  .profile-card,
+  .settings-row {
+    min-width: 0;
+  }
+
+  .screen-head__text,
+  .panel-head > div,
+  .profile-card__info,
+  .settings-row__text {
+    min-width: 0;
+  }
+
+  .screen-head h1,
+  .hero-greet h1,
+  .panel h2,
+  .challenge-card h3,
+  .profile-card h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .hero-greet h1 {
+    font-size: clamp(28px, 9vw, 38px);
+  }
+
+  .hero-stage {
+    min-width: 0;
+    padding: 16px;
+  }
+
+  .hero-stage__top {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .hero-stage__actions {
+    margin-left: auto;
+  }
+
+  .hero-stage__figure .avatar-frame {
+    max-width: min(52vw, 182px);
+    max-height: min(52vw, 182px);
+  }
+
+  .stat-grid--three,
+  .challenge-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat-tile,
+  .challenge-summary__cell {
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .stat-tile__label,
+  .challenge-summary__cell > span {
+    overflow-wrap: anywhere;
+  }
+
+  .challenge-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-row {
+    gap: 10px;
+  }
+
+  .settings-row__text small,
+  .settings-row__text strong {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar {
+    height: 62px;
+  }
+
+  .brand__name {
+    font-size: 13px;
+  }
+
+  .brand__sub {
+    max-width: 170px;
+    font-size: 9px;
+  }
+
+  .screen {
+    padding-top: 14px;
+    padding-bottom: 22px;
+  }
+
+  .screen > * + * {
+    margin-top: 14px;
+  }
+
+  .stat-grid--three,
+  .challenge-summary {
+    gap: 5px;
+  }
+
+  .stat-tile,
+  .challenge-summary__cell {
+    padding: 9px 5px;
+  }
+
+  .stat-tile__value,
+  .challenge-summary__cell > strong {
+    font-size: 18px;
+  }
+
+  .stat-tile__label,
+  .challenge-summary__cell > span {
+    font-size: 8px;
+    line-height: 1.2;
+  }
+
+  .theme-toggle {
+    width: 112px;
+    min-width: 112px;
+    font-size: 9px;
+  }
+}
+
 /* Desktop application shell */
 @media (min-width: 900px) {
   body {
@@ -5884,7 +6140,10 @@ select {
     grid-column: 1;
     grid-row: 1 / span 2;
     position: relative;
+    left: auto;
+    bottom: auto;
     inset: auto;
+    transform: none;
     display: flex;
     flex-direction: column;
     align-items: stretch;

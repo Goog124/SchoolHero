@@ -1,0 +1,8 @@
+{
+  "name": "schoolhero",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "python app.py"
+  }
+}

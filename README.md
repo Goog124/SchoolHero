@@ -84,11 +84,10 @@ python app.py
 
 ```powershell
 # терминал 1
-python app.py
+npm run dev:backend
 
 # терминал 2
-cd frontend
-npm run dev
+npm run dev:frontend
 ```
 
 ### Тесты

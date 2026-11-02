@@ -53,7 +53,7 @@
 ## Технологии
 
 - **Backend:** Python 3.11+, FastAPI, SQLite, HMAC-SHA256;
-- **Frontend:** React, TypeScript, Vite;
+- **Frontend:** React, TypeScript, Vite, Tailwind CSS;
 - **Интеграция:** MAX Mini Apps и подписанный `initData`;
 - **Тестирование:** pytest, FastAPI TestClient.
 
@@ -120,6 +120,10 @@ tests/         тесты API и безопасности
 app.py         точка запуска FastAPI
 docker/        конфигурация reverse proxy
 ```
+
+Tailwind CSS подключён через официальный Vite-плагин. Существующая дизайн-система
+на CSS-классах сохраняется, поэтому новые экраны можно постепенно переводить на
+utility-классы без одномоментной миграции всего интерфейса.
 
 ## Назначение проекта
 

@@ -1,3 +1,6 @@
+@import 'tailwindcss/theme.css';
+@import 'tailwindcss/utilities.css';
+
 /* ==========================================================================
    Fonts
    ========================================================================== */
@@ -5690,7 +5693,6 @@ button.stat-tile {
     transition-duration: 0.01ms !important;
   }
 }
-
 
 
 

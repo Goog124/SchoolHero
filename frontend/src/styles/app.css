@@ -6435,6 +6435,125 @@ select {
   }
 }
 
+/* Final theme contract. These rules intentionally sit last so legacy
+   component accents cannot reduce contrast in either theme. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] body {
+  color: #10233f;
+}
+
+:root[data-theme='light'] .topbar,
+:root[data-theme='light'] .topbar__sparks,
+:root[data-theme='light'] .sheet,
+:root[data-theme='light'] .sheet__footer,
+:root[data-theme='light'] .toast,
+:root[data-theme='light'] .status-panel,
+:root[data-theme='light'] .empty,
+:root[data-theme='light'] .how-card,
+:root[data-theme='light'] .panel,
+:root[data-theme='light'] .challenge-card,
+:root[data-theme='light'] .profile-card,
+:root[data-theme='light'] .stat-tile {
+  color: var(--text);
+}
+
+:root[data-theme='light'] .brand__name,
+:root[data-theme='light'] .sheet__head h2,
+:root[data-theme='light'] .sheet__body strong,
+:root[data-theme='light'] .sheet__body label,
+:root[data-theme='light'] .panel h2,
+:root[data-theme='light'] .challenge-card h3,
+:root[data-theme='light'] .profile-card h2,
+:root[data-theme='light'] .settings-row__text strong {
+  color: var(--text);
+}
+
+:root[data-theme='light'] .topbar__sparks {
+  color: #76520b;
+  background: #fff7df;
+  border-color: #e8c96e;
+}
+
+:root[data-theme='light'] .sheet-backdrop {
+  background: rgba(15, 29, 45, 0.48);
+}
+
+:root[data-theme='light'] .sheet,
+:root[data-theme='light'] .sheet.sheet--wide,
+:root[data-theme='light'] .sheet.levelup-sheet {
+  background: #ffffff;
+  border-color: #c9d6e3;
+  box-shadow: 0 24px 70px rgba(16, 35, 63, 0.24);
+}
+
+:root[data-theme='light'] .sheet__footer {
+  background: #f1f5f9;
+  border-color: #d7e0e9;
+}
+
+:root[data-theme='light'] .sheet__head .icon-btn,
+:root[data-theme='light'] .sheet input,
+:root[data-theme='light'] .sheet textarea,
+:root[data-theme='light'] .sheet select {
+  color: var(--text);
+  background: #f7fafc;
+  border-color: #b7c8d8;
+}
+
+:root[data-theme='light'] .sheet__head p,
+:root[data-theme='light'] .sheet__body p,
+:root[data-theme='light'] .sheet__body small,
+:root[data-theme='light'] .challenge-sheet__desc,
+:root[data-theme='light'] .proof-form__hint {
+  color: #52677d;
+}
+
+:root[data-theme='light'] .proof-chip {
+  color: #24527d;
+  background: #eaf3fb;
+  border-color: #b8d1e5;
+}
+
+:root[data-theme='light'] .btn--ghost,
+:root[data-theme='light'] .btn--secondary {
+  color: #174f8b;
+  background: #eaf3fb;
+  border-color: #b8d1e5;
+}
+
+:root[data-theme='light'] .toast {
+  background: #ffffff;
+  border-color: #c9d6e3;
+  box-shadow: 0 14px 36px rgba(16, 35, 63, 0.18);
+}
+
+:root[data-theme='light'] .toast__text {
+  color: var(--text);
+}
+
+@media (max-width: 599px) {
+  .sheet-layer {
+    padding-bottom: max(8px, var(--safe-bottom));
+  }
+
+  .sheet,
+  .sheet.sheet--wide,
+  .sheet.levelup-sheet {
+    max-height: calc(100dvh - 16px - var(--safe-top));
+  }
+
+  .sheet__body {
+    overscroll-behavior: contain;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

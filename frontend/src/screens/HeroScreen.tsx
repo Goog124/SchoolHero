@@ -6,7 +6,6 @@ import { Chip } from '../components/Chip';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { ProgressBar } from '../components/ProgressBar';
-import { Starfield } from '../components/Starfield';
 import { StatTile } from '../components/StatTile';
 import {
   RANK_TITLES,
@@ -39,11 +38,10 @@ export function HeroScreen({ state, onOpenChallenge, onNavigate, onShare }: Hero
         <h1>
           {greeting()}, <span>{viewer.first_name}</span>!
         </h1>
-        <p>Твой герой растёт вместе с тобой. Один шаг — и XP уже в копилке.</p>
+        <p>Учебные достижения становятся видимыми и помогают классу двигаться вперёд.</p>
       </div>
 
       <section className="hero-stage">
-        <Starfield dense />
         <div className="hero-stage__grid" aria-hidden="true" />
         <div className="hero-stage__top">
           <Chip icon="flame" tone="orange">

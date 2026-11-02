@@ -5815,6 +5815,208 @@ select {
   border-color: var(--line);
 }
 
+/* Desktop application shell */
+@media (min-width: 900px) {
+  body {
+    font-size: 15px;
+  }
+
+  .app {
+    min-height: 100vh;
+    padding: 28px;
+  }
+
+  .shell.shell--dashboard {
+    display: grid;
+    grid-template-columns: 238px minmax(0, 1fr);
+    grid-template-rows: 76px minmax(0, 1fr);
+    width: min(100%, 1320px);
+    min-height: calc(100vh - 56px);
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid rgba(16, 35, 63, 0.1);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: 0 24px 70px rgba(16, 35, 63, 0.12);
+  }
+
+  .shell--dashboard .topbar {
+    grid-column: 2;
+    grid-row: 1;
+    position: relative;
+    height: 76px;
+    padding: 0 34px;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+  }
+
+  .shell--dashboard .brand {
+    display: none;
+  }
+
+  .shell--dashboard .topbar::before {
+    content: 'Обзор';
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 800;
+  }
+
+  .shell--dashboard .topbar__right {
+    margin-left: auto;
+  }
+
+  .shell--dashboard .screen-wrap {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    overflow: auto;
+    padding: 8px 18px 30px;
+  }
+
+  .shell--dashboard .screen {
+    width: min(100%, 1030px);
+    margin: 0 auto;
+    padding: 28px 18px 54px;
+  }
+
+  .shell--dashboard .tabbar {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 7px;
+    width: auto;
+    height: auto;
+    padding: 28px 16px;
+    border: 0;
+    border-right: 1px solid var(--line);
+    border-radius: 0;
+    background: #f7fafd;
+    box-shadow: none;
+  }
+
+  .shell--dashboard .tabbar::before {
+    content: 'ШКОЛЬНЫЙ ГЕРОЙ';
+    display: block;
+    margin: 2px 12px 40px;
+    color: var(--violet-bright);
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+
+  .shell--dashboard .tab {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: center;
+    justify-content: start;
+    width: 100%;
+    min-height: 48px;
+    padding: 7px 12px;
+    border-radius: 10px;
+    color: var(--muted);
+    text-align: left;
+  }
+
+  .shell--dashboard .tab__icon {
+    width: 32px;
+    height: 32px;
+    background: transparent;
+  }
+
+  .shell--dashboard .tab__label {
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .shell--dashboard .tab__pip {
+    display: none;
+  }
+
+  .shell--dashboard .tab--active {
+    color: var(--violet-bright);
+    background: rgba(37, 99, 166, 0.1);
+  }
+
+  .shell--dashboard .tab--active .tab__icon {
+    background: transparent;
+  }
+
+  .screen > * + * {
+    margin-top: 24px;
+  }
+
+  .hero-greet {
+    padding: 8px 0 4px;
+  }
+
+  .hero-greet h1 {
+    max-width: 680px;
+    font-size: 44px;
+  }
+
+  .hero-stage {
+    display: grid;
+    grid-template-columns: 1fr 250px;
+    grid-template-areas:
+      'top figure'
+      'identity figure'
+      'progress figure';
+    min-height: 280px;
+    padding: 28px 34px;
+  }
+
+  .hero-stage__top {
+    grid-area: top;
+  }
+
+  .hero-stage__figure {
+    grid-area: figure;
+    align-self: center;
+  }
+
+  .hero-stage__identity {
+    grid-area: identity;
+    align-self: end;
+    text-align: left;
+  }
+
+  .hero-stage__progress {
+    grid-area: progress;
+    align-self: end;
+    max-width: 560px;
+  }
+
+  .stat-grid--three {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .challenge-summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .challenge-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .screen-head h1 {
+    font-size: 38px;
+  }
+}
+
+@media (max-width: 899px) {
+  .shell--dashboard .tabbar {
+    position: fixed;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

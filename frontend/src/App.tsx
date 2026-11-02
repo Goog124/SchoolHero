@@ -350,13 +350,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="ambient" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-
-      <div className="shell">
+      <div className="shell shell--dashboard">
         <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} />
 
         <main className="screen-wrap" key={tab}>

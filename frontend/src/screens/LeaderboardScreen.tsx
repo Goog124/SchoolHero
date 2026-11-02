@@ -89,9 +89,9 @@ export function LeaderboardScreen({ state, onNavigateChallenges }: LeaderboardSc
   return (
     <div className="screen">
       <ScreenTitle
-        eyebrow="Зал славы"
+        eyebrow="Командный результат"
         title="Рейтинг"
-        subtitle="Опыт общий, но каждую неделю классы начинают спринт заново."
+        subtitle="Сравнивай свой вклад и помогай классу подниматься в общем рейтинге."
       />
 
       <div className="my-rank">

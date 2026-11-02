@@ -90,6 +90,11 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
+В режиме разработки frontend открывается на <http://127.0.0.1:5173>, а
+FastAPI работает отдельно на <http://127.0.0.1:8000>. Корень API возвращает
+JSON с адресами сервиса и документации; это не страница сайта. Собранный
+frontend раздаётся FastAPI только при `SERVE_FRONTEND=true`.
+
 ### Тесты
 
 ```powershell

@@ -16,6 +16,7 @@ services:
       PORT: "8000"
       STATIC_DIR: /app/static
       DATABASE_PATH: /data/school_hero.db
+      SERVE_FRONTEND: "true"
     ports:
       # Only the host reverse proxy needs access. Do not expose this publicly:
       # MAX requires HTTPS, and demo mode must never be public.

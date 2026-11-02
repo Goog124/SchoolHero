@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend.api import router as api_router
 from backend.config import Settings
@@ -86,21 +86,20 @@ def _static_file(path: str) -> Path | None:
 
 @app.get("/", include_in_schema=False)
 def index():
+    if not settings.serve_frontend:
+        return {
+            "service": "schoolhero-api",
+            "status": "ok",
+            "api": "/api",
+            "docs": "/docs",
+            "frontend": "http://127.0.0.1:5173",
+        }
     built = _static_file("index.html")
     if built:
         return FileResponse(built)
-    return HTMLResponse(
-        """
-        <!doctype html><html lang="ru"><meta charset="utf-8">
-        <title>Школьный герой</title>
-        <body style="font-family:system-ui;background:#12091f;color:#f5ecff;padding:40px">
-        <h1>Школьный герой</h1>
-        <p>Фронтенд ещё не собран.</p>
-        <p>Для разработки: <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run dev</code>.</p>
-        <p>Для сборки: <code>npm run build</code>, затем перезапустите сервер.</p>
-        </body></html>
-        """,
-        status_code=200,
+    return JSONResponse(
+        status_code=503,
+        content={"service": "schoolhero-api", "detail": "Frontend is not built"},
     )
 
 
@@ -108,6 +107,8 @@ def index():
 def spa_fallback(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
+    if not settings.serve_frontend:
+        raise HTTPException(status_code=404, detail="API server does not serve frontend")
     candidate = _static_file(full_path)
     if candidate:
         return FileResponse(candidate)

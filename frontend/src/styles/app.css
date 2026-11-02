@@ -5919,6 +5919,159 @@ select {
     max-width: 100%;
   }
 
+  /* Modal system: one predictable dialog pattern for mobile and desktop. */
+  .sheet-layer {
+    align-items: center;
+    padding: 16px;
+  }
+
+  .sheet-backdrop {
+    background: rgba(15, 29, 45, 0.58);
+    backdrop-filter: blur(3px);
+  }
+
+  .sheet,
+  .sheet.sheet--wide,
+  .sheet.levelup-sheet {
+    width: min(100%, 560px);
+    max-height: min(90dvh, 760px);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--panel);
+    box-shadow: 0 24px 70px rgba(16, 35, 63, 0.22);
+    animation: dialogIn 0.2s ease both;
+  }
+
+  .sheet__grip {
+    display: none;
+  }
+
+  .sheet__head {
+    align-items: center;
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sheet__head h2 {
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 22px;
+    line-height: 1.2;
+  }
+
+  .sheet__head p {
+    color: var(--muted);
+  }
+
+  .sheet__head .icon-btn {
+    flex: 0 0 auto;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+
+  .sheet__body {
+    padding: 20px 22px 24px;
+    color: var(--text);
+  }
+
+  .sheet__footer {
+    padding: 14px 22px calc(16px + var(--safe-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--panel-2);
+    backdrop-filter: none;
+  }
+
+  .challenge-sheet__xp strong {
+    color: var(--gold);
+  }
+
+  .challenge-sheet__desc {
+    color: var(--muted);
+  }
+
+  .status-panel {
+    background: var(--panel-2);
+  }
+
+  .proof-form textarea {
+    width: 100%;
+    min-height: 96px;
+    resize: vertical;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel-2);
+    color: var(--text);
+  }
+
+  .levelup-sheet {
+    border-color: var(--line);
+  }
+
+  .levelup__burst {
+    display: none;
+  }
+
+  .levelup {
+    padding: 0;
+  }
+
+  .levelup__rewards span {
+    border-color: var(--line);
+    background: var(--panel-2);
+    color: var(--gold);
+  }
+
+  @media (max-width: 599px) {
+    .sheet-layer {
+      align-items: flex-end;
+      padding: 8px;
+    }
+
+    .sheet,
+    .sheet.sheet--wide,
+    .sheet.levelup-sheet {
+      width: 100%;
+      max-height: min(88dvh, 720px);
+      border-radius: 18px;
+    }
+
+    .sheet__head {
+      padding: 16px 16px 12px;
+    }
+
+    .sheet__head h2 {
+      font-size: 19px;
+    }
+
+    .sheet__body {
+      padding: 16px 16px 20px;
+    }
+
+    .sheet__footer {
+      padding-right: 16px;
+      padding-left: 16px;
+    }
+
+    .challenge-sheet__hero {
+      align-items: flex-start;
+    }
+
+    .challenge-sheet__facts {
+      gap: 6px;
+    }
+  }
+
+  @keyframes dialogIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   body {
     font-size: 14px;
   }

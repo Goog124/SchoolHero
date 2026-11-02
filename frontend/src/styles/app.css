@@ -47,32 +47,32 @@
    ========================================================================== */
 
 :root {
-  --bg: #0a0514;
-  --bg-deep: #070310;
-  --bg-soft: #120a22;
-  --panel: #180f2b;
-  --panel-2: #1f1438;
-  --panel-3: #281a46;
-  --line: rgba(167, 139, 250, 0.15);
-  --line-strong: rgba(167, 139, 250, 0.3);
-  --text: #f6f1ff;
-  --muted: #aa9cc6;
-  --muted-2: #9183ae;
-  --violet: #a78bfa;
-  --violet-bright: #c4b5fd;
-  --violet-deep: #7c3aed;
-  --magenta: #f0abfc;
-  --pink: #f472b6;
-  --cyan: #67e8f9;
-  --lime: #bef264;
-  --gold: #fbbf24;
-  --orange: #fb923c;
-  --red: #fb7185;
-  --green: #4ade80;
-  --font-display: 'Pixelify Sans', 'Onest', system-ui, sans-serif;
-  --font-body: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --radius: 20px;
-  --shadow: 0 20px 44px rgba(0, 0, 0, 0.42);
+  --bg: #f4f7fb;
+  --bg-deep: #e7eef7;
+  --bg-soft: #eef4fa;
+  --panel: #ffffff;
+  --panel-2: #f5f8fc;
+  --panel-3: #eaf1f8;
+  --line: rgba(16, 35, 63, 0.1);
+  --line-strong: rgba(16, 35, 63, 0.2);
+  --text: #10233f;
+  --muted: #60728a;
+  --muted-2: #8291a3;
+  --violet: #2563a6;
+  --violet-bright: #174f8b;
+  --violet-deep: #173f70;
+  --magenta: #2f80b7;
+  --pink: #d66b55;
+  --cyan: #3189a8;
+  --lime: #4e8d67;
+  --gold: #d59a28;
+  --orange: #d97835;
+  --red: #c85c5c;
+  --green: #39805a;
+  --font-display: 'Roboto Slab', Georgia, serif;
+  --font-body: 'Manrope', 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --radius: 16px;
+  --shadow: 0 18px 38px rgba(16, 35, 63, 0.12);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
 }
@@ -95,10 +95,9 @@ body {
   min-height: 100dvh;
   background-color: var(--bg);
   background-image:
-    radial-gradient(900px 620px at 84% -8%, rgba(124, 58, 237, 0.3), transparent 62%),
-    radial-gradient(700px 540px at -10% 14%, rgba(192, 38, 211, 0.13), transparent 60%),
-    radial-gradient(800px 600px at 50% 110%, rgba(34, 211, 238, 0.07), transparent 60%),
-    linear-gradient(180deg, #0a0514 0%, #0d0719 45%, #080410 100%);
+    radial-gradient(720px 440px at 100% -10%, rgba(49, 137, 168, 0.12), transparent 65%),
+    radial-gradient(620px 420px at -10% 12%, rgba(37, 99, 166, 0.1), transparent 62%),
+    linear-gradient(180deg, #f8fafc 0%, #f4f7fb 52%, #eaf1f8 100%);
   color: var(--text);
   font-family: var(--font-body);
   font-size: 14px;
@@ -114,7 +113,7 @@ body::before {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(16, 35, 63, 0.06) 1px, transparent 1px);
   background-size: 52px 52px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 60%);
 }
@@ -5691,7 +5690,6 @@ button.stat-tile {
     transition-duration: 0.01ms !important;
   }
 }
-
 
 
 

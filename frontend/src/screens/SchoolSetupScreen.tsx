@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { CityInput } from '../components/CityInput';
+import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
 import type {
   GameState,
@@ -587,11 +588,26 @@ function ClassCard({
   const [goal, setGoal] = useState(String(cls.weekly_goal));
   const [error, setError] = useState<string | null>(null);
 
-  const confirmReset = (kind: 'student' | 'teacher') => {
+  const { confirm, dialog } = useConfirm();
+
+  const confirmReset = async (kind: 'student' | 'teacher') => {
     const what = kind === 'student' ? 'код ученика' : 'код педагога';
-    if (window.confirm(`Выпустить новый ${what} для класса ${cls.name}? Старый код перестанет работать.`)) {
-      onReset(cls.id, kind);
-    }
+    const ok = await confirm({
+      title: `Выпустить новый ${what}?`,
+      message: `Класс ${cls.name}. Старый код перестанет работать.`,
+      confirmLabel: 'Выпустить',
+    });
+    if (ok) onReset(cls.id, kind);
+  };
+
+  const confirmDelete = async () => {
+    const ok = await confirm({
+      title: 'Удалить класс?',
+      message: `Класс ${cls.name} будет удалён вместе с его кодами.`,
+      confirmLabel: 'Удалить',
+      danger: true,
+    });
+    if (ok) onDelete(cls.id);
   };
 
   const startEdit = () => {
@@ -681,23 +697,24 @@ function ClassCard({
         value={cls.invite_code}
         busy={busy}
         onCopy={() => void copyText(cls.invite_code, notify)}
-        onReset={() => confirmReset('student')}
+        onReset={() => void confirmReset('student')}
       />
       <CodeLine
         label="Код педагога"
         value={cls.teacher_code}
         busy={busy}
         onCopy={() => void copyText(cls.teacher_code, notify)}
-        onReset={() => confirmReset('teacher')}
+        onReset={() => void confirmReset('teacher')}
       />
       <p className="su-class__teachers">
         {cls.teachers.length > 0 ? `Педагог: ${cls.teachers.join(', ')}` : 'Педагог пока не подключён'}
       </p>
       {cls.members === 0 && (
-        <button type="button" className="su-link su-link--danger" onClick={() => onDelete(cls.id)} disabled={busy}>
+        <button type="button" className="su-link su-link--danger" onClick={() => void confirmDelete()} disabled={busy}>
           Удалить класс
         </button>
       )}
+      {dialog}
     </li>
   );
 }
@@ -793,9 +810,7 @@ export function SchoolSetupScreen({
               notify={notify}
               onReset={(id, kind) => void onResetCode(id, kind)}
               onUpdate={onUpdateClass}
-              onDelete={(id) => {
-                if (window.confirm(`Удалить класс ${cls.name}?`)) void onDeleteClass(id);
-              }}
+              onDelete={(id) => void onDeleteClass(id)}
             />
           ))}
         </ul>

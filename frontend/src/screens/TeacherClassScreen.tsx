@@ -3,6 +3,7 @@ import { AvatarFrame } from '../components/AvatarFrame';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { ScreenTitle } from '../components/ScreenTitle';
+import { useConfirm } from '../components/ConfirmDialog';
 import { Sheet } from '../components/Sheet';
 import { formatNumber, formatRelative } from '../game';
 import type { GameState, TeacherStudent } from '../types';
@@ -28,13 +29,21 @@ type TeacherClassScreenProps = {
   state: GameState;
   onReview: () => void;
   onRewardStudent?: (studentId: number, amount: number, reason: string) => Promise<boolean>;
+  onRemoveStudent?: (studentId: number, reason: string) => Promise<boolean>;
+  onRestoreStudent?: (studentId: number) => Promise<boolean>;
 };
 
 function csvCell(value: string | number): string {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
 
-export function TeacherClassScreen({ state, onReview, onRewardStudent }: TeacherClassScreenProps) {
+export function TeacherClassScreen({
+  state,
+  onReview,
+  onRewardStudent,
+  onRemoveStudent,
+  onRestoreStudent,
+}: TeacherClassScreenProps) {
   const { viewer, teacher, class_sprint: sprint } = state;
   const uid = useId();
   const [query, setQuery] = useState('');
@@ -48,6 +57,41 @@ export function TeacherClassScreen({ state, onReview, onRewardStudent }: Teacher
   const [rewarding, setRewarding] = useState(false);
   const [rewardDone, setRewardDone] = useState('');
   const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const [removeReason, setRemoveReason] = useState('');
+  const [removing, setRemoving] = useState(false);
+  const [excludedOpen, setExcludedOpen] = useState(false);
+  const { confirm, dialog } = useConfirm();
+  const excluded = teacher?.excluded ?? [];
+
+  const startRemove = async () => {
+    if (!selected || !onRemoveStudent) return;
+    const ok = await confirm({
+      title: `Исключить ${selected.name} из класса?`,
+      message:
+        'Ученик пропадёт из рейтингов и списка класса и не увидит задания. XP и достижения сохранятся. Он сможет вступить в другой класс, а в этот только после того, как вы вернёте его.',
+      confirmLabel: 'Исключить',
+      danger: true,
+    });
+    if (!ok) return;
+    setRemoving(true);
+    const done = await onRemoveStudent(selected.id, removeReason.trim());
+    setRemoving(false);
+    if (done) {
+      setRemoveReason('');
+      setSelectedId(null);
+    }
+  };
+
+  const startRestore = async (studentId: number, name: string) => {
+    if (!onRestoreStudent) return;
+    const ok = await confirm({
+      title: `Вернуть ${name}?`,
+      message:
+        'Запрет будет снят: ученик сможет снова вступить в класс по коду или из списка. В класс он автоматически не вернётся.',
+      confirmLabel: 'Вернуть',
+    });
+    if (ok) await onRestoreStudent(studentId);
+  };
 
   const all = teacher?.students ?? [];
   const selected = all.find((s) => s.id === selectedId) ?? null;
@@ -465,6 +509,48 @@ export function TeacherClassScreen({ state, onReview, onRewardStudent }: Teacher
         )}
       </section>
 
+      {excluded.length > 0 ? (
+        <section className="tc-section" aria-label="Исключённые ученики">
+          <button
+            type="button"
+            className="tc-btn tc-btn--ghost tc-excl-toggle"
+            aria-expanded={excludedOpen}
+            onClick={() => setExcludedOpen((v) => !v)}
+          >
+            <span>Исключённые: {excluded.length}</span>
+            <Icon name={excludedOpen ? 'chevronDown' : 'chevronRight'} size={16} />
+          </button>
+          {excludedOpen ? (
+            <div className="tc-panel">
+              <p className="tc-muted" style={{ marginTop: 0 }}>
+                После возврата ученик сможет снова вступить в класс по коду или из списка.
+              </p>
+              <ul className="tc-excl-list">
+                {excluded.map((item) => (
+                  <li key={item.id} className="tc-excl-item">
+                    <div className="tc-excl-item__text">
+                      <strong>{item.name}</strong>
+                      <span className="tc-faint">
+                        {[formatShortDate(item.removed_at), item.reason].filter(Boolean).join(' · ')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="tc-btn"
+                      onClick={() => void startRestore(item.id, item.name)}
+                    >
+                      Вернуть
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {dialog}
+
       <Sheet
         open={Boolean(selected)}
         onClose={() => setSelectedId(null)}
@@ -602,6 +688,37 @@ export function TeacherClassScreen({ state, onReview, onRewardStudent }: Teacher
                   {rewardDone}
                 </p>
               </form>
+            ) : null}
+
+            {onRemoveStudent && !selected.is_viewer ? (
+              <section className="tc-form tc-remove" aria-labelledby={`${uid}-remove`}>
+                <h3 className="tc-h2" id={`${uid}-remove`}>
+                  Исключить из класса
+                </h3>
+                <p className="tc-muted" style={{ margin: 0 }}>
+                  Для случайных и посторонних учеников. XP и достижения сохраняются.
+                </p>
+                <div className="tc-field">
+                  <label className="tc-label" htmlFor={`${uid}-remove-reason`}>
+                    Причина (необязательно)
+                  </label>
+                  <input
+                    id={`${uid}-remove-reason`}
+                    className="tc-input"
+                    maxLength={120}
+                    value={removeReason}
+                    onChange={(e) => setRemoveReason(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="tc-btn tc-btn--danger"
+                  disabled={removing}
+                  onClick={() => void startRemove()}
+                >
+                  {removing ? 'Исключаем…' : 'Исключить из класса'}
+                </button>
+              </section>
             ) : null}
 
             {selected.subject_stats && selected.subject_stats.length > 0 ? (

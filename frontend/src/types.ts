@@ -46,6 +46,8 @@ export type Viewer = {
   is_platform_admin: boolean;
   /** Педагог или директор без имени: сначала спрашиваем имя. */
   needs_name: boolean;
+  /** Класс, из которого ученика исключили (пока он без класса). */
+  removed_from?: { class_name: string; school_name: string } | null;
   xp: number;
   level: LevelInfo;
   sparks: number;
@@ -301,7 +303,15 @@ export type TeacherChartItem = {
   xp: number;
 };
 
+export type ExcludedStudent = {
+  id: number;
+  name: string;
+  reason: string;
+  removed_at: string;
+};
+
 export type TeacherData = {
+  excluded?: ExcludedStudent[];
   invite_code?: string;
   pending: ReviewItem[];
   students: TeacherStudent[];

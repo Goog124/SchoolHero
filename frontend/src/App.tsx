@@ -403,6 +403,20 @@ export default function App() {
     return true;
   };
 
+  const handleRemoveStudent = async (studentId: number, reason: string): Promise<boolean> => {
+    const response = await mutate(`remove:${studentId}`, () => api.removeStudent(studentId, reason));
+    if (!response) return false;
+    showToast('Ученик исключён', 'info', 'check');
+    return true;
+  };
+
+  const handleRestoreStudent = async (studentId: number): Promise<boolean> => {
+    const response = await mutate(`restore:${studentId}`, () => api.restoreStudent(studentId));
+    if (!response) return false;
+    showToast('Запрет снят', 'info', 'check');
+    return true;
+  };
+
   const handleRewardStudent = async (
     studentId: number,
     amount = 50,
@@ -461,7 +475,7 @@ export default function App() {
     lastName = '',
     classId?: number,
     inviteCode?: string,
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     setBusy('onboarding');
     try {
       const response = await api.onboarding(firstName, avatar, lastName, classId, inviteCode);
@@ -469,14 +483,10 @@ export default function App() {
       setTab('hero');
       window.history.replaceState({}, '', pathForTab('hero'));
       showToast('Профиль создан', 'success', 'check');
-      return true;
+      return null;
     } catch (error) {
-      if (markExpired(error)) return false;
-      showToast(
-        error instanceof Error ? error.message : 'Не удалось создать профиль.',
-        'error',
-      );
-      return false;
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось создать профиль.';
     } finally {
       setBusy(null);
     }
@@ -557,7 +567,7 @@ export default function App() {
     }
   };
 
-  const handleJoinClass = async (classId?: number, inviteCode?: string): Promise<boolean> => {
+  const handleJoinClass = async (classId?: number, inviteCode?: string): Promise<string | null> => {
     setBusy('join');
     try {
       const response = await api.joinSchool(inviteCode, classId);
@@ -565,11 +575,10 @@ export default function App() {
       setAudience(null);
       goToRoleHome(response.state.viewer.role);
       showToast('Класс выбран', 'success', 'check');
-      return true;
+      return null;
     } catch (error) {
-      if (markExpired(error)) return false;
-      showToast(error instanceof Error ? error.message : 'Не удалось выбрать класс', 'error');
-      return false;
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось выбрать класс';
     } finally {
       setBusy(null);
     }
@@ -724,7 +733,12 @@ export default function App() {
   const needsRegistration =
     state.viewer.role === 'student' && (!state.viewer.onboarded || !state.viewer.class_id);
   if (needsRegistration) {
-    const chosen = state.mode === 'demo' ? 'student' : audience;
+    const removedFrom = state.viewer.removed_from;
+    const removedNotice = removedFrom
+      ? `Вы больше не состоите в классе ${removedFrom.class_name}${removedFrom.school_name ? ` (${removedFrom.school_name})` : ''}. Выберите другой класс. Вернуться в прежний можно только после того, как педагог снимет запрет.`
+      : undefined;
+    // Исключённому ученику сразу показываем выбор класса.
+    const chosen = state.mode === 'demo' || removedFrom ? 'student' : audience;
     return (
       <div className="app">
         <div className="shell">
@@ -742,7 +756,8 @@ export default function App() {
               onComplete={handleOnboarding}
               joinOnly={state.viewer.onboarded}
               onJoin={handleJoinClass}
-              onBack={state.mode === 'demo' ? undefined : () => setAudience(null)}
+              notice={removedNotice}
+              onBack={state.mode === 'demo' || removedFrom ? undefined : () => setAudience(null)}
             />
           ) : (
             <AudienceChoice
@@ -914,6 +929,8 @@ export default function App() {
               state={state}
               onReview={() => navigate('teacher-review')}
               onRewardStudent={handleRewardStudent}
+              onRemoveStudent={handleRemoveStudent}
+              onRestoreStudent={handleRestoreStudent}
             />
           ) : null}
 

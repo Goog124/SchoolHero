@@ -441,6 +441,7 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
         """
         SELECT cp.challenge_id, COUNT(*) AS n
         FROM completions cp JOIN challenges ch ON ch.id = cp.challenge_id
+        JOIN users u ON u.id = cp.user_id AND u.class_id = ch.class_id
         WHERE ch.class_id = ? AND cp.status IN ('pending', 'approved')
         GROUP BY cp.challenge_id
         """,
@@ -451,6 +452,7 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
         """
         SELECT cp.challenge_id, COUNT(*) AS n
         FROM completions cp JOIN challenges ch ON ch.id = cp.challenge_id
+        JOIN users u ON u.id = cp.user_id AND u.class_id = ch.class_id
         WHERE ch.class_id = ? AND cp.status = 'pending'
         GROUP BY cp.challenge_id
         """,
@@ -572,6 +574,7 @@ def _teacher_data(
         JOIN challenges c ON c.id = cp.challenge_id
         JOIN users u ON u.id = cp.user_id
         WHERE c.class_id = ? AND cp.status = 'pending' AND u.role = 'student'
+          AND u.class_id = c.class_id
         ORDER BY cp.created_at ASC
         """,
         (class_id,),
@@ -610,6 +613,7 @@ def _teacher_data(
             SELECT cp.user_id, COUNT(*) AS n
             FROM completions cp
             JOIN challenges c ON c.id = cp.challenge_id
+            JOIN users u ON u.id = cp.user_id AND u.class_id = c.class_id
             WHERE c.class_id = ? AND cp.status = 'pending' AND c.active = 1
             GROUP BY cp.user_id
             """,
@@ -779,6 +783,7 @@ def _teacher_data(
         """
         SELECT c.id, COUNT(*) AS n
         FROM completions cp JOIN challenges c ON c.id = cp.challenge_id
+        JOIN users u ON u.id = cp.user_id AND u.class_id = c.class_id
         WHERE c.class_id = ? AND cp.status = 'approved'
         GROUP BY c.id
         """,
@@ -792,6 +797,7 @@ def _teacher_data(
     teacher_invite_code = code_row["invite_code"] if code_row and code_row["invite_code"] else ""
 
     return {
+        "excluded": _excluded_list(conn, class_id),
         "invite_code": teacher_invite_code,
         "pending": pending,
         "students": student_rows,
@@ -1098,6 +1104,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "city": school_row["city"] if school_row else "",
         "invite_code": (class_row["invite_code"] or "") if class_row else "",
         "is_platform_admin": is_platform_admin(viewer, settings),
+        "removed_from": _removed_from(conn, viewer) if class_id is None else None,
         # Teachers and directors are asked for a name when they have none.
         "needs_name": role in {"teacher", "director"}
         and not viewer["name_locked"]
@@ -1331,6 +1338,101 @@ def get_school_catalog(
     }
 
 
+EXCLUDED_MESSAGE = "Вы отчислены из этого класса. Обратитесь к педагогу."
+
+
+def is_excluded(conn, user_id: int, class_id: int) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM class_exclusions WHERE user_id = ? AND class_id = ?",
+            (user_id, class_id),
+        ).fetchone()
+    )
+
+
+def check_not_excluded(conn, user_id: int, class_id: int) -> None:
+    if is_excluded(conn, user_id, class_id):
+        raise GameError(EXCLUDED_MESSAGE, 403)
+
+
+def _removed_from(conn, viewer: sqlite3.Row) -> dict[str, str] | None:
+    """The class a classless student was last removed from (for the hint)."""
+    row = conn.execute(
+        """
+        SELECT c.name AS class_name, s.name AS school_name
+        FROM class_exclusions e
+        JOIN classes c ON c.id = e.class_id
+        JOIN schools s ON s.id = c.school_id
+        WHERE e.user_id = ? ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1
+        """,
+        (viewer["id"],),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _excluded_list(conn, class_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT e.user_id, e.reason, e.created_at, u.first_name, u.last_name
+        FROM class_exclusions e JOIN users u ON u.id = e.user_id
+        WHERE e.class_id = ? ORDER BY e.created_at DESC, e.rowid DESC LIMIT 100
+        """,
+        (class_id,),
+    ).fetchall()
+    return [
+        {
+            "id": int(r["user_id"]),
+            "name": f"{r['first_name']} {r['last_name']}".strip(),
+            "reason": r["reason"] or "",
+            "removed_at": iso_utc(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def remove_student(
+    conn, viewer: sqlite3.Row, settings: Settings, student_id: int, reason: str = ""
+) -> None:
+    """Take a student out of the class. XP, items, hero and task history stay,
+    so the student can come back after the exclusion is lifted."""
+    student = conn.execute("SELECT * FROM users WHERE id = ?", (student_id,)).fetchone()
+    if student is None:
+        raise GameError("Ученик не найден", 404)
+    if int(student["id"]) == int(viewer["id"]):
+        raise GameError("Нельзя исключить себя")
+    if student["role"] != "student":
+        raise GameError("Исключить можно только ученика")
+    if student["class_id"] is None:
+        raise GameError("Ученик уже не состоит в классе")
+    if not can_manage_class(conn, viewer, settings, student["class_id"]):
+        raise GameError("Ученик из другого класса", 403)
+    conn.execute(
+        "INSERT OR REPLACE INTO class_exclusions (user_id, class_id, removed_by, reason, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (student_id, student["class_id"], viewer["id"], str(reason or "").strip()[:120]),
+    )
+    conn.execute("UPDATE users SET class_id = NULL WHERE id = ?", (student_id,))
+
+
+def restore_student(conn, viewer: sqlite3.Row, settings: Settings, student_id: int) -> None:
+    """Lift the ban. The student chooses a class again by list or code."""
+    rows = conn.execute(
+        "SELECT class_id FROM class_exclusions WHERE user_id = ?", (student_id,)
+    ).fetchall()
+    allowed = [
+        int(r["class_id"])
+        for r in rows
+        if can_manage_class(conn, viewer, settings, int(r["class_id"]))
+    ]
+    if not allowed:
+        raise GameError("Исключённый ученик не найден", 404)
+    marks = ",".join("?" for _ in allowed)
+    conn.execute(
+        f"DELETE FROM class_exclusions WHERE user_id = ? AND class_id IN ({marks})",
+        (student_id, *allowed),
+    )
+
+
 def _class_for_join(conn, class_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT c.id FROM classes c JOIN schools s ON s.id = c.school_id "
@@ -1388,6 +1490,7 @@ def join_school_class(
 
     if viewer["role"] != "student":
         raise GameError("Вступить в класс по коду ученика может только ученик", 403)
+    check_not_excluded(conn, int(viewer["id"]), target_class_id)
     conn.execute(
         "UPDATE users SET class_id = ? WHERE id = ?",
         (target_class_id, viewer["id"]),
@@ -1446,6 +1549,8 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
             new_role = "teacher"
     if viewer["role"] != "student" and new_role == viewer["role"]:
         target_class_id = viewer["class_id"]
+    elif new_role == "student" and target_class_id is not None and target_class_id != viewer["class_id"]:
+        check_not_excluded(conn, int(viewer["id"]), int(target_class_id))
 
     avatar = dict(load_avatar(viewer["avatar"]))
     patch = payload.get("avatar") or {}
@@ -1576,7 +1681,7 @@ def review_completion(
     row = conn.execute(
         """
         SELECT cp.*, c.title, c.xp, c.category, c.class_id,
-               u.first_name, u.last_name, u.xp AS student_xp
+               u.first_name, u.last_name, u.xp AS student_xp, u.class_id AS student_class
         FROM completions cp
         JOIN challenges c ON c.id = cp.challenge_id
         JOIN users u ON u.id = cp.user_id
@@ -1588,6 +1693,8 @@ def review_completion(
         raise GameError("Заявка не найдена", 404)
     if not can_manage_class(conn, viewer, settings, int(row["class_id"])):
         raise GameError("Заявка из другого класса", 403)
+    if row["student_class"] is None or int(row["student_class"]) != int(row["class_id"]):
+        raise GameError("Ученик больше не состоит в классе")
     if row["status"] != "pending":
         raise GameError("Эта заявка уже проверена")
     if action not in {"approve", "reject"}:

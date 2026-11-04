@@ -27,7 +27,11 @@ from .service import (
     search_cities,
     join_school_class,
     lookup_class_by_code,
+    remove_student,
     reset_demo,
+    restore_student,
+    EXCLUDED_MESSAGE,
+    is_excluded,
     set_profile_name,
     review_completion,
     save_onboarding,
@@ -111,6 +115,10 @@ class SchoolStatusBody(BaseModel):
     status: str = Field(max_length=10)
 
 
+class RemoveStudentBody(BaseModel):
+    reason: str = Field(default="", max_length=120)
+
+
 class NameBody(BaseModel):
     first_name: str = Field(min_length=2, max_length=24)
     last_name: str = Field(default="", max_length=32)
@@ -187,6 +195,10 @@ def school_check_code(
 ) -> dict[str, Any]:
     registration.guard_code_attempts(ctx.settings, int(ctx.user["id"]))
     info = lookup_class_by_code(ctx.conn, code)
+    if info and info["kind"] == "student" and is_excluded(
+        ctx.conn, int(ctx.user["id"]), int(info["class_id"])
+    ):
+        return {"valid": False, "detail": EXCLUDED_MESSAGE}
     if not info:
         registration.register_code_failure(ctx.settings, int(ctx.user["id"]))
         return {
@@ -421,6 +433,26 @@ def review(
         "state": build_state(ctx.conn, ctx.user, ctx.settings),
         "result": result,
     }
+
+
+@router.post("/teacher/students/{student_id}/remove")
+def teacher_remove_student(
+    student_id: int,
+    payload: RemoveStudentBody,
+    ctx: Context = Depends(get_context),
+) -> dict[str, Any]:
+    remove_student(ctx.conn, ctx.user, ctx.settings, student_id, payload.reason)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/teacher/students/{student_id}/restore")
+def teacher_restore_student(
+    student_id: int, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    restore_student(ctx.conn, ctx.user, ctx.settings, student_id)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
 @router.post("/teacher/reward")

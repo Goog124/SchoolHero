@@ -115,6 +115,15 @@ CREATE TABLE IF NOT EXISTS school_staff (
     PRIMARY KEY(user_id, school_id)
 );
 
+CREATE TABLE IF NOT EXISTS class_exclusions (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    class_id INTEGER NOT NULL REFERENCES classes(id),
+    removed_by INTEGER REFERENCES users(id),
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(user_id, class_id)
+);
+
 CREATE TABLE IF NOT EXISTS activity_days (
     user_id INTEGER NOT NULL REFERENCES users(id),
     day TEXT NOT NULL,
@@ -258,6 +267,7 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_schools_status_city ON schools(status, city)",
         "CREATE INDEX IF NOT EXISTS idx_schools_created_by ON schools(created_by)",
         "CREATE INDEX IF NOT EXISTS idx_school_staff_school ON school_staff(school_id)",
+        "CREATE INDEX IF NOT EXISTS idx_class_exclusions_class ON class_exclusions(class_id, created_at)",
         # Codes must be unambiguous. Legacy data with duplicates must not
         # block startup, so these are best-effort.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_invite_code ON classes(invite_code) "

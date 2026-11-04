@@ -145,6 +145,19 @@ export const api = {
     return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
   },
 
+  removeStudent(studentId: number, reason = ''): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/teacher/students/${studentId}/remove`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  restoreStudent(studentId: number): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/teacher/students/${studentId}/restore`, {
+      method: 'POST',
+    });
+  },
+
   setName(firstName: string, lastName: string): Promise<MutationResponse> {
     return request<MutationResponse>('/api/profile/name', {
       method: 'POST',

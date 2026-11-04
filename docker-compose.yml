@@ -1,5 +1,13 @@
 name: school-hero
 
+# Основной запуск (боевой режим):
+#   docker compose up -d --build
+# Витрина с выдуманными данными, только локально:
+#   docker compose --profile demo up -d --build demo
+# Caddy с автоматическим HTTPS вместо nginx на хосте:
+#   docker compose --profile proxy up -d --build
+# Подробности: docs/docker.md
+
 services:
   app:
     build:
@@ -10,9 +18,10 @@ services:
     env_file:
       - .env
     environment:
-      # Fail fast instead of accidentally exposing demo mode on a server.
-      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Set MAX_BOT_TOKEN in .env}
+      # Значения здесь важнее env_file: .env не может переключить боевой
+      # контейнер в demo или sandbox.
       APP_MODE: prod
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Задайте MAX_BOT_TOKEN в .env}
       CATALOG_FILE: /data/catalog.json
       HOST: 0.0.0.0
       PORT: "8000"
@@ -20,18 +29,46 @@ services:
       DATABASE_PATH: /data/school_hero.db
       SERVE_FRONTEND: "true"
     ports:
-      # Only the host reverse proxy needs access. Do not expose this publicly:
-      # MAX requires HTTPS, and demo mode must never be public.
+      # Наружу порт не открываем: к нему ходит только обратный прокси хоста.
+      # MAX требует HTTPS, а приложение без прокси HTTPS не отдаёт.
       - "127.0.0.1:8000:8000"
     volumes:
       - school_hero_data:/data
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Витрина: выдуманные школа, ученики и педагог, своя база и свой том.
+  # Вход без подписи MAX, поэтому порт привязан к loopback и наружу не публикуется.
+  demo:
+    profiles: ["demo"]
+    build:
+      context: .
+    image: school-hero:latest
+    restart: "no"
+    init: true
+    environment:
+      APP_MODE: demo
+      HOST: 0.0.0.0
+      PORT: "8000"
+      STATIC_DIR: /app/static
+      DATABASE_PATH: /data/school_hero_demo.db
+      SERVE_FRONTEND: "true"
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - school_hero_demo_data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   caddy:
     image: caddy:2-alpine
@@ -58,5 +95,6 @@ services:
 
 volumes:
   school_hero_data:
+  school_hero_demo_data:
   caddy_data:
   caddy_config:

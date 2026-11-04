@@ -14,7 +14,25 @@
 
 Пустой токен режим не переключает: `prod` без `MAX_BOT_TOKEN` не стартует. Подробности: [docs/configuration.md](docs/configuration.md).
 
-## Быстрый старт (локально)
+## Запуск в Docker
+
+Весь проект собирается в образ (фронтенд, бэкенд, портал), данные лежат в томе. Нужны Docker 24+ и плагин Compose v2.
+
+```bash
+cp .env.example .env     # задайте MAX_BOT_TOKEN
+docker compose up -d --build
+curl http://127.0.0.1:8000/api/health
+```
+
+Витрина с выдуманными данными, без токена и без MAX, на <http://127.0.0.1:8001/>:
+
+```bash
+docker compose --profile demo up -d --build demo
+```
+
+На сервере с nginx и Let's Encrypt (`m.ospab.org`): `sudo LE_EMAIL=you@example.com bash deploy/deploy-docker.sh`. Подробности, резервные копии, обновление и Caddy: [docs/docker.md](docs/docker.md).
+
+## Быстрый старт (локально, без Docker)
 
 ```powershell
 python -m venv .venv
@@ -45,8 +63,10 @@ python app.py                   # http://127.0.0.1:8000
 - [docs/architecture.md](docs/architecture.md) - устройство, авторизация, схема БД, права, расчёт XP и рейтингов, ограничения
 - [docs/setup-school.md](docs/setup-school.md) - подключение школы: регистрация директора, коды, подтверждение, лимиты
 - [docs/roles.md](docs/roles.md) - что делают ученик, педагог, директор, администратор платформы; печать и PDF
-- [docs/deploy.md](docs/deploy.md) - сервер, nginx, systemd, сертификат, резервные копии, Docker
+- [docs/docker.md](docs/docker.md) - запуск в Docker: compose, профили, деплой с nginx и Caddy, данные, обновление, бот
+- [docs/deploy.md](docs/deploy.md) - сервер без Docker: nginx, systemd, сертификат, резервные копии
 - [docs/configuration.md](docs/configuration.md) - все переменные окружения, режимы, пути данных
+- [docs/bot.md](docs/bot.md) - бот MAX: приветствие и кнопка мини-приложения, webhook, настройка и проверка
 - [docs/api.md](docs/api.md) - справочник API
 - [docs/development.md](docs/development.md) - разработка, песочница, тесты, соглашения, пределы масштабирования
 

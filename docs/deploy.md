@@ -1,6 +1,6 @@
 # Развёртывание на сервере
 
-Основной путь для `m.ospab.org` - **systemd + nginx** на Debian/Ubuntu через `deploy/deploy.sh`. Вариант с Docker описан отдельно в [конце документа](#вариант-docker).
+Два способа развернуть сервис на сервере: **Docker** ([docker.md](docker.md), скрипт `deploy/deploy-docker.sh`) и **systemd + nginx** без Docker на Debian/Ubuntu через `deploy/deploy.sh` (этот документ). Выберите один: оба используют порт 8000.
 
 Оглавление:
 
@@ -186,6 +186,10 @@ sudo systemctl start school-hero
 
 Копии храните вне сервера. Расписания резервного копирования в проекте нет; настройте cron/systemd-timer сами. Сохраняйте также `.env` (там токен бота) и `catalog.json`, если используется.
 
+## Бот MAX
+
+После деплоя настройте приветствие бота: [bot.md](bot.md). Кратко: `MAX_WEBHOOK_SECRET` в `/opt/school-hero/.env`, `systemctl restart school-hero`, `python tools/max_bot.py subscribe`. Webhook должен быть доступен снаружи по HTTPS на порту 443 (nginx уже так настроен).
+
 ## Логи и проверка
 
 Сервис пишет в stdout/stderr, журнал - в journald:
@@ -224,49 +228,7 @@ sudo nginx -t
 | Интерфейс показывает «Откройте приложение внутри MAX» | В `prod` приложение работает только внутри MAX, в обычном браузере вход невозможен |
 | `GET /` отдаёт JSON `schoolhero-api` | `SERVE_FRONTEND` не включён |
 | `GET /` отдаёт 503 «Frontend is not built» | В `STATIC_DIR` нет `index.html`; соберите фронтенд и перезапустите скрипт |
-| `/portal` возвращает 404 в Docker | Каталог `landing/` не копируется в образ |
 
 ## Вариант Docker
 
-Не является основным путём для `m.ospab.org`; описывает файлы `Dockerfile`, `docker-compose.yml`, `docker/Caddyfile`.
-
-`Dockerfile` - двухстадийная сборка: на Node 22 собирается фронтенд, на `python:3.12-slim` запускается `python app.py` от пользователя `app` (uid 10001), порт 8000, том `/data`, `HEALTHCHECK` на `/api/health`.
-
-`docker-compose.yml`:
-
-- Сервис `app`: `APP_MODE=prod`, `MAX_BOT_TOKEN` берётся из `.env` (если пуст - compose не стартует), база `/data/school_hero.db`, каталог `/data/catalog.json`, `SERVE_FRONTEND=true`. Порт публикуется только на `127.0.0.1:8000`. Данные в томе `school_hero_data`.
-- Сервис `caddy` (профиль `proxy`): `caddy:2-alpine`, порты 80, 443, 443/udp, конфиг `docker/Caddyfile` (`{$APP_DOMAIN}` с `reverse_proxy app:8000`), домен из `APP_DOMAIN` (по умолчанию `school-hero.example.com`), сертификаты Caddy получает сам. Запускается после того, как `app` здоров.
-
-Запуск без прокси (за собственным reverse proxy на хосте):
-
-```bash
-cp .env.example .env          # заполните MAX_BOT_TOKEN, остальное по необходимости
-docker compose up -d --build
-```
-
-С Caddy:
-
-```bash
-echo 'APP_DOMAIN=m.example.org' >> .env
-docker compose --profile proxy up -d --build
-```
-
-Каталог школ необязателен; при необходимости: `docker compose cp catalog.json app:/data/catalog.json` и `docker compose restart app`.
-
-Логи и проверка:
-
-```bash
-docker compose logs -f app
-docker compose ps
-```
-
-Резервная копия базы (в образе нет утилиты `sqlite3`, используйте Python):
-
-```bash
-docker compose exec app python -c "import sqlite3; s=sqlite3.connect('/data/school_hero.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d); d.close()"
-docker compose cp app:/data/backup.db ./backup.db
-```
-
-Различия с systemd-вариантом: образ не содержит `landing/` (нет `/portal`), в нём нет `deploy.sh`-проверки старой базы, а тесты и `.env` в образ не попадают (`.dockerignore`).
-
-См. также: [configuration.md](configuration.md), [development.md](development.md).
+Описан отдельно: [docker.md](docker.md) (compose, профили, скрипт `deploy/deploy-docker.sh` для `m.ospab.org`, резервные копии, обновление, бот, переход с systemd). Образ содержит и страницу `/portal`. Не запускайте оба варианта одновременно: оба используют порт 8000.

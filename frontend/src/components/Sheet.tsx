@@ -23,22 +23,29 @@ export function Sheet({
   className = '',
 }: SheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Родитель обычно передаёт новую функцию на каждый рендер; держим её в ref,
+  // иначе эффект перезапускается при каждом нажатии клавиши и фокус уходит из поля.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', handleKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const timer = window.setTimeout(() => panelRef.current?.focus(), 60);
+    const timer = window.setTimeout(() => {
+      const panel = panelRef.current;
+      if (panel && !panel.contains(document.activeElement)) panel.focus();
+    }, 60);
     return () => {
       document.removeEventListener('keydown', handleKey);
       document.body.style.overflow = previousOverflow;
       window.clearTimeout(timer);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

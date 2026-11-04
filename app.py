@@ -37,12 +37,12 @@ settings = Settings.from_env()
 def _sandbox_boot_id(cfg: Settings, db_existed: bool) -> str:
     """Identifies one life of the sandbox database.
 
-    A new value whenever the database was wiped; with SANDBOX_KEEP_DATA the
-    value stored next to the database is reused, so a client can tell whether
+    A new value whenever the database was wiped; otherwise the value stored
+    next to the database is reused, so a client can tell whether
     its remembered test users still exist on the server.
     """
     path = cfg.db_path.with_name("sandbox_boot_id")
-    if cfg.sandbox_keep_data and db_existed:
+    if not cfg.sandbox_wipe and db_existed:
         try:
             stored = path.read_text(encoding="utf-8").strip()
             if stored:
@@ -60,7 +60,7 @@ def _sandbox_boot_id(cfg: Settings, db_existed: bool) -> str:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.validate()
-    if settings.sandbox_mode and not settings.sandbox_keep_data:
+    if settings.sandbox_mode and settings.sandbox_wipe:
         for suffix in ("", "-wal", "-shm"):
             Path(str(settings.db_path) + suffix).unlink(missing_ok=True)
     if settings.sandbox_mode:

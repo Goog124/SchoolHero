@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | `prod` (по умолчанию) | боевой сервер; нужен `MAX_BOT_TOKEN` | подписанный `initData` | `school_hero.db` |
 | `demo` | витрина с выдуманными данными, только локально | `X-Client-Id`, общий профиль | `school_hero_demo.db` |
-| `sandbox` | локальная проверка регистрации школы, база стирается при старте, только loopback | `X-Client-Id`, каждый id - отдельный пользователь | `school_hero_sandbox.db` |
+| `sandbox` | локальная проверка регистрации школы, база сохраняется между запусками (`npm run sandbox-wipe` стирает), только loopback | `X-Client-Id`, каждый id - отдельный пользователь | `school_hero_sandbox.db` |
 
 Пустой токен режим не переключает: `prod` без `MAX_BOT_TOKEN` не стартует. Подробности: [docs/configuration.md](docs/configuration.md).
 
@@ -30,7 +30,7 @@ Copy-Item .env.example .env     # для показа поставьте APP_MOD
 python app.py                   # http://127.0.0.1:8000
 ```
 
-Проверка регистрации школы без MAX: `npm run sandbox` (после сборки фронтенда), открыть <http://127.0.0.1:8010/>.
+Проверка регистрации школы без MAX: `npm run sandbox` (после сборки фронтенда), открыть <http://127.0.0.1:8010/>. База сохраняется между запусками; `npm run sandbox-wipe` начинает с пустой.
 
 Тесты:
 

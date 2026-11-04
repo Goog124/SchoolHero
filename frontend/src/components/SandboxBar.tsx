@@ -50,7 +50,7 @@ export function SandboxBar({
         </div>
       ) : null}
       <p className="sb-bar__hint">
-        База стирается при каждом запуске; SANDBOX_KEEP_DATA=1 сохраняет её.
+        База сохраняется между запусками. Чтобы стереть её, запустите npm run sandbox-wipe.
       </p>
     </div>
   );

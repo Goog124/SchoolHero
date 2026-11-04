@@ -143,12 +143,14 @@ def test_from_env_sandbox_defaults(monkeypatch, tmp_path):
     assert s.sandbox_mode and not s.demo_mode
     assert s.db_path.name == "school_hero_sandbox.db"
     assert s.default_class_id is None
-    assert s.sandbox_keep_data is False
+    assert s.sandbox_wipe is False
     s.validate()
 
 
-def test_database_is_wiped_on_start_unless_kept(tmp_path, monkeypatch):
-    settings = make_settings(tmp_path, app_mode="sandbox", default_class_id=None)
+def test_database_is_wiped_on_start_only_with_wipe(tmp_path, monkeypatch):
+    settings = make_settings(
+        tmp_path, app_mode="sandbox", default_class_id=None, sandbox_wipe=True
+    )
     monkeypatch.setattr(app_module, "settings", settings)
     app.state.settings = settings
 
@@ -170,7 +172,7 @@ def test_database_is_wiped_on_start_unless_kept(tmp_path, monkeypatch):
     assert run_once() == 1
     # second start: file is deleted, then one school is created again
     assert run_once() == 1
-    kept = make_settings(tmp_path, app_mode="sandbox", default_class_id=None, sandbox_keep_data=True)
+    kept = make_settings(tmp_path, app_mode="sandbox", default_class_id=None)
     monkeypatch.setattr(app_module, "settings", kept)
     app.state.settings = kept
     with TestClient(app) as c:
@@ -178,7 +180,9 @@ def test_database_is_wiped_on_start_unless_kept(tmp_path, monkeypatch):
 
 
 def test_health_boot_id_changes_when_database_is_wiped(tmp_path, monkeypatch):
-    settings = make_settings(tmp_path, app_mode="sandbox", default_class_id=None)
+    settings = make_settings(
+        tmp_path, app_mode="sandbox", default_class_id=None, sandbox_wipe=True
+    )
     monkeypatch.setattr(app_module, "settings", settings)
     app.state.settings = settings
 
@@ -192,10 +196,8 @@ def test_health_boot_id_changes_when_database_is_wiped(tmp_path, monkeypatch):
     assert first and second and first != second
 
 
-def test_health_boot_id_is_stable_with_keep_data(tmp_path, monkeypatch):
-    settings = make_settings(
-        tmp_path, app_mode="sandbox", default_class_id=None, sandbox_keep_data=True
-    )
+def test_health_boot_id_is_stable_by_default(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, app_mode="sandbox", default_class_id=None)
     monkeypatch.setattr(app_module, "settings", settings)
     app.state.settings = settings
 

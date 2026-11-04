@@ -1,9 +1,10 @@
-"""Start the sandbox: empty database on every run, loopback only, no Docker.
+"""Start the sandbox: loopback only, no Docker. The database is kept between runs.
 
-    npm run sandbox            (from the project root)
-    python tools/run_sandbox.py
+    npm run sandbox            keep the database (from the project root)
+    npm run sandbox-wipe       wipe the database first, start empty
+    python tools/run_sandbox.py [--wipe]
 
-Environment: PORT (default 8010), SANDBOX_KEEP_DATA=1 keeps the database,
+Environment: PORT (default 8010).
 SCHOOL_APPROVAL=manual and PLATFORM_ADMIN_CLIENT_IDS=<ids> to try moderation.
 Serves the built frontend from static/ (run `npm run build` in frontend/ first).
 """
@@ -30,7 +31,13 @@ def main() -> int:
     env = dict(os.environ)
     env.update({"APP_MODE": "sandbox", "HOST": "127.0.0.1", "SERVE_FRONTEND": "1"})
     env.setdefault("PORT", "8010")
-    print(f"Sandbox: http://127.0.0.1:{env['PORT']}/  (database is wiped on every start)")
+    wipe = "--wipe" in sys.argv[1:]
+    if wipe:
+        env["SANDBOX_WIPE"] = "1"
+    else:
+        env.pop("SANDBOX_WIPE", None)
+    state = "database will be wiped" if wipe else "database is kept"
+    print(f"Sandbox: http://127.0.0.1:{env['PORT']}/  ({state})")
     return subprocess.call([venv_python(), str(ROOT / "app.py")], cwd=ROOT, env=env)
 
 

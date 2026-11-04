@@ -46,7 +46,7 @@ class Settings:
     serve_frontend: bool = False
     app_mode: str = "prod"  # prod | demo | sandbox
     host: str = "127.0.0.1"
-    sandbox_keep_data: bool = False
+    sandbox_wipe: bool = False
     platform_admin_client_ids: set[str] = field(default_factory=set)
     catalog_file: Path = BASE_DIR / "data" / "catalog.json"
     school_approval: str = "auto"  # auto | manual
@@ -87,7 +87,7 @@ class Settings:
         return cls(
             app_mode=app_mode,
             host=os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1",
-            sandbox_keep_data=_bool_env("SANDBOX_KEEP_DATA", False),
+            sandbox_wipe=_bool_env("SANDBOX_WIPE", False),
             platform_admin_client_ids=_ids_env("PLATFORM_ADMIN_CLIENT_IDS"),
             catalog_file=Path(os.getenv("CATALOG_FILE", str(data_dir / "catalog.json"))),
             static_dir=Path(os.getenv("STATIC_DIR", str(BASE_DIR / "static"))),

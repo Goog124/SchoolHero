@@ -104,37 +104,6 @@
   border: 0;
 }
 
-.su-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.su-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px 44px;
-  gap: 8px;
-  align-items: center;
-}
-
-.su-row__goal {
-  text-align: right;
-}
-
-.su-parallel {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.su-parallel__grade {
-  flex: 0 0 72px;
-  width: 72px;
-}
-
 .su-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -401,4 +370,101 @@
 .sb-bar__new:focus-visible {
   outline: 2px solid var(--sferum-blue);
   outline-offset: 2px;
+}
+
+/* Выбор классов чипами */
+.su-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.su-chips--presets .su-chip {
+  min-width: 64px;
+  color: var(--sferum-blue);
+  border-style: dashed;
+}
+
+.su-chips--presets .su-chip[aria-pressed='true'] {
+  color: var(--accent-contrast);
+  border-style: solid;
+}
+
+.su-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.su-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.su-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--sferum-soft);
+  border: 1px solid var(--sferum-blue);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.su-tag:focus-visible {
+  outline: 2px solid var(--sferum-blue);
+  outline-offset: 2px;
+}
+
+.su-form,
+.su-classes,
+.su-class,
+.su-edit {
+  max-width: 100%;
+}
+
+.su-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.su-goal__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.su-goal__value {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.su-goal__hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.su-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }

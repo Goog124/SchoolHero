@@ -90,6 +90,11 @@ class NewClassBody(BaseModel):
     weekly_goal: int = Field(default=1600, ge=100, le=20000)
 
 
+class UpdateClassBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=12)
+    weekly_goal: int | None = Field(default=None, ge=100, le=20000)
+
+
 class NewSchoolBody(BaseModel):
     name: str = Field(min_length=3, max_length=80)
     city: str = Field(min_length=2, max_length=60)
@@ -232,6 +237,17 @@ def school_add_class(
 @router.post("/school/{school_id}/select")
 def school_select(school_id: int, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     registration.select_school(ctx.conn, ctx.user, ctx.settings, school_id)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.patch("/school/classes/{class_id}")
+def school_update_class(
+    class_id: int, payload: UpdateClassBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.update_class(
+        ctx.conn, ctx.user, ctx.settings, class_id, payload.name, payload.weekly_goal
+    )
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 

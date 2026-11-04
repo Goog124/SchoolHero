@@ -457,3 +457,51 @@ def test_pupil_with_a_class_cannot_turn_into_a_teacher(client):
     client.post("/api/school/join", json={"invite_code": classes["8А"]["teacher_code"]}, headers=hdr(2))
     moved = client.post("/api/school/join", json={"invite_code": classes["8Б"]["teacher_code"]}, headers=hdr(2))
     assert moved.status_code == 200 and moved.json()["state"]["viewer"]["class_name"] == "8Б"
+
+
+def test_school_can_be_created_without_weekly_goal(client):
+    r = client.post(
+        "/api/school/create",
+        json={"name": "Школа без цели", "city": "Тверь", "classes": [{"name": "5А"}, {"name": "5Б"}]},
+        headers=hdr(100),
+    )
+    assert r.status_code == 200, r.text
+    assert all(c["weekly_goal"] == 1600 for c in class_codes(client, 100).values())
+
+
+def test_director_edits_class_name_and_goal(client):
+    create_school(client, 100, classes=("8А", "8Б"))
+    cls = class_codes(client, 100)["8А"]
+    url = f"/api/school/classes/{cls['id']}"
+    r = client.patch(url, json={"weekly_goal": 2500}, headers=hdr(100))
+    assert r.status_code == 200, r.text
+    assert class_codes(client, 100)["8А"]["weekly_goal"] == 2500
+    # the pupils' sprint uses the new goal
+    onboard_student(client, 1, cls["invite_code"])
+    assert client.get("/api/state", headers=hdr(1)).json()["class_sprint"]["goal"] == 2500
+    r = client.patch(url, json={"name": "8В", "weekly_goal": 3000}, headers=hdr(100))
+    assert r.status_code == 200
+    renamed = class_codes(client, 100)["8В"]
+    assert renamed["id"] == cls["id"] and renamed["weekly_goal"] == 3000
+    assert renamed["invite_code"] == cls["invite_code"]
+    # the same name is fine for the class itself, not for a sibling
+    assert client.patch(url, json={"name": "8в"}, headers=hdr(100)).status_code == 200
+    sibling = class_codes(client, 100)["8Б"]["id"]
+    dup = client.patch(f"/api/school/classes/{sibling}", json={"name": "8В"}, headers=hdr(100))
+    assert dup.status_code == 400
+    for bad in ({"weekly_goal": 99}, {"weekly_goal": 20001}, {"name": ""}, {"name": "очень длинное имя класса"}):
+        assert client.patch(url, json=bad, headers=hdr(100)).status_code in {400, 422}, bad
+    assert client.patch(url, json={}, headers=hdr(100)).status_code == 400
+
+
+def test_only_the_school_director_can_edit_a_class(client):
+    create_school(client, 100, name="Школа Один", classes=("5А",))
+    create_school(client, 101, name="Школа Два", city="Москва", classes=("6А",))
+    cid = class_codes(client, 100)["5А"]["id"]
+    for who in (101, 1):
+        r = client.patch(f"/api/school/classes/{cid}", json={"weekly_goal": 5000}, headers=hdr(who))
+        assert r.status_code == 404
+    client.post("/api/school/join", json={"invite_code": class_codes(client, 100)["5А"]["teacher_code"]}, headers=hdr(2))
+    assert client.patch(f"/api/school/classes/{cid}", json={"weekly_goal": 5000}, headers=hdr(2)).status_code == 404
+    assert client.patch("/api/school/classes/9999", json={"weekly_goal": 5000}, headers=hdr(100)).status_code == 404
+    assert class_codes(client, 100)["5А"]["weekly_goal"] == 1600

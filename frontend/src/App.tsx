@@ -501,13 +501,22 @@ export default function App() {
     window.scrollTo({ top: 0 });
   };
 
-  const handleCreateSchool = async (payload: NewSchoolPayload): Promise<boolean> => {
-    const response = await mutate('school-create', () => api.createSchool(payload));
-    if (!response) return false;
-    setAudience(null);
-    goToRoleHome('director', 'director-setup');
-    showToast('Школа создана', 'success', 'check');
-    return true;
+  /** Возвращает текст ошибки или null: ошибка показывается прямо в форме. */
+  const handleCreateSchool = async (payload: NewSchoolPayload): Promise<string | null> => {
+    setBusy('school-create');
+    try {
+      const response = await api.createSchool(payload);
+      setState(response.state);
+      setAudience(null);
+      goToRoleHome('director', 'director-setup');
+      showToast('Школа создана', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось создать школу. Попробуйте ещё раз.';
+    } finally {
+      setBusy(null);
+    }
   };
 
   /** Возвращает текст ошибки или null при успехе. */
@@ -546,11 +555,37 @@ export default function App() {
     }
   };
 
-  const handleAddClass = async (schoolId: number, name: string, goal: number): Promise<boolean> => {
-    const response = await mutate('school-class', () => api.addClass(schoolId, name, goal));
-    if (!response) return false;
-    showToast(`Класс ${name} добавлен`, 'success', 'check');
-    return true;
+  const handleAddClass = async (schoolId: number, name: string): Promise<string | null> => {
+    setBusy('school-class');
+    try {
+      const response = await api.addClass(schoolId, name);
+      setState(response.state);
+      showToast(`Класс ${name} добавлен`, 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось добавить класс.';
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleUpdateClass = async (
+    classId: number,
+    patch: { name?: string; weekly_goal?: number },
+  ): Promise<string | null> => {
+    setBusy('school-class');
+    try {
+      const response = await api.updateClass(classId, patch);
+      setState(response.state);
+      showToast('Класс обновлён', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось сохранить изменения.';
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleDeleteClass = async (classId: number): Promise<boolean> => {
@@ -872,14 +907,11 @@ export default function App() {
               busy={busy !== null}
               notify={showToast}
               onAddClass={handleAddClass}
+              onUpdateClass={handleUpdateClass}
               onDeleteClass={handleDeleteClass}
               onResetCode={handleResetCode}
               onSelectSchool={handleSelectSchool}
-              onCreateSchool={async (payload) => {
-                const response = await mutate('school-create', () => api.createSchool(payload));
-                if (response) showToast('Школа создана', 'success', 'check');
-                return Boolean(response);
-              }}
+              onCreateSchool={handleCreateSchool}
             />
           ) : null}
 

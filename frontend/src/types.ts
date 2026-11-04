@@ -361,7 +361,7 @@ export type PlatformAdminData = {
 export type NewSchoolPayload = {
   name: string;
   city: string;
-  classes: Array<{ name: string; weekly_goal: number }>;
+  classes: Array<{ name: string; weekly_goal?: number }>;
 };
 
 export type GradeEntry = {

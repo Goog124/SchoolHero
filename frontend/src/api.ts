@@ -145,6 +145,13 @@ export const api = {
     return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
   },
 
+  setName(firstName: string, lastName: string): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/profile/name', {
+      method: 'POST',
+      body: JSON.stringify({ first_name: firstName, last_name: lastName }),
+    });
+  },
+
   createSchool(payload: NewSchoolPayload): Promise<MutationResponse> {
     return request<MutationResponse>('/api/school/create', {
       method: 'POST',

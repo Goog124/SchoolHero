@@ -41,6 +41,8 @@ export type Viewer = {
   city: string;
   invite_code?: string;
   is_platform_admin: boolean;
+  /** Педагог или директор без имени: сначала спрашиваем имя. */
+  needs_name: boolean;
   xp: number;
   level: LevelInfo;
   sparks: number;

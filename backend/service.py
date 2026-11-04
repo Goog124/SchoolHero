@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date, datetime, time, timezone
 from typing import Any
@@ -34,7 +35,7 @@ from .game import (
     week_days,
     week_start_utc_sql,
 )
-from .security import DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
+from .security import DEFAULT_FIRST_NAME, DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
 
 
 class GameError(Exception):
@@ -129,10 +130,12 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
     if row is not None:
         if identity.kind == "max":
             updates = {}
-            if identity.first_name and identity.first_name != row["first_name"]:
-                updates["first_name"] = identity.first_name
-            if identity.last_name and identity.last_name != row["last_name"]:
-                updates["last_name"] = identity.last_name
+            # A name typed by the person is never replaced by MAX data.
+            if not row["name_locked"]:
+                if identity.first_name and identity.first_name != row["first_name"]:
+                    updates["first_name"] = identity.first_name
+                if identity.last_name and identity.last_name != row["last_name"]:
+                    updates["last_name"] = identity.last_name
             if identity.username and identity.username != row["username"]:
                 updates["username"] = identity.username
             if identity.photo_url and identity.photo_url != row["photo_url"]:
@@ -167,7 +170,7 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 ).fetchone()
         return row
 
-    initial_name = identity.first_name or "Герой"
+    initial_name = identity.first_name or DEFAULT_FIRST_NAME
     last_name = identity.last_name or ""
     demo = identity.kind == "demo"
     role = identity.role_hint if identity.kind == "max" else "student"
@@ -1095,6 +1098,10 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "city": school_row["city"] if school_row else "",
         "invite_code": (class_row["invite_code"] or "") if class_row else "",
         "is_platform_admin": is_platform_admin(viewer, settings),
+        # Teachers and directors are asked for a name when they have none.
+        "needs_name": role in {"teacher", "director"}
+        and not viewer["name_locked"]
+        and (not viewer["first_name"] or viewer["first_name"] == DEFAULT_FIRST_NAME),
         "xp": int(viewer["xp"]),
         "level": level,
         "sparks": int(viewer["sparks"]),
@@ -1391,19 +1398,41 @@ def join_school_class(
     }
 
 
-def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
+_NAME_RE = re.compile(r"[^\W\d_](?:[^\W\d_]|[ .'\u2019\-])*")
+
+
+def _parse_name(viewer: sqlite3.Row, payload: dict[str, Any]) -> tuple[str, str]:
+    """Name rules shared by onboarding and the profile: first name 2-24 chars,
+    last name up to 32; one "Имя Фамилия" field is accepted too."""
     entered_name = " ".join(str(payload.get("first_name", "")).split())
     if not 2 <= len(entered_name) <= 24:
         raise GameError("Имя должно быть от 2 до 24 символов")
     parts = entered_name.split()
     first_name = parts[0]
-    raw_last_name = str(payload.get("last_name", "")).strip()
+    raw_last_name = " ".join(str(payload.get("last_name", "")).split())
     if raw_last_name:
         last_name = raw_last_name[:32]
     elif len(parts) > 1:
         last_name = " ".join(parts[1:])[:32]
     else:
         last_name = viewer["last_name"]
+    typed = [first_name] + ([last_name] if (raw_last_name or len(parts) > 1) else [])
+    for value in typed:
+        if value and not _NAME_RE.fullmatch(value):
+            raise GameError("Имя и фамилия: только буквы, пробел, дефис, точка и апостроф")
+    return first_name, last_name
+
+
+def set_profile_name(conn, viewer: sqlite3.Row, payload: dict[str, Any]) -> None:
+    first_name, last_name = _parse_name(viewer, payload)
+    conn.execute(
+        "UPDATE users SET first_name = ?, last_name = ?, name_locked = 1 WHERE id = ?",
+        (first_name, last_name, viewer["id"]),
+    )
+
+
+def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
+    first_name, last_name = _parse_name(viewer, payload)
 
     target_class_id = viewer["class_id"]
     new_role = viewer["role"]
@@ -1433,7 +1462,7 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
     avatar.update(allowed)
     conn.execute(
         "UPDATE users SET first_name = ?, last_name = ?, class_id = ?, role = ?, avatar = ?, "
-        "onboarded = 1 WHERE id = ?",
+        "onboarded = 1, name_locked = 1 WHERE id = ?",
         (first_name, last_name, target_class_id, new_role, dump_avatar(avatar), viewer["id"]),
     )
 

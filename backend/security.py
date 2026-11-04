@@ -19,6 +19,8 @@ from .config import Settings
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 DEMO_CLIENT_ID = "demo-viewer"
+# Name given to a user MAX did not name; staff are asked for a real one.
+DEFAULT_FIRST_NAME = "Герой"
 DEMO_FIRST_NAME = "Глеб"
 DEMO_LAST_NAME = "Кузнецов"
 DEMO_USERNAME = "gleb"
@@ -97,7 +99,7 @@ def identity_from_request(
             kind="sandbox",
             max_user_id=None,
             client_id=client_id,
-            first_name="Герой",
+            first_name=DEFAULT_FIRST_NAME,
             last_name="",
             username="",
             photo_url="",
@@ -121,7 +123,7 @@ def identity_from_request(
             kind="max",
             max_user_id=max_user_id,
             client_id=None,
-            first_name=str(user.get("first_name") or "Герой")[:64],
+            first_name=str(user.get("first_name") or DEFAULT_FIRST_NAME)[:64],
             last_name=str(user.get("last_name") or "")[:64],
             username=str(user.get("username") or "")[:64],
             photo_url=str(user.get("photo_url") or "")[:512],

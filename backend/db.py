@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS users (
     preview_role TEXT,
     class_id INTEGER REFERENCES classes(id),
     school_id INTEGER REFERENCES schools(id),
+    name_locked INTEGER NOT NULL DEFAULT 0,
     xp INTEGER NOT NULL DEFAULT 0 CHECK(xp >= 0),
     sparks INTEGER NOT NULL DEFAULT 0 CHECK(sparks >= 0),
     streak INTEGER NOT NULL DEFAULT 0,
@@ -222,8 +223,12 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     if "teacher_code" not in class_cols:
         conn.execute("ALTER TABLE classes ADD COLUMN teacher_code TEXT")
 
-    if "school_id" not in _columns(conn, "users"):
+    user_cols = _columns(conn, "users")
+    if "school_id" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN school_id INTEGER REFERENCES schools(id)")
+    if "name_locked" not in user_cols:
+        # 1 = the name was typed by the person; MAX data must not overwrite it.
+        conn.execute("ALTER TABLE users ADD COLUMN name_locked INTEGER NOT NULL DEFAULT 0")
 
     school_cols = _columns(conn, "schools")
     if "status" not in school_cols:

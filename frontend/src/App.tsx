@@ -4,6 +4,7 @@ import { AppHeader } from './components/AppHeader';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
 import { DesktopSidebar } from './components/DesktopSidebar';
+import { NameScreen } from './components/NameScreen';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SandboxBar } from './components/SandboxBar';
 import { Sheet } from './components/Sheet';
@@ -496,6 +497,19 @@ export default function App() {
     void load();
   };
 
+  /** Возвращает текст ошибки или null. Имя сохраняется на сервере и не затирается данными MAX. */
+  const handleSetName = async (firstName: string, lastName: string): Promise<string | null> => {
+    try {
+      const response = await api.setName(firstName, lastName);
+      setState(response.state);
+      showToast('Имя сохранено', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось сохранить имя.';
+    }
+  };
+
   const goToRoleHome = (role: 'student' | 'teacher' | 'director', next?: TabId) => {
     const target: TabId =
       next ?? (role === 'director' ? 'director-overview' : role === 'teacher' ? 'teacher-class' : 'hero');
@@ -693,6 +707,19 @@ export default function App() {
       />
     ) : null;
 
+  // Педагог и директор без имени: имя спрашиваем до остальных экранов.
+  // Пользователю без роли (ученику) имя спрашивает онбординг.
+  if (state.viewer.needs_name && state.viewer.role !== 'student') {
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          <NameScreen onSubmit={handleSetName} />
+        </div>
+      </div>
+    );
+  }
+
   // Ученик без профиля или без класса проходит регистрацию. В демо класс есть всегда.
   const needsRegistration =
     state.viewer.role === 'student' && (!state.viewer.onboarded || !state.viewer.class_id);
@@ -870,6 +897,7 @@ export default function App() {
             <ProfileScreen
               state={state}
               onNavigate={navigate}
+              onChangeName={handleSetName}
               theme={theme}
               onThemeChange={setTheme}
             />

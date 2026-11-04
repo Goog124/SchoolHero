@@ -28,6 +28,7 @@ from .service import (
     join_school_class,
     lookup_class_by_code,
     reset_demo,
+    set_profile_name,
     review_completion,
     save_onboarding,
     submit_challenge,
@@ -108,6 +109,11 @@ class CodeResetBody(BaseModel):
 
 class SchoolStatusBody(BaseModel):
     status: str = Field(max_length=10)
+
+
+class NameBody(BaseModel):
+    first_name: str = Field(min_length=2, max_length=24)
+    last_name: str = Field(default="", max_length=32)
 
 
 class OnboardingBody(BaseModel):
@@ -287,6 +293,13 @@ def admin_school_status(
     school_id: int, payload: SchoolStatusBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.set_school_status(ctx.conn, ctx.user, ctx.settings, school_id, payload.status)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/profile/name")
+def profile_name(payload: NameBody, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    set_profile_name(ctx.conn, ctx.user, payload.model_dump())
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 

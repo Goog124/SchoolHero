@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
-import { AvatarFrame } from '../components/AvatarFrame';
+import { AvatarFrame, frameUnit } from '../components/AvatarFrame';
 import { HERO_GRID, HERO_PARTS, PixelHero } from '../components/PixelHero';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatSparks } from '../game';
@@ -8,12 +8,22 @@ import { tapHaptic } from '../max';
 import type { AvatarConfig, Cosmetic, GameState } from '../types';
 import '../styles/wardrobe.css';
 
-export type WardrobeZone = 'hair' | 'hair_color' | 'outfit' | 'accessory' | 'skin' | 'frame';
+export type WardrobeZone =
+  | 'hair'
+  | 'hair_color'
+  | 'outfit'
+  | 'hat'
+  | 'face'
+  | 'accessory'
+  | 'skin'
+  | 'frame';
 
 const ZONES: { id: WardrobeZone; label: string; avatarKey: keyof AvatarConfig }[] = [
   { id: 'hair', label: 'Причёска', avatarKey: 'hair' },
   { id: 'hair_color', label: 'Цвет волос', avatarKey: 'hairColor' },
   { id: 'outfit', label: 'Одежда', avatarKey: 'outfit' },
+  { id: 'hat', label: 'Шапки', avatarKey: 'hat' },
+  { id: 'face', label: 'Лицо', avatarKey: 'face' },
   { id: 'accessory', label: 'Аксессуары', avatarKey: 'accessory' },
   { id: 'skin', label: 'Кожа', avatarKey: 'skin' },
   { id: 'frame', label: 'Рамка', avatarKey: 'frame' },
@@ -21,10 +31,10 @@ const ZONES: { id: WardrobeZone; label: string; avatarKey: keyof AvatarConfig }[
 
 /* ---------- Камера ----------
  * Мир камеры = квадрат AvatarFrame со стороной S = min(ширина, высота сцены).
- * Внутри рамки (border 1 + padding 3 + inset 3 = 4px с каждой стороны, см. app.css
- * .avatar-frame) область I = S - 8; герой занимает 72% ширины I, центрирован по
- * горизонтали и прижат к низу с отступом 5% I. Размер клетки сетки героя
- * u = 0.72·I / HERO_GRID.w, левый верх героя = (4 + 0.14·I, 4 + 0.005·I).
+ * Рамка отступает t = 4·frameUnit(S) px с каждой стороны (styles/frames.css), внутри
+ * область I = S - 2t; герой занимает 72% ширины I, центрирован по горизонтали и
+ * прижат к низу с отступом 5% I. Размер клетки сетки героя u = 0.72·I / HERO_GRID.w,
+ * левый верх героя = (t + 0.14·I, t + 0.005·I).
  * Прямоугольник интереса (в клетках) переводим в пиксели мира, масштаб k подбираем
  * так, чтобы он вписался в сцену с запасом PAD, и сдвигаем его центр в центр сцены.
  */
@@ -44,10 +54,11 @@ function cameraTransform(rect: Rect | 'portrait', box: Box): { world: CSSPropert
   let py1 = S;
   let pad = 1;
   if (rect !== 'portrait') {
-    const I = S - 8;
+    const t = 4 * frameUnit(S);
+    const I = S - 2 * t;
     const u = (0.72 * I) / HERO_GRID.w;
-    const ox = 4 + 0.14 * I;
-    const oy = 4 + 0.005 * I;
+    const ox = t + 0.14 * I;
+    const oy = t + 0.005 * I;
     px0 = ox + rect.x0 * u;
     px1 = ox + rect.x1 * u;
     py0 = oy + rect.y0 * u;
@@ -74,20 +85,48 @@ function cameraTransform(rect: Rect | 'portrait', box: Box): { world: CSSPropert
   };
 }
 
-function rectFor(zone: WardrobeZone, accessoryId: string): Rect | 'portrait' {
+const NECK_ITEMS = ['scarf', 'bowtie', 'tie', 'necklace', 'medal', 'badge'];
+const BODY_ITEMS = ['wings', 'cape', 'backpack'];
+
+/** Какой частью героя показывать предмет: и для камеры, и для миниатюры. */
+function viewFor(zone: WardrobeZone, itemId: string): keyof typeof HERO_PARTS | 'portrait' {
   switch (zone) {
     case 'hair':
     case 'hair_color':
-      return HERO_PARTS.head;
-    case 'outfit':
-      return HERO_PARTS.torso;
+    case 'hat':
+      return 'head';
+    case 'face':
     case 'skin':
-      return HERO_PARTS.face;
+      return 'face';
+    case 'outfit':
+      return 'torso';
     case 'accessory':
-      return accessoryId === 'scarf' ? HERO_PARTS.neck : HERO_PARTS.head;
+      if (NECK_ITEMS.includes(itemId)) return 'neck';
+      if (BODY_ITEMS.includes(itemId)) return 'body';
+      return 'head';
     default:
       return 'portrait';
   }
+}
+
+function rectFor(zone: WardrobeZone, itemId: string): Rect | 'portrait' {
+  const view = viewFor(zone, itemId);
+  return view === 'portrait' ? 'portrait' : HERO_PARTS[view];
+}
+
+const RARITY_LABEL: Record<string, string> = {
+  common: 'Обычное',
+  rare: 'Редкое',
+  epic: 'Эпическое',
+  legendary: 'Легендарное',
+};
+
+/** Ширина миниатюры (px) так, чтобы кадр влез в 100x64. */
+function thumbSize(view: keyof typeof HERO_PARTS): number {
+  const p = HERO_PARTS[view];
+  const w = p.x1 - p.x0;
+  const h = p.y1 - p.y0;
+  return Math.round(Math.min(100, (64 * w) / h));
 }
 
 type WardrobeScreenProps = {
@@ -109,7 +148,8 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
 
   const zone = ZONES.find((z) => z.id === zoneId) ?? ZONES[0];
   const items = useMemo(() => cosmetics.filter((c) => c.type === zone.id), [cosmetics, zone.id]);
-  const equippedId = viewer.avatar[zone.avatarKey];
+  const equippedId =
+    viewer.avatar[zone.avatarKey] ?? (zone.id === 'hat' ? 'hat_none' : zone.id === 'face' ? 'face_none' : '');
   const selected = items.find((c) => c.id === selectedId) ?? null;
   const preview: AvatarConfig = selected
     ? { ...viewer.avatar, [zone.avatarKey]: selected.id }
@@ -126,7 +166,8 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
     return () => ro.disconnect();
   }, []);
 
-  const camera = box ? cameraTransform(rectFor(zone.id, preview.accessory), box) : null;
+  const focusId = String(preview[zone.avatarKey] ?? '');
+  const camera = box ? cameraTransform(rectFor(zone.id, focusId), box) : null;
 
   const canBuy = (item: Cosmetic) =>
     !item.unlocked && !item.owned && item.price > 0 && viewer.level.level >= item.unlock_level;
@@ -300,12 +341,26 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
                         ) : zone.id === 'frame' ? (
                           <AvatarFrame avatar={thumbAvatar} size={56} decorative />
                         ) : (
-                          <PixelHero avatar={thumbAvatar} size={44} decorative />
+                          (() => {
+                            const v = viewFor(zone.id, item.id);
+                            const view = v === 'portrait' ? 'body' : v;
+                            return (
+                              <PixelHero
+                                avatar={thumbAvatar}
+                                size={thumbSize(view)}
+                                view={view}
+                                decorative
+                              />
+                            );
+                          })()
                         )}
                       </span>
                       <span className="wd-item__name">{item.name}</span>
                       <span className={`wd-item__state${status.on ? ' wd-item__state--on' : ''}`}>
                         {status.text}
+                      </span>
+                      <span className={`wd-item__rarity wd-item__rarity--${item.rarity ?? 'common'}`}>
+                        {RARITY_LABEL[item.rarity ?? 'common']}
                       </span>
                     </button>
                   );

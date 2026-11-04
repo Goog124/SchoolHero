@@ -1,4 +1,13 @@
 import type { AvatarConfig } from '../types';
+import {
+  AccessoryFront,
+  BackItems,
+  FaceLayer,
+  HatLayer,
+  NewOutfit,
+  R,
+  isNewOutfit,
+} from './heroItems';
 
 type Palette = {
   base: string;
@@ -21,6 +30,10 @@ const HAIR: Record<string, { base: string; dark: string; light: string }> = {
   hair_blonde: { base: '#e7c56a', dark: '#b18d36', light: '#f7e3a5' },
   hair_violet: { base: '#8b5cf6', dark: '#5f35c4', light: '#c0a9ff' },
   hair_blue: { base: '#3b82f6', dark: '#1d4ed8', light: '#9bc6ff' },
+  hair_pink: { base: '#ec4899', dark: '#9d174d', light: '#f9a8d4' },
+  hair_white: { base: '#e5e7eb', dark: '#9ca3af', light: '#ffffff' },
+  hair_green: { base: '#22c55e', dark: '#15803d', light: '#86efac' },
+  hair_teal: { base: '#14b8a6', dark: '#0f766e', light: '#5eead4' },
 };
 
 const OUTFIT: Record<
@@ -28,6 +41,10 @@ const OUTFIT: Record<
   { main: string; dark: string; light: string; accent: string }
 > = {
   hoodie_violet: { main: '#8b5cf6', dark: '#5b2ea6', light: '#bda7ff', accent: '#f0abfc' },
+  hoodie_red: { main: '#ef4444', dark: '#991b1b', light: '#fca5a5', accent: '#fde68a' },
+  hoodie_green: { main: '#22c55e', dark: '#15803d', light: '#86efac', accent: '#fef08a' },
+  armor_bronze: { main: '#b87333', dark: '#6b3a15', light: '#e6a468', accent: '#fbbf24' },
+  armor_gold: { main: '#fbbf24', dark: '#a16207', light: '#fef08a', accent: '#ef4444' },
   hoodie_cyan: { main: '#22d3ee', dark: '#0e7490', light: '#89ecf8', accent: '#fef08a' },
   sweater_gold: { main: '#fbbf24', dark: '#a85c08', light: '#fde68a', accent: '#78350f' },
   jacket_blue: { main: '#3b82f6', dark: '#1e40af', light: '#93c5fd', accent: '#e0f2fe' },
@@ -49,7 +66,10 @@ export const HERO_PARTS = {
   face: { x0: 7, y0: 2, x1: 25, y1: 19 },
   neck: { x0: 6, y0: 9, x1: 26, y1: 27 },
   torso: { x0: 3, y0: 17, x1: 29, y1: 33 },
+  body: { x0: 0, y0: 0, x1: 32, y1: 42 },
 } as const;
+
+const HERO_VIEWS = HERO_PARTS;
 
 const OUTLINE = '#180c29';
 const PANTS = '#2a1b3e';
@@ -64,25 +84,9 @@ type PixelHeroProps = {
   className?: string;
   decorative?: boolean;
   animate?: boolean;
+  /** Кадр: целиком (по умолчанию) или часть героя для миниатюр предметов. */
+  view?: keyof typeof HERO_VIEWS;
 };
-
-function R({
-  x,
-  y,
-  w,
-  h,
-  fill,
-  opacity,
-}: {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  fill: string;
-  opacity?: number;
-}) {
-  return <rect x={x} y={y} width={w} height={h} fill={fill} opacity={opacity} />;
-}
 
 function BackHair({ style, colors }: { style: string; colors: { base: string; dark: string; light: string } }) {
   if (style === 'hair_bob') {
@@ -110,6 +114,39 @@ function BackHair({ style, colors }: { style: string; colors: { base: string; da
       </g>
     );
   }
+  if (style === 'hair_long') {
+    return (
+      <g>
+        <R x={6} y={7} w={4} h={19} fill={OUTLINE} />
+        <R x={22} y={7} w={4} h={19} fill={OUTLINE} />
+        <R x={7} y={8} w={2} h={17} fill={colors.base} />
+        <R x={23} y={8} w={2} h={17} fill={colors.base} />
+        <R x={7} y={18} w={2} h={6} fill={colors.dark} />
+        <R x={23} y={18} w={2} h={6} fill={colors.dark} />
+      </g>
+    );
+  }
+  if (style === 'hair_afro') {
+    return (
+      <g>
+        <R x={10} y={0} w={12} h={1} fill={OUTLINE} />
+        <R x={7} y={1} w={18} h={1} fill={OUTLINE} />
+        <R x={5} y={2} w={22} h={2} fill={OUTLINE} />
+        <R x={4} y={4} w={24} h={9} fill={OUTLINE} />
+        <R x={5} y={13} w={22} h={2} fill={OUTLINE} />
+        <R x={11} y={1} w={10} h={1} fill={colors.base} />
+        <R x={8} y={2} w={16} h={1} fill={colors.base} />
+        <R x={6} y={3} w={20} h={2} fill={colors.base} />
+        <R x={5} y={5} w={22} h={8} fill={colors.base} />
+        <R x={6} y={13} w={20} h={1} fill={colors.dark} />
+        <R x={7} y={6} w={1} h={1} fill={colors.dark} />
+        <R x={24} y={8} w={1} h={1} fill={colors.dark} />
+        <R x={6} y={10} w={1} h={1} fill={colors.dark} />
+        <R x={25} y={11} w={1} h={1} fill={colors.dark} />
+        <R x={9} y={2} w={3} h={1} fill={colors.light} opacity={0.5} />
+      </g>
+    );
+  }
   if (style === 'hair_curls') {
     return (
       <g>
@@ -128,10 +165,67 @@ function BackHair({ style, colors }: { style: string; colors: { base: string; da
 function FrontHair({
   style,
   colors,
+  skin,
 }: {
   style: string;
   colors: { base: string; dark: string; light: string };
+  skin: string;
 }) {
+  if (style === 'hair_bald') {
+    return (
+      <g>
+        <R x={10} y={4} w={12} h={1} fill={skin} />
+        <R x={12} y={5} w={3} h={1} fill="#ffffff" opacity={0.22} />
+      </g>
+    );
+  }
+  if (style === 'hair_mohawk') {
+    return (
+      <g>
+        <R x={10} y={4} w={12} h={1} fill={skin} />
+        <R x={10} y={5} w={4} h={2} fill={colors.dark} opacity={0.3} />
+        <R x={18} y={5} w={4} h={2} fill={colors.dark} opacity={0.3} />
+        <R x={13} y={0} w={6} h={1} fill={OUTLINE} />
+        <R x={13} y={1} w={1} h={7} fill={OUTLINE} />
+        <R x={18} y={1} w={1} h={7} fill={OUTLINE} />
+        <R x={14} y={1} w={4} h={7} fill={colors.base} />
+        <R x={17} y={3} w={1} h={5} fill={colors.dark} />
+        <R x={14} y={1} w={1} h={4} fill={colors.light} opacity={0.7} />
+      </g>
+    );
+  }
+  if (style === 'hair_long' || style === 'hair_braids') {
+    return (
+      <g>
+        <ShortFront colors={colors} />
+        {style === 'hair_long' ? (
+          <g>
+            <R x={7} y={17} w={4} h={10} fill={OUTLINE} />
+            <R x={21} y={17} w={4} h={10} fill={OUTLINE} />
+            <R x={8} y={17} w={2} h={9} fill={colors.base} />
+            <R x={22} y={17} w={2} h={9} fill={colors.base} />
+            <R x={8} y={22} w={2} h={4} fill={colors.dark} />
+            <R x={22} y={22} w={2} h={4} fill={colors.dark} />
+          </g>
+        ) : (
+          <g>
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+              <g key={i}>
+                <R x={6} y={12 + i * 2} w={3} h={2} fill={OUTLINE} />
+                <R x={23} y={12 + i * 2} w={3} h={2} fill={OUTLINE} />
+                <R x={7} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.dark : colors.base} />
+                <R x={24} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.dark : colors.base} />
+                <R x={8} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.base : colors.dark} />
+                <R x={23} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.base : colors.dark} />
+              </g>
+            ))}
+            <R x={6} y={28} w={3} h={1} fill="#f472b6" />
+            <R x={23} y={28} w={3} h={1} fill="#f472b6" />
+          </g>
+        )}
+      </g>
+    );
+  }
   if (style === 'hair_buzz') {
     return (
       <g>
@@ -211,7 +305,11 @@ function FrontHair({
       </g>
     );
   }
-  // short
+  // short (и афро: объём сзади)
+  return <ShortFront colors={colors} />;
+}
+
+function ShortFront({ colors }: { colors: { base: string; dark: string; light: string } }) {
   return (
     <g>
       <R x={10} y={3} w={12} h={1} fill={colors.dark} />
@@ -237,6 +335,7 @@ function Outfit({
   id: string;
   skin: Palette;
 }) {
+  if (isNewOutfit(id)) return <NewOutfit id={id} skin={skin} />;
   const colors = OUTFIT[id] ?? OUTFIT.hoodie_violet;
 
   if (id === 'cloak_violet') {
@@ -266,7 +365,7 @@ function Outfit({
     );
   }
 
-  if (id === 'armor_silver') {
+  if (id.startsWith('armor_')) {
     return (
       <g>
         <R x={8} y={20} w={16} h={11} fill={colors.dark} />
@@ -489,25 +588,48 @@ export function PixelHero({
   className,
   decorative = false,
   animate = false,
+  view,
 }: PixelHeroProps) {
   const skin = SKIN[avatar.skin] ?? SKIN.skin_light;
   const hair = HAIR[avatar.hairColor] ?? HAIR.hair_dark;
-  const outfitId = OUTFIT[avatar.outfit] ? avatar.outfit : 'hoodie_violet';
-  const hairStyle = ['hair_short', 'hair_curls', 'hair_bob', 'hair_pony', 'hair_buzz'].includes(
-    avatar.hair,
-  )
+  const outfitId =
+    OUTFIT[avatar.outfit] || isNewOutfit(avatar.outfit) ? avatar.outfit : 'hoodie_violet';
+  const hairStyle = [
+    'hair_short',
+    'hair_curls',
+    'hair_bob',
+    'hair_pony',
+    'hair_buzz',
+    'hair_long',
+    'hair_bald',
+    'hair_afro',
+    'hair_braids',
+    'hair_mohawk',
+  ].includes(avatar.hair)
     ? avatar.hair
     : 'hair_short';
+  const hat = avatar.hat && avatar.hat !== 'hat_none' ? avatar.hat : null;
+  const face = avatar.face && avatar.face !== 'face_none' ? avatar.face : null;
+  // Старые «головные» аксессуары уступают место новым слотам hat и face.
+  const legacy =
+    (hat && ['cap', 'crown', 'halo'].includes(avatar.accessory)) ||
+    (face && avatar.accessory === 'glasses')
+      ? 'none'
+      : avatar.accessory;
+  const crop = view ? HERO_VIEWS[view] : null;
+  const vb = crop
+    ? { x: crop.x0, y: crop.y0, w: crop.x1 - crop.x0, h: crop.y1 - crop.y0 }
+    : { x: 0, y: 0, w: 32, h: 42 };
 
   return (
     <svg
-      viewBox="0 0 32 42"
+      viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
       className={className}
       style={{
         width: size ? `${size}px` : '100%',
-        height: size ? `${(size * 42) / 32}px` : 'auto',
+        height: size ? `${(size * vb.h) / vb.w}px` : 'auto',
         display: 'block',
-        overflow: 'visible',
+        overflow: view ? 'hidden' : 'visible',
       }}
       shapeRendering="crispEdges"
       role={decorative ? undefined : 'img'}
@@ -525,6 +647,7 @@ export function PixelHero({
         `}</style>
       ) : null}
       <g className={animate ? 'pixel-hero-bob' : undefined}>
+        <BackItems outfit={outfitId} accessory={avatar.accessory} />
         <BackHair style={hairStyle} colors={hair} />
 
         {/* silhouette */}
@@ -593,8 +716,11 @@ export function PixelHero({
           </g>
         ) : null}
 
-        <FrontHair style={hairStyle} colors={hair} />
-        <Accessory id={avatar.accessory} />
+        <FrontHair style={hairStyle} colors={hair} skin={skin.base} />
+        {face ? <FaceLayer id={face} /> : null}
+        <Accessory id={legacy} />
+        <AccessoryFront id={avatar.accessory} />
+        {hat ? <HatLayer id={hat} /> : null}
       </g>
     </svg>
   );

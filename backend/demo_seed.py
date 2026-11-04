@@ -215,12 +215,22 @@ def _avatar_for(index: int, xp: int) -> dict[str, str]:
         5: ["halo", "crown"],
     }
     frames = ["frame_wood", "frame_neon", "frame_gold", "frame_galaxy"]
+    hats = {
+        1: ["hat_none", "hat_cap", "hat_beanie"],
+        2: ["hat_none", "hat_cowboy", "hat_cat"],
+        3: ["hat_wizard", "hat_none", "hat_bunny"],
+        4: ["hat_laurel", "hat_pirate", "hat_none"],
+        5: ["hat_astro", "hat_none", "hat_laurel"],
+    }
+    faces = ["face_none", "glasses_round", "face_none", "shades", "mustache"]
     return {
         "skin": skins[index % len(skins)],
         "hair": hairs[index % len(hairs)],
         "hairColor": hair_colors[(index * 2 + 1) % len(hair_colors)],
         "outfit": outfits_by_level[level][index % len(outfits_by_level[level])],
         "accessory": accessories_by_level[level][index % len(accessories_by_level[level])],
+        "hat": hats[level][index % len(hats[level])],
+        "face": faces[index % len(faces)] if level >= 2 else "face_none",
         "frame": frames[min(level - 1, len(frames) - 1)],
     }
 

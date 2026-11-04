@@ -262,6 +262,27 @@
   font-weight: 600;
 }
 
+.wd-item__rarity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-secondary);
+}
+
+.wd-item__rarity::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--wd-rarity, #94a3b8);
+}
+
+.wd-item__rarity--common { --wd-rarity: #94a3b8; }
+.wd-item__rarity--rare { --wd-rarity: #3b82f6; }
+.wd-item__rarity--epic { --wd-rarity: #a855f7; }
+.wd-item__rarity--legendary { --wd-rarity: #f59e0b; }
+
 .wd-empty {
   margin: 0;
   padding: 16px;

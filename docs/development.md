@@ -153,9 +153,20 @@ npm run build          # tsc --noEmit && vite build, вывод в ../static (em
 
 ### Предмет гардероба
 
-1. `backend/game.py`: новый `Cosmetic(id, type, name, unlock_level, price, swatch, description)` в `COSMETICS`. Типы: `skin`, `hair`, `hair_color`, `outfit`, `accessory`, `frame`. `price > 0` - покупается за искры, иначе открывается уровнем.
-2. Фронтенд рисует героя из идентификаторов: добавьте отображение в `components/PixelHero.tsx` (цвета одежды и т. п.) и, если нужно, в `screens/WardrobeScreen.tsx`.
-3. Сам список предметов фронтенд получает из `state.cosmetics`, дублировать его не надо. Для нового типа предмета добавьте ключ в `AVATAR_KEYS` и тип в `CosmeticType` (`types.ts`).
+Единый источник данных - `backend/game.py`, рисунок живёт на фронтенде и ищется по `id`.
+
+1. `backend/game.py`: одна строка в `COSMETICS` в формате `_c(id, слот, название, уровень, цена, цвет-образец[, описание[, редкость]])`. Слоты: `skin`, `hair`, `hair_color`, `outfit`, `hat` (головные уборы), `face` (очки, маски, усы), `accessory` (шея, грудь, спина), `frame`. `price > 0` - покупается за искры (и нужен уровень), иначе открывается уровнем. Уровни 1-5. Редкость (`common`, `rare`, `epic`, `legendary`) по умолчанию выводится из уровня, можно задать явно.
+2. Рисунок на сетке 32x42 (`HERO_GRID`):
+   - головной убор: запись в таблице `HATS` в `components/heroItems.tsx` (строки-половинки спрайта, зеркалятся относительно центра); особые случаи - отдельной веткой в `HatLayer`;
+   - лицо: `FACE` (список спрайтов с абсолютными координатами) или ветка в `FaceLayer`;
+   - аксессуар: `ACCESSORY_FRONT` (поверх тела) и/или `BackItems` (за телом: плащ, крылья, сумка);
+   - одежда: цвета в `OUTFIT` (`PixelHero.tsx`) для худи и брони, новые виды - ветка в `NewOutfit` (`heroItems.tsx`);
+   - причёска / цвет волос: `PixelHero.tsx` (`FrontHair`, `BackHair`, `HAIR`);
+   - рамка: правило `.avatar-frame--<id>` в `styles/frames.css` (цвета `--f-base`, `--f-out`, `--f-in` и SVG-плитка 8x8 в `--f-tile`).
+3. Слои снизу вверх: задние предметы, задние волосы, тело, одежда, шея и голова, передние волосы, лицо, аксессуар, головной убор. Шляпа перекрывает причёску, а старые «головные» аксессуары (`cap`, `crown`, `halo`, `glasses`) прячутся, если выбран `hat` или `face`.
+4. Гардероб сам берёт список из `state.cosmetics`. Камера и миниатюра выбирают кадр по слоту (функция `viewFor` в `WardrobeScreen.tsx`, части героя в `HERO_PARTS`).
+5. Новый слот: ключ в `AVATAR_KEYS` и значение по умолчанию в `DEFAULT_AVATAR` (старые аватары в БД без ключа получают его при загрузке, миграция не нужна), тип в `COSMETIC_TYPES`, `CosmeticType` и `AvatarConfig` в `types.ts`, вкладка в `ZONES` гардероба.
+6. Проверка: `tests/test_cosmetics.py` падает, если у id из каталога нет рисунка (ищет id в `PixelHero.tsx`, `heroItems.tsx`, `AvatarFrame.tsx`, `frames.css`), если у рамки нет своего стиля, или если поля предмета некорректны.
 
 ### Эндпоинт
 

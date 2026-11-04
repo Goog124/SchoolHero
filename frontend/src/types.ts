@@ -4,6 +4,9 @@ export type AvatarConfig = {
   hairColor: string;
   outfit: string;
   accessory: string;
+  /** Новые слоты: у старых данных могут отсутствовать. */
+  hat?: string;
+  face?: string;
   frame: string;
 };
 
@@ -181,6 +184,8 @@ export type CosmeticType =
   | 'hair'
   | 'hair_color'
   | 'outfit'
+  | 'hat'
+  | 'face'
   | 'accessory'
   | 'frame';
 
@@ -192,6 +197,7 @@ export type Cosmetic = {
   price: number;
   swatch: string;
   description: string;
+  rarity?: 'common' | 'rare' | 'epic' | 'legendary';
   owned: boolean;
   unlocked: boolean;
   equipped: boolean;

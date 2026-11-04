@@ -135,6 +135,14 @@ users 1---N xp_events,  users 1---N activity_days
 
 Все шаги идемпотентны. Для изменения схемы добавляйте `CREATE TABLE IF NOT EXISTS` в `SCHEMA` или проверку колонки в `_migrate_columns`; откатов нет, перед обновлением делайте резервную копию ([deploy.md](deploy.md)).
 
+## Гардероб и образ героя
+
+- Каталог предметов - `COSMETICS` в `backend/game.py`; он же источник правил (уровень, цена, слот, редкость). `GET /api/state` отдаёт его в `cosmetics` вместе с флагами `owned`, `unlocked`, `equipped`.
+- Образ героя хранится в `users.avatar` как JSON по слотам: `skin`, `hair`, `hairColor`, `outfit`, `hat`, `face`, `accessory`, `frame`. `load_avatar` подставляет значения по умолчанию для отсутствующих или неподходящих по слоту ключей, поэтому старые записи работают без миграции. `validate_avatar_patch` проверяет слот, уровень и покупку.
+- Герой и магазин доступны только ученикам (`_require_student_hero` в `service.py`).
+- Фронтенд рисует героя по id: `components/PixelHero.tsx` (тело, волосы, цвета) и `components/heroItems.tsx` (одежда, шапки, лицо, аксессуары) на сетке 32x42; рамки - `components/AvatarFrame.tsx` + `styles/frames.css`.
+- Экран «Стиль» (`screens/WardrobeScreen.tsx`) - «летающая камера»: CSS transform на обёртке, кадр вычисляется из геометрии сетки (`HERO_PARTS`) и размера сцены.
+
 ## Роли и права
 
 Роль хранится в `users.role`. В демо эффективная роль берётся из `preview_role` (`effective_role`).

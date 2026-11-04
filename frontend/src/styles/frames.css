@@ -1,0 +1,168 @@
+/* Рамки аватара (AvatarFrame). Пиксельный стиль: ступенчатые углы, чёткие края,
+   узор из SVG-плитки 8x8 «единиц». Единица --af-u задаётся компонентом по размеру
+   (1px, 2px или 3px), толщина рамки = 4 единицы: край, узор (2), край.
+   Каждая рамка: --f-base (фон), --f-out/--f-in (линии краёв), --f-tile (узор). */
+
+.avatar-frame {
+  --af-u: 1px;
+  --f-tile: none;
+  --f-base: #94a3b8;
+  --f-out: #475569;
+  --f-in: #475569;
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-frame__ring {
+  position: absolute;
+  inset: 0;
+  background-color: var(--f-base);
+  background-image: var(--f-tile);
+  background-size: calc(8 * var(--af-u)) calc(8 * var(--af-u));
+  image-rendering: pixelated;
+  box-shadow: inset 0 0 0 var(--af-u) var(--f-out);
+  clip-path: polygon(
+    calc(2 * var(--af-u)) 0, calc(100% - 2 * var(--af-u)) 0,
+    calc(100% - 2 * var(--af-u)) var(--af-u), calc(100% - var(--af-u)) var(--af-u),
+    calc(100% - var(--af-u)) calc(2 * var(--af-u)), 100% calc(2 * var(--af-u)),
+    100% calc(100% - 2 * var(--af-u)), calc(100% - var(--af-u)) calc(100% - 2 * var(--af-u)),
+    calc(100% - var(--af-u)) calc(100% - var(--af-u)), calc(100% - 2 * var(--af-u)) calc(100% - var(--af-u)),
+    calc(100% - 2 * var(--af-u)) 100%, calc(2 * var(--af-u)) 100%,
+    calc(2 * var(--af-u)) calc(100% - var(--af-u)), var(--af-u) calc(100% - var(--af-u)),
+    var(--af-u) calc(100% - 2 * var(--af-u)), 0 calc(100% - 2 * var(--af-u)),
+    0 calc(2 * var(--af-u)), var(--af-u) calc(2 * var(--af-u)),
+    var(--af-u) var(--af-u), calc(2 * var(--af-u)) var(--af-u)
+  );
+}
+
+.avatar-frame__inner {
+  position: absolute;
+  inset: calc(4 * var(--af-u));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-subtle);
+  box-shadow: 0 0 0 var(--af-u) var(--f-in);
+}
+
+.avatar-frame__art {
+  position: relative;
+  z-index: 1;
+  width: 72%;
+  margin-bottom: 5%;
+}
+
+.avatar-frame__art svg {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+}
+
+.avatar-frame__level {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--sferum-blue);
+  color: var(--accent-contrast);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border: 2px solid var(--bg-card);
+}
+
+.avatar-frame--frame_wood {
+  --f-base: #a9774a;
+  --f-out: #5d3d1e;
+  --f-in: #5d3d1e;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23a9774a'/%3E%3Crect x='0' y='2' width='8' height='1' fill='%2394653a'/%3E%3Crect x='0' y='6' width='8' height='1' fill='%2394653a'/%3E%3Crect x='3' y='4' width='2' height='1' fill='%237a4f2a'/%3E%3Crect x='5' y='0' width='1' height='1' fill='%23c28f5c'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_neon {
+  --f-base: #3b0764;
+  --f-out: #1e0a3c;
+  --f-in: #67e8f9;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%233b0764'/%3E%3Crect x='0' y='2' width='5' height='2' fill='%23d946ef'/%3E%3Crect x='5' y='2' width='3' height='2' fill='%2367e8f9'/%3E%3Crect x='0' y='6' width='3' height='2' fill='%2367e8f9'/%3E%3Crect x='3' y='6' width='5' height='2' fill='%23d946ef'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_gold {
+  --f-base: #fbbf24;
+  --f-out: #7a4b08;
+  --f-in: #7a4b08;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23fbbf24'/%3E%3Crect x='0' y='0' width='2' height='2' fill='%23fde68a'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%23fde68a'/%3E%3Crect x='4' y='4' width='2' height='2' fill='%23fde68a'/%3E%3Crect x='6' y='6' width='2' height='2' fill='%23fde68a'/%3E%3Crect x='4' y='0' width='2' height='2' fill='%23b45309'/%3E%3Crect x='6' y='2' width='2' height='2' fill='%23b45309'/%3E%3Crect x='0' y='4' width='2' height='2' fill='%23b45309'/%3E%3Crect x='2' y='6' width='2' height='2' fill='%23b45309'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_galaxy {
+  --f-base: #1e1b4b;
+  --f-out: #0f0a2e;
+  --f-in: #818cf8;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%231e1b4b'/%3E%3Crect x='0' y='4' width='2' height='1' fill='%23312e81'/%3E%3Crect x='4' y='7' width='3' height='1' fill='%23312e81'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%23f0abfc'/%3E%3Crect x='5' y='3' width='1' height='1' fill='%23ffffff'/%3E%3Crect x='3' y='6' width='1' height='1' fill='%23818cf8'/%3E%3Crect x='7' y='0' width='1' height='1' fill='%23818cf8'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_checker {
+  --f-base: #f8fafc;
+  --f-out: #0f172a;
+  --f-in: #0f172a;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23f8fafc'/%3E%3Crect x='0' y='0' width='2' height='2' fill='%230f172a'/%3E%3Crect x='4' y='0' width='2' height='2' fill='%230f172a'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%230f172a'/%3E%3Crect x='6' y='2' width='2' height='2' fill='%230f172a'/%3E%3Crect x='0' y='4' width='2' height='2' fill='%230f172a'/%3E%3Crect x='4' y='4' width='2' height='2' fill='%230f172a'/%3E%3Crect x='2' y='6' width='2' height='2' fill='%230f172a'/%3E%3Crect x='6' y='6' width='2' height='2' fill='%230f172a'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_stars {
+  --f-base: #1e3a8a;
+  --f-out: #172554;
+  --f-in: #fde047;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%231e3a8a'/%3E%3Crect x='3' y='1' width='1' height='3' fill='%23fde047'/%3E%3Crect x='2' y='2' width='3' height='1' fill='%23fde047'/%3E%3Crect x='6' y='4' width='1' height='3' fill='%23fde047'/%3E%3Crect x='5' y='5' width='3' height='1' fill='%23fde047'/%3E%3Crect x='1' y='6' width='1' height='1' fill='%2393c5fd'/%3E%3Crect x='6' y='0' width='1' height='1' fill='%2393c5fd'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_bolt {
+  --f-base: #1f2937;
+  --f-out: #111827;
+  --f-in: #facc15;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%231f2937'/%3E%3Crect x='4' y='0' width='2' height='2' fill='%23facc15'/%3E%3Crect x='3' y='2' width='2' height='2' fill='%23facc15'/%3E%3Crect x='4' y='4' width='2' height='2' fill='%23facc15'/%3E%3Crect x='3' y='6' width='2' height='2' fill='%23facc15'/%3E%3Crect x='0' y='3' width='1' height='2' fill='%2338bdf8'/%3E%3Crect x='7' y='5' width='1' height='2' fill='%2338bdf8'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_leaf {
+  --f-base: #166534;
+  --f-out: #052e16;
+  --f-in: #86efac;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23166534'/%3E%3Crect x='1' y='1' width='3' height='1' fill='%234ade80'/%3E%3Crect x='2' y='2' width='3' height='1' fill='%234ade80'/%3E%3Crect x='3' y='3' width='2' height='1' fill='%234ade80'/%3E%3Crect x='5' y='5' width='3' height='1' fill='%234ade80'/%3E%3Crect x='4' y='6' width='3' height='1' fill='%234ade80'/%3E%3Crect x='0' y='4' width='2' height='1' fill='%2314532d'/%3E%3Crect x='6' y='1' width='2' height='1' fill='%2314532d'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_wave {
+  --f-base: #0369a1;
+  --f-out: #0c4a6e;
+  --f-in: #7dd3fc;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%230369a1'/%3E%3Crect x='0' y='2' width='2' height='1' fill='%237dd3fc'/%3E%3Crect x='2' y='1' width='2' height='1' fill='%237dd3fc'/%3E%3Crect x='4' y='1' width='2' height='1' fill='%237dd3fc'/%3E%3Crect x='6' y='2' width='2' height='1' fill='%237dd3fc'/%3E%3Crect x='0' y='6' width='2' height='1' fill='%2338bdf8'/%3E%3Crect x='2' y='5' width='2' height='1' fill='%2338bdf8'/%3E%3Crect x='4' y='5' width='2' height='1' fill='%2338bdf8'/%3E%3Crect x='6' y='6' width='2' height='1' fill='%2338bdf8'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_flame {
+  --f-base: #7f1d1d;
+  --f-out: #450a0a;
+  --f-in: #f97316;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%237f1d1d'/%3E%3Crect x='1' y='4' width='2' height='4' fill='%23f97316'/%3E%3Crect x='5' y='3' width='2' height='5' fill='%23f97316'/%3E%3Crect x='2' y='5' width='1' height='3' fill='%23fde047'/%3E%3Crect x='6' y='5' width='1' height='3' fill='%23fde047'/%3E%3Crect x='1' y='3' width='1' height='1' fill='%23ef4444'/%3E%3Crect x='5' y='2' width='1' height='1' fill='%23ef4444'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_rainbow {
+  --f-base: #ef4444;
+  --f-out: #1f2937;
+  --f-in: #f8fafc;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23ef4444'/%3E%3Crect x='0' y='0' width='2' height='2' fill='%23ef4444'/%3E%3Crect x='2' y='0' width='2' height='2' fill='%23facc15'/%3E%3Crect x='4' y='0' width='2' height='2' fill='%2322c55e'/%3E%3Crect x='6' y='0' width='2' height='2' fill='%233b82f6'/%3E%3Crect x='0' y='2' width='2' height='2' fill='%23facc15'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%2322c55e'/%3E%3Crect x='4' y='2' width='2' height='2' fill='%233b82f6'/%3E%3Crect x='6' y='2' width='2' height='2' fill='%23ef4444'/%3E%3Crect x='0' y='4' width='2' height='2' fill='%2322c55e'/%3E%3Crect x='2' y='4' width='2' height='2' fill='%233b82f6'/%3E%3Crect x='4' y='4' width='2' height='2' fill='%23ef4444'/%3E%3Crect x='6' y='4' width='2' height='2' fill='%23facc15'/%3E%3Crect x='0' y='6' width='2' height='2' fill='%233b82f6'/%3E%3Crect x='2' y='6' width='2' height='2' fill='%23ef4444'/%3E%3Crect x='4' y='6' width='2' height='2' fill='%23facc15'/%3E%3Crect x='6' y='6' width='2' height='2' fill='%2322c55e'/%3E%3C/svg%3E");
+}
+
+.avatar-frame--frame_digital {
+  --f-base: #052e16;
+  --f-out: #022c22;
+  --f-in: #22c55e;
+  --f-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23052e16'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%2322c55e'/%3E%3Crect x='3' y='2' width='1' height='2' fill='%234ade80'/%3E%3Crect x='6' y='1' width='1' height='1' fill='%2322c55e'/%3E%3Crect x='2' y='5' width='1' height='1' fill='%234ade80'/%3E%3Crect x='5' y='4' width='1' height='3' fill='%2322c55e'/%3E%3Crect x='7' y='6' width='1' height='1' fill='%234ade80'/%3E%3Crect x='0' y='3' width='1' height='1' fill='%23166534'/%3E%3Crect x='4' y='6' width='1' height='1' fill='%23166534'/%3E%3Crect x='6' y='3' width='1' height='1' fill='%23166534'/%3E%3C/svg%3E");
+}
+

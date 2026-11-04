@@ -44,7 +44,7 @@ MAX (клиент) -> HTTPS -> nginx (m.ospab.org) -> uvicorn 127.0.0.1:8000 -> 
 
 Приложение - один процесс. Обработчики API объявлены как обычные функции (`def`), поэтому FastAPI выполняет их в пуле потоков. Состояния между запросами в памяти нет, кроме счётчиков лимитов (см. [Ограничения](#ограничения)).
 
-Маршрутизация в `app.py`: `/api/*` обрабатывает роутер; `/portal`, `/landing`, `/about` и `/landing/<файл>` отдают файлы из `landing/`; `/` и любой другой путь без расширения отдают `static/index.html` (SPA-фолбэк), пути с расширением - файл из `static/` или 404. При `SERVE_FRONTEND=false` `/` возвращает JSON-заглушку, остальные пути вне `/api` - 404. FastAPI по умолчанию публикует `/docs`, `/redoc`, `/openapi.json`; в коде они не отключены.
+Маршрутизация в `app.py`: `/api/*` обрабатывает роутер; `/portal`, `/landing`, `/about` и `/landing/<файл>` отдают файлы из `landing/`; `/` и любой другой путь без расширения отдают `static/index.html` (SPA-фолбэк), пути с расширением - файл из `static/` или 404. При `SERVE_FRONTEND=false` `/` возвращает JSON-заглушку, остальные пути вне `/api` - 404. `/docs`, `/redoc` и `/openapi.json` отключены при `APP_MODE=prod` (404, в том числе при `SERVE_FRONTEND=true`); в demo и sandbox они доступны.
 
 Заголовки ответа: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: frame-ancestors 'self' https://max.ru https://*.max.ru`; `/assets/*` - `Cache-Control: public, max-age=31536000, immutable`; `/` и `/api/*` - `no-store`.
 
@@ -69,11 +69,11 @@ MAX (клиент) -> HTTPS -> nginx (m.ospab.org) -> uvicorn 127.0.0.1:8000 -> 
 2. Строка проверки: все пары, кроме `hash`, в виде `key=value`, отсортированные и склеенные символом `\n`.
 3. Секрет: `HMAC_SHA256(key="WebAppData", msg=MAX_BOT_TOKEN)`.
 4. Подпись: `HMAC_SHA256(key=секрет, msg=строка проверки)`, hex. Сравнение через `hmac.compare_digest`.
-5. `auth_date` обязателен и целый. Отклоняется, если он больше «сейчас + 60 с» (из будущего) или старше `INIT_DATA_MAX_AGE` (по умолчанию 3600 с).
+5. `auth_date` обязателен и целый. Отклоняется, если он больше «сейчас + 60 с» (из будущего) или старше `INIT_DATA_MAX_AGE` (по умолчанию 86400 с).
 6. Из поля `user` (JSON) берётся `id` (становится `max_user_id`), а также `first_name`, `last_name`, `username`, `photo_url` (обрезаются до 64/64/64/512 символов).
 7. Роль-подсказка: id в `DIRECTOR_MAX_IDS` - `director`; иначе в `TEACHER_MAX_IDS` - `teacher`; иначе `student`.
 
-Возраст проверяется на каждый запрос, а клиент повторно отправляет одну и ту же строку `initData` из MAX Bridge. Поэтому в сеансе, который открыт дольше `INIT_DATA_MAX_AGE`, запросы получат `401` «Данные MAX устарели», пока приложение не откроют заново.
+Возраст проверяется на каждый запрос, а клиент повторно отправляет одну и ту же строку `initData` из MAX Bridge. Поэтому в сеансе, который открыт дольше `INIT_DATA_MAX_AGE`, запросы получат `401` «Данные MAX устарели», пока приложение не откроют заново. Фронтенд в этом случае показывает экран «Сессия устарела» с кнопкой «Обновить» и не повторяет запросы.
 
 Ошибки `401` (тексты на русском): нет данных авторизации; нет токена на сервере; некорректная подпись; подпись не совпадает; нет/некорректный `auth_date`; данные из будущего; данные устарели; нет пользователя в данных.
 
@@ -114,7 +114,7 @@ users 1---N xp_events,  users 1---N activity_days
 | `schools` | Школы | `name`, `city`, `status` (`active`/`pending`/`rejected`), `created_by` -> users, `created_at`, `norm_key` (регистронезависимый ключ `название|город`). `UNIQUE(name, city)`, уникальный индекс по `norm_key` |
 | `classes` | Классы | `school_id`, `name`, `weekly_goal` (по умолчанию 1600), `invite_code` (код ученика), `teacher_code` (код педагога). `UNIQUE(school_id, name)`, уникальные частичные индексы по кодам |
 | `users` | Пользователи | `max_user_id` (уникален), `client_id` (уникален, demo/sandbox), имя, `role` (`student`/`teacher`/`director`), `preview_role` (демо), `class_id`, `school_id` (активная школа директора), `xp`, `sparks`, `streak`, `last_active_date`, `avatar` (JSON), `owned` (JSON-список купленных предметов), `onboarded` |
-| `challenges` | Задания класса | `class_id`, `title`, `description`, `category`, `xp` (1..500), `kind` (`daily`/`weekly`/`event`), `deadline`, `subject`, `proof_type` (`text`/`link`/`photo`), `created_by`, `active` (0 = в архиве) |
+| `challenges` | Задания класса | `class_id`, `title`, `description`, `category`, `xp` (10..300 по API; в БД CHECK 1..500), `kind` (`daily`/`weekly`/`event`), `deadline`, `subject`, `proof_type` (`text`/`link`/`photo`), `created_by`, `active` (0 = в архиве) |
 | `completions` | Выполнения | `user_id`, `challenge_id`, `status` (`pending`/`approved`/`rejected`), `proof`, `proof_url`, `reviewed_at`, `reviewed_by`, `reject_reason`. `UNIQUE(user_id, challenge_id)` - одна запись на пару, повторная отправка после отклонения обновляет её |
 | `xp_events` | Журнал начисления XP | `user_id`, `amount`, `reason`, `category`, `created_at`. Источник недельного XP и ленты класса |
 | `class_staff` | Назначения педагогов из каталога | `max_user_id` (PK), `class_id`. Заполняется только из `catalog.json` |
@@ -199,7 +199,7 @@ users 1---N xp_events,  users 1---N activity_days
 - Уровни (`RANKS` в `backend/game.py`): 1 «Новичок» с 0; 2 «Ученик» со 100; 3 «Знаток» с 250; 4 «Мастер» с 450; 5 «Легенда школы» с 700.
 - Искры: 40 стартовых (кроме `demo`), +5 за каждое подтверждённое задание или ручное начисление, +25 за каждый полученный уровень. Тратятся на предметы с ценой (`hoodie_cyan` 40, `cap` 50, `frame_galaxy` 80). Остальные предметы открываются уровнем.
 - Серия: подряд идущие дни (по Москве), в которые ученик отправил задание, получил подтверждение или ручное начисление.
-- Награды заданий: педагог выбирает из 20, 30, 40, 50, 100, 150, 200, 250, 300 XP (проверка в `create_challenge`). Словарь `XP_VALUES` в `game.py` в расчётах не участвует.
+- Награды заданий: педагог задаёт любое целое от 10 до 300 XP (проверка в `create_challenge` и в схеме API). Словарь `XP_VALUES` в `game.py` в расчётах не участвует.
 - Срок: дата `YYYY-MM-DD` превращается в 23:59 по Москве; без даты - через 2 дня. После срока отправка невозможна (`Срок выполнения уже истёк`). Отклонённое задание можно отправить заново (пока срок не прошёл).
 - Достижения (`ACHIEVEMENTS`): «Первый шаг» (1 подтверждённое), «Свой среди своих» (3 подтверждённых в категории `help`), «Олимпиец» (1 в `olympiad`), «Неделя силы» (серия 7), «Мастер» (уровень 4), «Командный дух» (класс в топ-3 по общему месту среди классов).
 

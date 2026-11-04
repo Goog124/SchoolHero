@@ -25,6 +25,16 @@ echo "Использую .env: $ENV_SRC"
 TOKEN="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MAX_BOT_TOKEN=' "$ENV_SRC" | head -1 | cut -d= -f2- | tr -d '[:space:]"'"'" || true)"
 [ -n "$TOKEN" ] || { echo "В $ENV_SRC нет строки MAX_BOT_TOKEN=... или она пуста — прод без токена запускать нельзя"; exit 1; }
 
+# Режимы demo и sandbox входят без подписи MAX: на сервере их быть не должно.
+MODE_LINE="$(grep -E '^[[:space:]]*(export[[:space:]]+)?APP_MODE=' "$ENV_SRC" | tail -1 || true)"
+if [ -n "$MODE_LINE" ]; then
+  MODE_VAL="$(printf '%s' "$MODE_LINE" | cut -d= -f2- | tr -d '[:space:]"'"'")"
+  if [ "$MODE_VAL" != "prod" ]; then
+    echo "В $ENV_SRC указан APP_MODE=$MODE_VAL. На сервере допустим только prod: удалите эту строку или поставьте APP_MODE=prod."
+    exit 1
+  fi
+fi
+
 # --- проверка старой базы -------------------------------------------------
 # В боевой базе у каждого пользователя есть MAX id. Пользователи без него
 # остались от старой версии с выдуманными данными.

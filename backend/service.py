@@ -1305,9 +1305,15 @@ def _resolve_code(conn, viewer: sqlite3.Row, settings: Settings, code: str) -> d
     return info
 
 
-def _become_teacher(conn, viewer: sqlite3.Row, class_id: int) -> None:
+def _check_can_become_teacher(viewer: sqlite3.Row) -> None:
     if viewer["role"] == "director":
         raise GameError("Директор уже управляет всеми классами своей школы", 400)
+    if viewer["role"] == "student" and viewer["class_id"] is not None:
+        raise GameError("Вы уже состоите в классе как ученик", 403)
+
+
+def _become_teacher(conn, viewer: sqlite3.Row, class_id: int) -> None:
+    _check_can_become_teacher(viewer)
     conn.execute(
         "UPDATE users SET role = 'teacher', class_id = ?, onboarded = 1 WHERE id = ?",
         (class_id, viewer["id"]),
@@ -1366,8 +1372,7 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
         info = _resolve_code(conn, viewer, settings, str(payload["invite_code"]))
         target_class_id = int(info["class_id"])
         if info["kind"] == "teacher":
-            if viewer["role"] == "director":
-                raise GameError("Директор уже управляет всеми классами своей школы", 400)
+            _check_can_become_teacher(viewer)
             new_role = "teacher"
     if viewer["role"] != "student" and new_role == viewer["role"]:
         target_class_id = viewer["class_id"]
@@ -1578,9 +1583,8 @@ def create_challenge(
         raise GameError("Неизвестная категория")
     if kind not in KINDS:
         raise GameError("Неизвестный тип задания")
-    ALLOWED_XP = {20, 30, 40, 50, 100, 150, 200, 250, 300}
-    if xp not in ALLOWED_XP:
-        raise GameError("Опыт должен быть 20, 30, 40, 50, 100, 150, 200, 250 или 300")
+    if not 10 <= xp <= 300:
+        raise GameError("Награда: целое число от 10 до 300 XP")
     deadline_raw = str(payload.get("deadline", "")).strip()
     if deadline_raw:
         try:

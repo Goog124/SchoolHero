@@ -186,3 +186,24 @@ def test_demo_mode_ignores_init_data(tmp_path):
 
     assert identity.kind == "demo"
     assert identity.max_user_id is None
+
+
+def test_default_max_age_is_one_day():
+    from backend.config import Settings
+
+    assert Settings().init_data_max_age == 86400
+    default = Settings().init_data_max_age
+    old = sign_init_data(MAX_USER, auth_date=int(time.time()) - 5 * 3600)
+    assert validate_init_data(old, BOT_TOKEN, max_age=default)["query_id"]
+    too_old = sign_init_data(MAX_USER, auth_date=int(time.time()) - 25 * 3600)
+    with pytest.raises(AuthError, match="устарели"):
+        validate_init_data(too_old, BOT_TOKEN, max_age=default)
+
+
+def test_max_age_from_env_default(monkeypatch):
+    from backend.config import Settings
+
+    monkeypatch.delenv("INIT_DATA_MAX_AGE", raising=False)
+    assert Settings.from_env().init_data_max_age == 86400
+    monkeypatch.setenv("INIT_DATA_MAX_AGE", "600")
+    assert Settings.from_env().init_data_max_age == 600

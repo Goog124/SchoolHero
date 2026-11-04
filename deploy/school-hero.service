@@ -15,7 +15,8 @@ Environment=PORT=8000
 Environment=SERVE_FRONTEND=true
 Environment=STATIC_DIR=/opt/school-hero/static
 Environment=DATA_DIR=/var/lib/school-hero
-ExecStart=/opt/school-hero/.venv/bin/python app.py
+# env перебивает APP_MODE из EnvironmentFile: на сервере всегда prod.
+ExecStart=/usr/bin/env APP_MODE=prod /opt/school-hero/.venv/bin/python app.py
 Restart=on-failure
 RestartSec=3
 

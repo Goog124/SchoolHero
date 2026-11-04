@@ -419,3 +419,41 @@ def test_catalog_file_is_optional(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM schools").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_user_with_a_class_cannot_register_a_school(client):
+    create_school(client, 100)
+    classes = class_codes(client, 100)
+    # a pupil in a class
+    onboard_student(client, 1, classes["8А"]["invite_code"])
+    r = create_school(client, 1, name="Чужая школа")
+    assert r.status_code == 403
+    assert "состоите в классе" in r.json()["detail"]
+    after = client.get("/api/state", headers=hdr(1)).json()["viewer"]
+    assert after["role"] == "student" and after["class_name"] == "8А"
+    # a teacher in a class
+    client.post("/api/school/join", json={"invite_code": classes["8Б"]["teacher_code"]}, headers=hdr(2))
+    assert create_school(client, 2, name="Школа педагога").status_code == 403
+    assert client.get("/api/state", headers=hdr(2)).json()["viewer"]["role"] == "teacher"
+    # a user without a class and an existing director still can (cap of 3 stays)
+    assert create_school(client, 3, name="Новая школа").status_code == 200
+    assert create_school(client, 100, name="Вторая школа").status_code == 200
+
+
+def test_pupil_with_a_class_cannot_turn_into_a_teacher(client):
+    create_school(client, 100)
+    classes = class_codes(client, 100)
+    onboard_student(client, 1, classes["8А"]["invite_code"])
+    r = client.post("/api/school/join", json={"invite_code": classes["8Б"]["teacher_code"]}, headers=hdr(1))
+    assert r.status_code == 403
+    r = client.post(
+        "/api/onboarding",
+        json={"first_name": "Ученик", "avatar": {}, "invite_code": classes["8Б"]["teacher_code"]},
+        headers=hdr(1),
+    )
+    assert r.status_code == 403
+    assert client.get("/api/state", headers=hdr(1)).json()["viewer"]["role"] == "student"
+    # a teacher may still move to another class of the school
+    client.post("/api/school/join", json={"invite_code": classes["8А"]["teacher_code"]}, headers=hdr(2))
+    moved = client.post("/api/school/join", json={"invite_code": classes["8Б"]["teacher_code"]}, headers=hdr(2))
+    assert moved.status_code == 200 and moved.json()["state"]["viewer"]["class_name"] == "8Б"

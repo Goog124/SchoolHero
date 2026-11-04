@@ -131,6 +131,10 @@ def create_school(
 ) -> int:
     if settings.demo_mode:
         raise GameError("В демо-режиме регистрация школы недоступна", 403)
+    # Only someone without a class (or an existing director) may register a
+    # school: otherwise a pupil or teacher would silently lose their class.
+    if viewer["role"] != "director" and viewer["class_id"] is not None:
+        raise GameError("Вы уже состоите в классе. Школу может зарегистрировать только пользователь без класса.", 403)
     name, city = _check_school_fields(payload.get("name"), payload.get("city"))
     raw_classes = payload.get("classes") or []
     if not 1 <= len(raw_classes) <= 40:

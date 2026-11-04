@@ -39,7 +39,7 @@ class Settings:
     static_dir: Path = BASE_DIR / "static"
     db_path: Path = BASE_DIR / "data" / "school_hero.db"
     bot_token: str = ""
-    init_data_max_age: int = 3600
+    init_data_max_age: int = 86400
     teacher_max_ids: set[str] = field(default_factory=set)
     director_max_ids: set[str] = field(default_factory=set)
     default_class_id: int | None = None
@@ -93,7 +93,7 @@ class Settings:
             static_dir=Path(os.getenv("STATIC_DIR", str(BASE_DIR / "static"))),
             db_path=db_path,
             bot_token=os.getenv("MAX_BOT_TOKEN", "").strip(),
-            init_data_max_age=_int_env("INIT_DATA_MAX_AGE", 3600),
+            init_data_max_age=_int_env("INIT_DATA_MAX_AGE", 86400),
             teacher_max_ids=_ids_env("TEACHER_MAX_IDS"),
             director_max_ids=_ids_env("DIRECTOR_MAX_IDS"),
             # In prod a new user has no class until they pick one; the default

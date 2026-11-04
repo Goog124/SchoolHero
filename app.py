@@ -65,7 +65,13 @@ async def lifespan(_: FastAPI):
     yield
 
 
+# Interactive API docs are for demo/sandbox only; production does not publish
+# the schema.
+_docs_enabled = settings.app_mode != "prod"
 app = FastAPI(
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
     title="Школьный герой",
     description="Мини-приложение для MAX: прокачивай героя за учёбу и школьную активность.",
     version="1.0.0",
@@ -149,6 +155,8 @@ def index():
 @app.get("/{full_path:path}", include_in_schema=False)
 def spa_fallback(full_path: str):
     if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not _docs_enabled and full_path.rstrip("/") in {"docs", "redoc", "openapi.json"}:
         raise HTTPException(status_code=404, detail="Not found")
     if not settings.serve_frontend:
         raise HTTPException(status_code=404, detail="API server does not serve frontend")

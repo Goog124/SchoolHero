@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { AppHeader } from './components/AppHeader';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
@@ -130,6 +130,7 @@ export default function App() {
   const [challengeId, setChallengeId] = useState<number | null>(null);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [audience, setAudience] = useState<'student' | 'school' | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
@@ -147,6 +148,15 @@ export default function App() {
     },
     [],
   );
+
+  // 401 в боевом режиме: подпись MAX устарела. Повторные запросы не помогут.
+  const markExpired = useCallback((error: unknown): boolean => {
+    if (error instanceof ApiError && error.status === 401 && activeSandboxClientId() === null) {
+      setSessionExpired(true);
+      return true;
+    }
+    return false;
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,6 +178,7 @@ export default function App() {
       const data = await api.getState();
       setState(data);
     } catch (error) {
+      if (markExpired(error)) return;
       setBootError(
         error instanceof Error
           ? error.message
@@ -176,7 +187,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [markExpired]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -296,6 +307,7 @@ export default function App() {
       setState(response.state);
       return response;
     } catch (error) {
+      if (markExpired(error)) return null;
       showToast(
         error instanceof Error ? error.message : 'Что-то пошло не так. Попробуйте ещё раз.',
         'error',
@@ -453,6 +465,7 @@ export default function App() {
       showToast('Профиль создан', 'success', 'check');
       return true;
     } catch (error) {
+      if (markExpired(error)) return false;
       showToast(
         error instanceof Error ? error.message : 'Не удалось создать профиль.',
         'error',
@@ -508,6 +521,7 @@ export default function App() {
       showToast('Вы подключены к классу', 'success', 'check');
       return null;
     } catch (error) {
+      if (markExpired(error)) return null;
       return error instanceof Error ? error.message : 'Не удалось проверить код';
     } finally {
       setBusy(null);
@@ -524,6 +538,7 @@ export default function App() {
       showToast('Класс выбран', 'success', 'check');
       return true;
     } catch (error) {
+      if (markExpired(error)) return false;
       showToast(error instanceof Error ? error.message : 'Не удалось выбрать класс', 'error');
       return false;
     } finally {
@@ -564,6 +579,27 @@ export default function App() {
     showToast(status === 'active' ? 'Школа подтверждена' : 'Заявка отклонена', 'info', 'check');
     return true;
   };
+
+  if (sessionExpired) {
+    return (
+      <div className="app">
+        <div className="gate">
+          <div className="gate__box">
+            <EmptyState
+              icon="clock"
+              title="Сессия устарела"
+              text="Закройте и снова откройте приложение в MAX."
+              action={
+                <button type="button" className="btn" onClick={() => window.location.reload()}>
+                  Обновить
+                </button>
+              }
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

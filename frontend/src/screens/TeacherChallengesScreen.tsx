@@ -73,8 +73,8 @@ const PROOF_TYPES: { id: ProofType; label: string }[] = [
   { id: 'photo', label: 'Фото' },
 ];
 
-const XP_MIN = 1;
-const XP_MAX = 500;
+const XP_MIN = 10;
+const XP_MAX = 300;
 
 type TeacherChallengesScreenProps = {
   state: GameState;

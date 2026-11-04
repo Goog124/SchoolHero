@@ -313,19 +313,22 @@ def test_teacher_creates_and_archives_challenge(demo_client):
         for item in archived.json()["state"]["challenges"]
     )
 
-    bad_xp = demo_client.post(
-        "/api/challenges",
-        json={
-            "title": "Странное задание",
-            "description": "",
-            "category": "help",
-            "xp": 55,
-            "kind": "daily",
-        },
-        headers=DEMO_HEADERS,
-    )
-    assert bad_xp.status_code == 400
-    assert "Опыт" in bad_xp.json()["detail"]
+    def post_xp(value):
+        return demo_client.post(
+            "/api/challenges",
+            json={"title": "Задание с наградой", "description": "", "category": "help",
+                  "xp": value, "kind": "daily"},
+            headers=DEMO_HEADERS,
+        )
+
+    # One rule everywhere: any integer 10..300 (the API schema and the service agree).
+    assert post_xp(55).status_code == 200
+    assert post_xp(10).status_code == 200
+    assert post_xp(300).status_code == 200
+    for bad in (9, 301, 500, 0, -20):
+        assert post_xp(bad).status_code in {400, 422}, bad
+    reward = demo_client.post("/api/teacher/reward", json={"student_id": 1, "amount": 301}, headers=DEMO_HEADERS)
+    assert reward.status_code in {400, 422}
 
     missing = demo_client.post(
         "/api/challenges/999999/archive", headers=DEMO_HEADERS

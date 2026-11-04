@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,6 +53,13 @@ class Settings:
     school_approval: str = "auto"  # auto | manual
     platform_admin_max_ids: set[str] = field(default_factory=set)
     max_schools_per_user: int = 3
+    # MAX bot (webhook + приветствие)
+    max_api_base: str = "https://platform-api2.max.ru"
+    max_webhook_secret: str = ""
+    max_bot_username: str = ""
+    max_ca_bundle: str = ""
+    public_url: str = "https://m.ospab.org"
+    bot_reply_interval: int = 60
 
     @property
     def demo_mode(self) -> bool:
@@ -72,6 +80,12 @@ class Settings:
             )
         if self.school_approval not in {"auto", "manual"}:
             raise RuntimeError("SCHOOL_APPROVAL должен быть 'auto' или 'manual'")
+        if self.max_webhook_secret and not re.fullmatch(
+            r"[A-Za-z0-9_-]{5,256}", self.max_webhook_secret
+        ):
+            raise RuntimeError(
+                "MAX_WEBHOOK_SECRET: 5-256 символов, только латиница, цифры, - и _"
+            )
         if self.app_mode == "prod" and not self.bot_token:
             raise RuntimeError("APP_MODE=prod требует MAX_BOT_TOKEN")
 
@@ -106,4 +120,17 @@ class Settings:
             school_approval=os.getenv("SCHOOL_APPROVAL", "auto").strip().lower() or "auto",
             platform_admin_max_ids=_ids_env("PLATFORM_ADMIN_MAX_IDS"),
             serve_frontend=_bool_env("SERVE_FRONTEND", False),
+            max_api_base=(
+                os.getenv("MAX_API_BASE", "").strip().rstrip("/")
+                or "https://platform-api2.max.ru"
+            ),
+            max_webhook_secret=os.getenv("MAX_WEBHOOK_SECRET", "").strip(),
+            max_bot_username=os.getenv("MAX_BOT_USERNAME", "").strip().lstrip("@"),
+            max_ca_bundle=os.getenv("MAX_CA_BUNDLE", "").strip(),
+            public_url=(
+                os.getenv("PUBLIC_URL", "").strip().rstrip("/")
+                or os.getenv("MINIAPP_URL", "").strip().rstrip("/")
+                or "https://m.ospab.org"
+            ),
+            bot_reply_interval=_int_env("BOT_REPLY_INTERVAL", 60),
         )

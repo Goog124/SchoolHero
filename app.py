@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.api import router as api_router
+from backend.maxbot import router as maxbot_router
 from backend.config import Settings
 from backend.db import connect, init_db
 from backend.catalog import import_catalog
@@ -129,6 +130,7 @@ async def security_headers(request: Request, call_next):
 
 
 app.include_router(api_router)
+app.include_router(maxbot_router)
 
 
 def _static_file(path: str) -> Path | None:

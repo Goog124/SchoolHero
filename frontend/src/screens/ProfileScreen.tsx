@@ -47,11 +47,13 @@ export function ProfileScreen({
 
       <section className="pf-card" aria-label="Мой профиль">
         <div className="pf-head">
-          <AvatarFrame avatar={viewer.avatar} size={88} level={viewer.level.level} decorative />
+          {isStudent && (
+            <AvatarFrame avatar={viewer.avatar} size={88} level={viewer.level.level} decorative />
+          )}
           <div className="pf-head__text">
             <h2 className="pf-name">{viewer.name}</h2>
             <div className="pf-muted">{ROLE_LABEL[viewer.role] ?? ''}</div>
-            <div className="pf-muted">{place || 'Класс не выбран'}</div>
+            <div className="pf-muted">{place || (isStudent ? 'Класс не выбран' : '')}</div>
           </div>
         </div>
 

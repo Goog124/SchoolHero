@@ -649,3 +649,20 @@ def test_prod_catalog_creates_no_users(tmp_path):
         assert conn.execute("SELECT class_id FROM class_staff WHERE max_user_id='42'").fetchone()
     finally:
         conn.close()
+
+
+def test_staff_cannot_use_hero_or_shop():
+    import sqlite3
+
+    from backend.service import GameError, buy_item, equip_item
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    staff = conn.execute("SELECT 'teacher' AS role, NULL AS preview_role").fetchone()
+    for call in (lambda: buy_item(conn, staff, "x"), lambda: equip_item(conn, staff, "hair", "x")):
+        try:
+            call()
+        except GameError as exc:
+            assert exc.status == 403
+        else:
+            raise AssertionError("staff must not use hero or shop")

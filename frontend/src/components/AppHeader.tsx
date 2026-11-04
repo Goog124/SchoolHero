@@ -12,7 +12,7 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({ viewer, onProfile, demo = false }: AppHeaderProps) {
-  const isDirector = viewer.role === 'director';
+  const isStudent = viewer.role === 'student';
   const roleName =
     viewer.role === 'director' ? 'Администрация' : viewer.role === 'teacher' ? 'Педагог' : '';
   const subtitle = [viewer.class_name, roleName].filter(Boolean).join(' · ');
@@ -22,20 +22,22 @@ export function AppHeader({ viewer, onProfile, demo = false }: AppHeaderProps) {
       <BrandLogo size="md" subtitle={subtitle || undefined} />
       <div className="topbar__right">
         {demo ? <span className="badge-demo">Демо</span> : null}
-        {!isDirector ? (
+        {isStudent ? (
           <span className="topbar__sparks" aria-label={`Баллы: ${viewer.sparks}`}>
             <Icon name="spark" size={14} filled />
             {formatNumber(viewer.sparks)}
           </span>
         ) : null}
-        <button
-          type="button"
-          className="topbar__avatar"
-          onClick={onProfile}
-          aria-label="Открыть профиль"
-        >
-          <AvatarFrame avatar={viewer.avatar} size={36} decorative />
-        </button>
+        {isStudent ? (
+          <button
+            type="button"
+            className="topbar__avatar"
+            onClick={onProfile}
+            aria-label="Открыть профиль"
+          >
+            <AvatarFrame avatar={viewer.avatar} size={36} decorative />
+          </button>
+        ) : null}
       </div>
     </header>
   );

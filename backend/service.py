@@ -1397,9 +1397,16 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
     )
 
 
+def _require_student_hero(viewer: sqlite3.Row) -> None:
+    """The hero, level and shop belong to students; staff do not have one."""
+    if viewer["role"] != "student" and not (viewer["preview_role"] or "") == "student":
+        raise GameError("Герой и магазин доступны только ученикам", 403)
+
+
 def equip_item(
     conn, viewer: sqlite3.Row, key: str, item_id: str
 ) -> None:
+    _require_student_hero(viewer)
     level = level_info(int(viewer["xp"]))["level"]
     owned = load_owned(viewer["owned"])
     avatar = load_avatar(viewer["avatar"])
@@ -1414,6 +1421,7 @@ def equip_item(
 
 
 def buy_item(conn, viewer: sqlite3.Row, item_id: str) -> None:
+    _require_student_hero(viewer)
     item = COSMETIC_BY_ID.get(item_id)
     if item is None:
         raise GameError("Предмет не найден")

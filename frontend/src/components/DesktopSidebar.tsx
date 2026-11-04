@@ -35,7 +35,7 @@ export function DesktopSidebar({
   onProfile,
   onRoleSwitch,
 }: DesktopSidebarProps) {
-  const isDirector = viewer.role === 'director';
+  const isStudent = viewer.role === 'student';
   const roleLabel =
     viewer.role === 'director'
       ? 'Администрация'
@@ -81,18 +81,18 @@ export function DesktopSidebar({
 
       <div className="sidebar__foot">
         <button type="button" className="sidebar__user" onClick={onProfile} aria-label="Открыть профиль">
-          <AvatarFrame avatar={viewer.avatar} size={40} decorative />
+          {isStudent ? <AvatarFrame avatar={viewer.avatar} size={40} decorative /> : null}
           <span className="sidebar__user-text">
             <span className="sidebar__user-name">{viewer.name}</span>
             <span className="sidebar__user-sub">
-              Ранг {viewer.level.level} · {viewer.level.title}
+              {isStudent ? `Ранг ${viewer.level.level} · ${viewer.level.title}` : roleLabel}
             </span>
           </span>
           <Icon name="chevronRight" size={16} />
         </button>
 
         <div className="sidebar__row">
-          {!isDirector ? (
+          {isStudent ? (
             <span className="topbar__sparks" aria-label={`Баллы: ${viewer.sparks}`}>
               <Icon name="spark" size={14} filled />
               {formatNumber(viewer.sparks)}

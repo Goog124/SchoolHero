@@ -4,11 +4,20 @@ import { Icon } from './Icon';
 type SandboxBarProps = {
   users: SandboxUser[];
   active: string;
+  notice?: string | null;
+  onDismissNotice?: () => void;
   onSwitch: (clientId: string) => void;
   onNew: () => void;
 };
 
-export function SandboxBar({ users, active, onSwitch, onNew }: SandboxBarProps) {
+export function SandboxBar({
+  users,
+  active,
+  notice,
+  onDismissNotice,
+  onSwitch,
+  onNew,
+}: SandboxBarProps) {
   return (
     <div className="sb-bar" role="group" aria-label="Песочница">
       <span className="sb-bar__badge">Песочница</span>
@@ -21,7 +30,7 @@ export function SandboxBar({ users, active, onSwitch, onNew }: SandboxBarProps) 
         >
           {users.map((user) => (
             <option key={user.clientId} value={user.clientId}>
-              {user.detail ? `${user.label} — ${user.detail}` : user.label}
+              {`${user.label}${user.detail ?? ''}`}
             </option>
           ))}
         </select>
@@ -30,6 +39,19 @@ export function SandboxBar({ users, active, onSwitch, onNew }: SandboxBarProps) 
         <Icon name="plus" size={16} />
         Новый пользователь
       </button>
+      {notice ? (
+        <div className="sb-bar__notice" role="status">
+          <span>{notice}</span>
+          {onDismissNotice ? (
+            <button type="button" className="sb-bar__dismiss" onClick={onDismissNotice}>
+              Понятно
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="sb-bar__hint">
+        База стирается при каждом запуске; SANDBOX_KEEP_DATA=1 сохраняет её.
+      </p>
     </div>
   );
 }

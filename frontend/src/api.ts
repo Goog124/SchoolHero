@@ -6,6 +6,7 @@ import type {
   MutationResponse,
   NewSchoolPayload,
   ReviewResult,
+  CitySuggestion,
   SchoolCatalog,
   SchoolClassInfo,
   SubmitResult,
@@ -112,8 +113,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health(): Promise<{ mode: 'prod' | 'demo' | 'sandbox' }> {
-    return request<{ mode: 'prod' | 'demo' | 'sandbox' }>('/api/health');
+  health(): Promise<{ mode: 'prod' | 'demo' | 'sandbox'; boot_id?: string | null }> {
+    return request<{ mode: 'prod' | 'demo' | 'sandbox'; boot_id?: string | null }>(
+      '/api/health',
+    );
   },
 
   getState(): Promise<GameState> {
@@ -125,14 +128,21 @@ export const api = {
   },
 
   getSchoolCatalog(
-    params: { city?: string; q?: string; onlyCities?: boolean } = {},
+    params: { city?: string; q?: string; onlyCities?: boolean; limit?: number; offset?: number } = {},
   ): Promise<SchoolCatalog> {
     const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.offset) query.set('offset', String(params.offset));
     if (params.city) query.set('city', params.city);
     if (params.q) query.set('q', params.q);
     if (params.onlyCities) query.set('only_cities', 'true');
     const suffix = query.toString();
     return request<SchoolCatalog>(`/api/school/catalog${suffix ? `?${suffix}` : ''}`);
+  },
+
+  searchCities(q: string, limit = 10): Promise<{ cities: CitySuggestion[]; total: number }> {
+    const query = new URLSearchParams({ q, limit: String(limit) });
+    return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
   },
 
   createSchool(payload: NewSchoolPayload): Promise<MutationResponse> {

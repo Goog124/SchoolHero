@@ -4,12 +4,13 @@
 export type SandboxUser = {
   clientId: string;
   label: string;
-  /** Имя и роль после регистрации, только для подписи в списке. */
+  /** Хвост подписи с разделителем: ' — Имя, роль' или ', роль'. */
   detail?: string;
 };
 
 const USERS_KEY = 'school-hero:sandbox-users';
 const ACTIVE_KEY = 'school-hero:sandbox-active';
+const BOOT_KEY = 'school-hero:sandbox-boot';
 const ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 let enabled = false;
@@ -62,6 +63,40 @@ function load(): void {
   }
   active = users.some((u) => u.clientId === storedActive) ? storedActive : users[0].clientId;
   persist();
+}
+
+/**
+ * Сверяет запуск сервера песочницы с тем, что помнит браузер. Если сервер
+ * перезапущен (база стёрта), старые тестовые пользователи больше не существуют:
+ * список сбрасывается. Возвращает true, если сброшены реально существовавшие
+ * пользователи (для сообщения в панели).
+ */
+export function syncSandboxBoot(bootId: string | null | undefined): boolean {
+  if (!bootId) return false;
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(BOOT_KEY);
+  } catch {
+    // Treated as unknown.
+  }
+  if (stored === bootId) return false;
+  let hadUsers = Boolean(users && users.length > 0);
+  try {
+    const raw = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+    if (Array.isArray(raw) && raw.length > 0) hadUsers = true;
+  } catch {
+    // Ignore.
+  }
+  users = null;
+  active = '';
+  try {
+    localStorage.removeItem(USERS_KEY);
+    localStorage.removeItem(ACTIVE_KEY);
+    localStorage.setItem(BOOT_KEY, bootId);
+  } catch {
+    // Ignore.
+  }
+  return hadUsers;
 }
 
 export function enableSandbox(): void {

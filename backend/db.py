@@ -152,6 +152,11 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 15000")
     conn.execute("PRAGMA synchronous = NORMAL")
+    # SQLite lower()/LIKE ignore case for ASCII only; casefold() works for Cyrillic.
+    conn.create_function(
+        "casefold", 1, lambda value: value.casefold() if isinstance(value, str) else value,
+        deterministic=True,
+    )
     return conn
 
 

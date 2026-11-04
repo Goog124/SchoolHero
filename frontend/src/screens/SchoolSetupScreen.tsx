@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { api } from '../api';
+import { useState, type FormEvent } from 'react';
+import { CityInput } from '../components/CityInput';
 import { Icon } from '../components/Icon';
 import type {
   GameState,
@@ -143,7 +143,6 @@ export function NewSchoolForm({
 }) {
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
-  const [knownCities, setKnownCities] = useState<string[]>([]);
   const [grades, setGrades] = useState<number[]>([]);
   const [letters, setLetters] = useState<string[]>(['А']);
   const [custom, setCustom] = useState('');
@@ -153,19 +152,6 @@ export function NewSchoolForm({
   const [extraError, setExtraError] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .getSchoolCatalog({ onlyCities: true })
-      .then((cat) => {
-        if (alive) setKnownCities(cat.cities);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const customLetters = Array.from(new Set(Array.from(custom.toUpperCase().replace(/[^\p{L}]/gu, ''))))
     .filter((l) => !LETTERS.includes(l))
@@ -290,23 +276,14 @@ export function NewSchoolForm({
 
       <div className="ob-field">
         <label className="ob-label" htmlFor="su-city">Город</label>
-        <input
+        <CityInput
           id="su-city"
-          className="ob-input"
           value={city}
-          maxLength={60}
-          list="su-cities"
-          autoComplete="off"
+          onChange={setCity}
           placeholder="Начните вводить"
-          aria-invalid={Boolean(errors.city)}
-          aria-describedby={errors.city ? 'su-city-err' : 'su-city-hint'}
-          onChange={(e) => setCity(e.target.value)}
+          invalid={Boolean(errors.city)}
+          describedBy={errors.city ? 'su-city-err' : 'su-city-hint'}
         />
-        <datalist id="su-cities">
-          {knownCities.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
         {errors.city ? (
           <span id="su-city-err" className="ob-error">{errors.city}</span>
         ) : (

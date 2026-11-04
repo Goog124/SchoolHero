@@ -50,9 +50,8 @@ def test_new_user_starts_empty_like_prod(client):
     assert s["viewer"]["class_id"] is None
     assert s["viewer"]["onboarded"] is False
     assert s["challenges"] == [] and s["leaderboard"]["classes"] == []
-    assert client.get("/api/school/catalog", headers=h("sandbox-user-a")).json() == {
-        "cities": [], "schools": [], "classes": [],
-    }
+    catalog = client.get("/api/school/catalog", headers=h("sandbox-user-a")).json()
+    assert (catalog["cities"], catalog["schools"], catalog["classes"]) == ([], [], [])
 
 
 def test_invalid_or_missing_client_id_is_rejected(client):
@@ -176,3 +175,45 @@ def test_database_is_wiped_on_start_unless_kept(tmp_path, monkeypatch):
     app.state.settings = kept
     with TestClient(app) as c:
         assert c.get("/api/school/catalog", headers=h("sandbox-wipe-1")).json()["schools"]
+
+
+def test_health_boot_id_changes_when_database_is_wiped(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, app_mode="sandbox", default_class_id=None)
+    monkeypatch.setattr(app_module, "settings", settings)
+    app.state.settings = settings
+
+    def boot() -> str:
+        with TestClient(app) as c:
+            data = c.get("/api/health").json()
+        assert data["mode"] == "sandbox"
+        return data["boot_id"]
+
+    first, second = boot(), boot()
+    assert first and second and first != second
+
+
+def test_health_boot_id_is_stable_with_keep_data(tmp_path, monkeypatch):
+    settings = make_settings(
+        tmp_path, app_mode="sandbox", default_class_id=None, sandbox_keep_data=True
+    )
+    monkeypatch.setattr(app_module, "settings", settings)
+    app.state.settings = settings
+
+    def boot() -> str:
+        with TestClient(app) as c:
+            return c.get("/api/health").json()["boot_id"]
+
+    first = boot()
+    assert boot() == first
+    # a deleted database means the remembered users are gone: new id
+    for suffix in ("", "-wal", "-shm"):
+        (tmp_path / f"test.db{suffix}").unlink(missing_ok=True)
+    assert boot() != first
+
+
+def test_health_has_no_boot_id_outside_sandbox(tmp_path):
+    settings = make_settings(tmp_path, app_mode="prod", bot_token="t")
+    app.state.settings = settings
+    c = TestClient(app)  # no lifespan: module settings are not touched
+    assert "boot_id" not in c.get("/api/health").json()
+    c.close()

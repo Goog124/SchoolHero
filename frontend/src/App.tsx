@@ -26,6 +26,7 @@ import {
   listSandboxUsers,
   setSandboxDetail,
   switchSandboxUser,
+  syncSandboxBoot,
   type SandboxUser,
 } from './sandbox';
 import { ChallengesScreen } from './screens/ChallengesScreen';
@@ -131,6 +132,7 @@ export default function App() {
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [audience, setAudience] = useState<'student' | 'school' | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [sandboxReset, setSandboxReset] = useState(false);
   const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
@@ -169,6 +171,7 @@ export default function App() {
       // В prod вход возможен только изнутри MAX: без подписи запросы не делаем.
       const health = await api.health().catch(() => null);
       if (health?.mode === 'sandbox') {
+        if (syncSandboxBoot(health.boot_id)) setSandboxReset(true);
         enableSandbox();
         setSandbox({ users: listSandboxUsers(), active: activeSandboxClientId() ?? '' });
       } else if (health?.mode === 'prod' && !isMaxEnvironment()) {
@@ -229,7 +232,9 @@ export default function App() {
     if (!active) return;
     const roleLabel = { student: 'ученик', teacher: 'педагог', director: 'директор' }[state.viewer.role];
     const registered = state.viewer.onboarded || state.viewer.role !== 'student';
-    const detail = registered ? `${state.viewer.first_name}, ${roleLabel}` : '';
+    // «Герой» - имя по умолчанию: для него показываем только роль.
+    const named = state.viewer.first_name && state.viewer.first_name !== 'Герой';
+    const detail = !registered ? '' : named ? ` — ${state.viewer.first_name}, ${roleLabel}` : `, ${roleLabel}`;
     if (setSandboxDetail(active, detail)) {
       setSandbox({ users: listSandboxUsers(), active });
     }
@@ -478,6 +483,7 @@ export default function App() {
 
   const switchSandbox = (change: () => void) => {
     change();
+    setSandboxReset(false);
     lastStudentTab.current = 'hero';
     lastTeacherTab.current = 'teacher-class';
     lastDirectorTab.current = 'director-overview';
@@ -680,6 +686,8 @@ export default function App() {
       <SandboxBar
         users={sandbox.users}
         active={sandbox.active}
+        notice={sandboxReset ? 'Сервер песочницы перезапущен, тестовые пользователи сброшены.' : null}
+        onDismissNotice={() => setSandboxReset(false)}
         onSwitch={(id) => switchSandbox(() => switchSandboxUser(id))}
         onNew={() => switchSandbox(() => addSandboxUser())}
       />

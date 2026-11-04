@@ -318,7 +318,11 @@ export type SchoolCatalog = {
   cities: string[];
   schools: Array<{ id: number; name: string; city: string }>;
   classes: Array<{ id: number; school_id: number; name: string }>;
+  total?: number;
+  has_more?: boolean;
 };
+
+export type CitySuggestion = { name: string; schools: number };
 
 export type ManagedClass = {
   id: number;

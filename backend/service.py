@@ -1233,36 +1233,71 @@ def _natural_key(name: str) -> tuple[int, str]:
     return (int(digits) if digits else 999, name)
 
 
+def search_cities(conn, query: str = "", limit: int = 10) -> dict[str, Any]:
+    """Cities that have active schools, for suggestions while typing.
+
+    Substring match without regard to case; cities starting with the text come
+    first, then the ones with more schools. Only a handful of rows is read.
+    """
+    needle = query.strip().casefold()[:60]
+    limit = max(1, min(int(limit), 20))
+    rows = conn.execute(
+        """
+        SELECT city, COUNT(*) AS n FROM schools
+        WHERE status = 'active' AND (? = '' OR instr(casefold(city), ?) > 0)
+        GROUP BY city
+        ORDER BY (instr(casefold(city), ?) = 1) DESC, n DESC, city
+        LIMIT ?
+        """,
+        (needle, needle, needle, limit),
+    ).fetchall()
+    total = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM schools WHERE status = 'active' "
+        "AND (? = '' OR instr(casefold(city), ?) > 0) GROUP BY city)",
+        (needle, needle),
+    ).fetchone()[0]
+    return {
+        "cities": [{"name": r["city"], "schools": int(r["n"])} for r in rows],
+        "total": int(total),
+    }
+
+
 def get_school_catalog(
     conn,
     city: str = "",
     query: str = "",
     limit: int = 500,
     only_cities: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Public list of active schools. Invite codes are never included.
 
-    ``city``/``query`` narrow the list on the server so it stays small however
-    many schools exist; ``only_cities`` skips schools and classes entirely.
+    ``city``/``query`` narrow the list on the server (``limit``/``offset`` page
+    it) so it stays small however many schools exist. The full city list is
+    returned only for an unfiltered request or ``only_cities``; use
+    ``search_cities`` for typing suggestions.
     """
-    cities = [
-        row["city"]
-        for row in conn.execute(
-            "SELECT DISTINCT city FROM schools WHERE status = 'active' ORDER BY city"
-        )
-    ]
+    cities: list[str] = []
+    if only_cities or not (city or query.strip()):
+        cities = [
+            row["city"]
+            for row in conn.execute(
+                "SELECT DISTINCT city FROM schools WHERE status = 'active' "
+                "ORDER BY city LIMIT 500"
+            )
+        ]
     if only_cities:
-        return {"cities": cities, "schools": [], "classes": []}
+        return {"cities": cities, "schools": [], "classes": [], "total": 0, "has_more": False}
     limit = max(1, min(int(limit), 500))
-    schools_rows = conn.execute(
-        "SELECT id, name, city FROM schools WHERE status = 'active' "
-        "AND (? = '' OR city = ?) ORDER BY city, name, id",
-        (city, city),
-    ).fetchall()
+    offset = max(0, int(offset))
     needle = query.strip().casefold()
-    if needle:
-        schools_rows = [s for s in schools_rows if needle in s["name"].casefold()]
-    schools_rows = schools_rows[:limit]
+    where = "status = 'active' AND (? = '' OR city = ?) AND (? = '' OR instr(casefold(name), ?) > 0)"
+    params = (city, city, needle, needle)
+    total = conn.execute(f"SELECT COUNT(*) FROM schools WHERE {where}", params).fetchone()[0]
+    schools_rows = conn.execute(
+        f"SELECT id, name, city FROM schools WHERE {where} ORDER BY city, name, id LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    ).fetchall()
     schools = [
         {"id": int(s["id"]), "name": s["name"], "city": s["city"]} for s in schools_rows
     ]
@@ -1280,7 +1315,13 @@ def get_school_catalog(
             ),
             key=lambda c: (c["school_id"], _natural_key(c["name"])),
         )
-    return {"cities": cities, "schools": schools, "classes": classes}
+    return {
+        "cities": cities,
+        "schools": schools,
+        "classes": classes,
+        "total": int(total),
+        "has_more": offset + len(schools) < int(total),
+    }
 
 
 def _class_for_join(conn, class_id: int) -> sqlite3.Row:

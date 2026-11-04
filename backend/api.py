@@ -24,6 +24,7 @@ from .service import (
     ensure_user,
     equip_item,
     get_school_catalog,
+    search_cities,
     join_school_class,
     lookup_class_by_code,
     reset_demo,
@@ -159,10 +160,13 @@ router = APIRouter(prefix="/api")
 @router.get("/health")
 def health(request: Request) -> dict[str, Any]:
     settings: Settings = request.app.state.settings
-    return {
+    result: dict[str, Any] = {
         "status": "ok",
         "mode": settings.app_mode,
     }
+    if settings.sandbox_mode:
+        result["boot_id"] = getattr(request.app.state, "boot_id", None)
+    return result
 
 
 @router.get("/state")
@@ -192,9 +196,19 @@ def school_catalog(
     q: str = "",
     limit: int = 500,
     only_cities: bool = False,
+    offset: int = 0,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
-    return get_school_catalog(ctx.conn, city=city, query=q, limit=limit, only_cities=only_cities)
+    return get_school_catalog(
+        ctx.conn, city=city, query=q, limit=limit, only_cities=only_cities, offset=offset
+    )
+
+
+@router.get("/school/cities")
+def school_cities(
+    q: str = "", limit: int = 10, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    return search_cities(ctx.conn, q, limit)
 
 
 @router.post("/school/join")

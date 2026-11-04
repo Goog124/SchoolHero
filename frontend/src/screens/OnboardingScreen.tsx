@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { AvatarFrame } from '../components/AvatarFrame';
+import { CityInput, type CityStatus } from '../components/CityInput';
 import { Icon } from '../components/Icon';
 import { PixelHero } from '../components/PixelHero';
 import type { AvatarConfig, Cosmetic, GameState, SchoolCatalog } from '../types';
@@ -35,6 +36,9 @@ type ClassChoice = {
 type AvatarTab = 'skin' | 'hair' | 'outfit' | 'accessory';
 
 const TOTAL_STEPS = 3;
+const SCHOOLS_PAGE = 20;
+/** Поле поиска школы нужно, если в городе больше этого числа школ. */
+const SEARCH_FROM = 8;
 const NAME_RE = /^[\p{L}][\p{L}\- ]*$/u;
 
 const AVATAR_TABS: { id: AvatarTab; label: string }[] = [
@@ -83,12 +87,19 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   const [codeError, setCodeError] = useState<string | null>(null);
   const [codeClass, setCodeClass] = useState<ClassChoice | null>(null);
 
-  const [cities, setCities] = useState<string[]>([]);
-  const [citiesState, setCitiesState] = useState<'loading' | 'ready' | 'error'>('loading');
+  // Выбор из списка: город (чип) - школа - класс. Школы без города не показываются.
   const [city, setCity] = useState('');
-  const [query, setQuery] = useState('');
-  const [found, setFound] = useState<SchoolCatalog | null>(null);
-  const [foundState, setFoundState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [cityText, setCityText] = useState('');
+  const [cityInfo, setCityInfo] = useState<CityStatus>({ status: 'loading', total: -1, query: '', names: [] });
+  const [citiesTick, setCitiesTick] = useState(0);
+  const [schoolQuery, setSchoolQuery] = useState('');
+  const [schools, setSchools] = useState<SchoolCatalog['schools']>([]);
+  const [allClasses, setAllClasses] = useState<SchoolCatalog['classes']>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [cityTotal, setCityTotal] = useState(0);
+  const [schoolState, setSchoolState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [schoolsTick, setSchoolsTick] = useState(0);
   const [schoolId, setSchoolId] = useState<number | null>(null);
   const [classId, setClassId] = useState<number | null>(null);
 
@@ -148,54 +159,99 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   };
 
   useEffect(() => {
-    let alive = true;
     if (code) void verifyCode(code);
-    api
-      .getSchoolCatalog({ onlyCities: true })
-      .then((cat) => {
-        if (!alive) return;
-        setCities(cat.cities);
-        setCitiesState('ready');
-        if (cat.cities.length === 1) setCity(cat.cities[0]);
-      })
-      .catch(() => {
-        if (alive) setCitiesState('error');
-      });
-    return () => {
-      alive = false;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Список школ запрашивается у сервера по городу и строке поиска.
+  // Города и школы могли появиться уже после открытия экрана: перезапрашиваем
+  // при переходе на вкладку «Из списка» и при возврате к окну.
+  const refreshLists = () => {
+    setCitiesTick((n) => n + 1);
+    setSchoolsTick((n) => n + 1);
+  };
+
   useEffect(() => {
-    if (!city && query.trim().length < 2) {
-      setFound(null);
-      setFoundState('idle');
-      return;
+    if (mode === 'list') refreshLists();
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'list') return undefined;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshLists();
+    };
+    window.addEventListener('focus', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [mode]);
+
+  const onCityStatus = (info: CityStatus) => {
+    setCityInfo(info);
+    // Единственный город в каталоге выбирается сам.
+    if (info.status === 'ready' && info.query === '' && info.total === 1 && info.names[0]) {
+      setCity((current) => current || info.names[0]);
     }
+  };
+
+  const changeCity = () => {
+    setCity('');
+    setCityText('');
+    setSchoolQuery('');
+    setSchools([]);
+    setAllClasses([]);
+    setSchoolId(null);
+    setClassId(null);
+    setSchoolState('idle');
+  };
+
+  // Школы выбранного города: серверный поиск по названию, страницы по 20.
+  useEffect(() => {
+    if (mode !== 'list' || !city) return undefined;
     let alive = true;
-    setFoundState('loading');
+    setSchoolState('loading');
     const timer = window.setTimeout(() => {
       api
-        .getSchoolCatalog({ city, q: query.trim() })
-        .then((cat) => {
+        .getSchoolCatalog({ city, q: schoolQuery.trim(), limit: SCHOOLS_PAGE })
+        .then((res) => {
           if (!alive) return;
-          setFound(cat);
-          setFoundState('ready');
+          setSchools(res.schools);
+          setAllClasses(res.classes);
+          setHasMore(Boolean(res.has_more));
+          if (!schoolQuery.trim()) setCityTotal(res.total ?? res.schools.length);
+          setSchoolState('ready');
         })
         .catch(() => {
-          if (alive) setFoundState('error');
+          if (alive) setSchoolState('error');
         });
-    }, 250);
+    }, schoolQuery ? 250 : 0);
     return () => {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [city, query]);
+  }, [mode, city, schoolQuery, schoolsTick]);
 
-  const schools = found?.schools ?? [];
-  const classes = (found?.classes ?? []).filter((c) => c.school_id === schoolId);
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const res = await api.getSchoolCatalog({
+        city,
+        q: schoolQuery.trim(),
+        limit: SCHOOLS_PAGE,
+        offset: schools.length,
+      });
+      setSchools((prev) => [...prev, ...res.schools]);
+      setAllClasses((prev) => [...prev, ...res.classes]);
+      setHasMore(Boolean(res.has_more));
+    } catch {
+      setSchoolState('error');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const classes = allClasses.filter((c) => c.school_id === schoolId);
 
   const listClass: ClassChoice | null = (() => {
     const cls = classes.find((c) => c.id === classId);
@@ -211,7 +267,6 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   })();
 
   const chosen = mode === 'code' ? codeClass : listClass;
-  const catalogEmpty = citiesState === 'ready' && cities.length === 0;
 
   const next = () => {
     if (step === 0) {
@@ -388,67 +443,101 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
             )}
 
             {mode === 'list' && (
-              <>
-                {citiesState === 'loading' && <p className="ob-hint">Загружаем список городов…</p>}
-                {citiesState === 'error' && (
-                  <div className="ob-notice ob-notice--error" role="alert">
-                    <Icon name="alert" size={16} />
-                    <span>Не удалось загрузить список школ. Введите код приглашения или попробуйте позже.</span>
+              <div className="ob-fields">
+                {!city ? (
+                  <div className="ob-field">
+                    <label className="ob-label" htmlFor="ob-city">Город</label>
+                    <CityInput
+                      id="ob-city"
+                      value={cityText}
+                      onChange={setCityText}
+                      onPick={(name) => setCity(name)}
+                      onStatus={onCityStatus}
+                      refreshKey={citiesTick}
+                      placeholder="Начните вводить название города"
+                    />
+                    {cityInfo.status === 'loading' && <span className="ob-hint">Ищем города…</span>}
+                    {cityInfo.status === 'error' && (
+                      <div className="ob-notice ob-notice--error" role="alert">
+                        <Icon name="alert" size={16} />
+                        <span>
+                          Не удалось загрузить города. Проверьте соединение.{' '}
+                          <button type="button" className="su-link" onClick={refreshLists}>
+                            Повторить
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    {cityInfo.status === 'ready' && cityInfo.query === '' && cityInfo.total === 0 && (
+                      <div className="ob-notice">
+                        <Icon name="info" size={16} />
+                        <span>
+                          Школы ещё не зарегистрированы. Введите код приглашения или попросите
+                          директора добавить школу. Если школу только что создали, нажмите
+                          «Обновить».{' '}
+                          <button type="button" className="su-link" onClick={refreshLists}>
+                            Обновить
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    {cityInfo.status === 'ready' && cityInfo.query !== '' && cityInfo.total === 0 && (
+                      <span className="ob-hint">Такого города нет в списке. Проверьте написание или введите код.</span>
+                    )}
+                    {cityInfo.status === 'ready' && cityInfo.query === '' && cityInfo.total > 0 && (
+                      <span className="ob-hint">Выберите город из подсказок.</span>
+                    )}
                   </div>
-                )}
-                {catalogEmpty && (
-                  <div className="ob-notice">
-                    <Icon name="info" size={16} />
-                    <span>
-                      Школы ещё не зарегистрированы. Введите код приглашения или попросите
-                      директора добавить школу.
-                    </span>
-                  </div>
-                )}
-                {citiesState === 'ready' && !catalogEmpty && (
-                  <div className="ob-fields">
+                ) : (
+                  <>
                     <div className="ob-field">
-                      <label className="ob-label" htmlFor="ob-city">Город</label>
-                      <select
-                        id="ob-city"
-                        className="ob-select"
-                        value={city}
-                        onChange={(e) => {
-                          setCity(e.target.value);
-                          setSchoolId(null);
-                          setClassId(null);
-                        }}
-                      >
-                        <option value="">Выберите город</option>
-                        {cities.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
+                      <span className="ob-label">Город</span>
+                      <div className="su-selected">
+                        <span className="su-selected__text">{city}</span>
+                        <button type="button" className="su-link" onClick={changeCity}>
+                          Сменить
+                        </button>
+                      </div>
                     </div>
+
                     <div className="ob-field">
-                      <label className="ob-label" htmlFor="ob-search">Школа</label>
-                      <input
-                        id="ob-search"
-                        className="ob-input"
-                        type="search"
-                        autoComplete="off"
-                        placeholder="Начните вводить название"
-                        value={query}
-                        onChange={(e) => {
-                          setQuery(e.target.value);
-                          setSchoolId(null);
-                          setClassId(null);
-                        }}
-                      />
-                      {foundState === 'loading' && <span className="ob-hint">Ищем…</span>}
-                      {foundState === 'error' && (
-                        <span className="ob-error" role="alert">Не удалось загрузить школы</span>
+                      {cityTotal > SEARCH_FROM && (
+                        <>
+                          <label className="ob-label" htmlFor="ob-search">Название школы</label>
+                          <input
+                            id="ob-search"
+                            className="ob-input"
+                            type="search"
+                            autoComplete="off"
+                            placeholder="Начните вводить название"
+                            value={schoolQuery}
+                            onChange={(e) => {
+                              setSchoolQuery(e.target.value);
+                              setSchoolId(null);
+                              setClassId(null);
+                            }}
+                          />
+                        </>
                       )}
-                      {foundState === 'ready' && schools.length === 0 && (
-                        <span className="ob-hint">Школ не найдено. Попробуйте другое название или введите код.</span>
+                      {cityTotal <= SEARCH_FROM && <span className="ob-label">Школа</span>}
+                      {schoolState === 'loading' && <span className="ob-hint">Загружаем школы…</span>}
+                      {schoolState === 'error' && (
+                        <div className="ob-notice ob-notice--error" role="alert">
+                          <Icon name="alert" size={16} />
+                          <span>
+                            Не удалось загрузить школы. Проверьте соединение.{' '}
+                            <button type="button" className="su-link" onClick={refreshLists}>
+                              Повторить
+                            </button>
+                          </span>
+                        </div>
                       )}
-                      {foundState === 'idle' && (
-                        <span className="ob-hint">Выберите город или введите не меньше двух букв названия.</span>
+                      {schoolState === 'ready' && schools.length === 0 && (
+                        <span className="ob-hint">
+                          {schoolQuery.trim()
+                            ? 'Школ с таким названием нет. Попробуйте другое слово.'
+                            : 'В этом городе пока нет школ.'}
+                        </span>
                       )}
                       {schools.length > 0 && (
                         <ul className="su-pick-list">
@@ -464,13 +553,18 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
                                 }}
                               >
                                 <span className="su-pick__name">{s.name}</span>
-                                <span className="su-pick__meta">{s.city}</span>
                               </button>
                             </li>
                           ))}
                         </ul>
                       )}
+                      {hasMore && (
+                        <button type="button" className="ob-btn ob-btn--ghost" onClick={() => void loadMore()} disabled={loadingMore}>
+                          {loadingMore ? 'Загружаем…' : 'Показать ещё'}
+                        </button>
+                      )}
                     </div>
+
                     {schoolId !== null && (
                       <div className="ob-field">
                         <span className="ob-label" id="ob-class-label">Класс</span>
@@ -493,9 +587,9 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
                         )}
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
-              </>
+              </div>
             )}
 
             {chosen && (

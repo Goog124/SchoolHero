@@ -18,9 +18,9 @@ export function AppHeader({ viewer, onProfile }: AppHeaderProps) {
           <span className="brand__spark" aria-hidden="true" />
         </span>
         <span className="brand__text">
-          <span className="brand__name">ШКОЛЬНЫЙ ГЕРОЙ</span>
+          <span className="brand__name">Школьный герой</span>
           <span className="brand__sub">
-            {isTeacher ? 'Кабинет педагога' : `${viewer.class_name} · ${viewer.level.title}`}
+            {isTeacher ? 'Кабинет педагога' : `${viewer.class_name} · образовательный сервис`}
             {viewer.is_teacher_preview ? <span className="brand__demo">демо</span> : null}
           </span>
         </span>

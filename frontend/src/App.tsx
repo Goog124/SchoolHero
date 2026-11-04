@@ -43,14 +43,57 @@ type LevelUpData = {
   avatar: AvatarConfig;
 };
 
+type Theme = 'light' | 'dark';
+
 const STUDENT_TABS: TabId[] = ['hero', 'challenges', 'leaderboard', 'wardrobe', 'profile'];
 const TEACHER_TABS: TabId[] = ['teacher-class', 'teacher-review', 'teacher-challenges', 'profile'];
 
+function tabFromPath(pathname: string): TabId | null {
+  const route = pathname.replace(/\/+$/, '') || '/';
+  const routes: Record<string, TabId> = {
+    '/student': 'hero',
+    '/student/overview': 'hero',
+    '/student/challenges': 'challenges',
+    '/student/leaderboard': 'leaderboard',
+    '/student/wardrobe': 'wardrobe',
+    '/student/profile': 'profile',
+    '/teacher': 'teacher-class',
+    '/teacher/class': 'teacher-class',
+    '/teacher/review': 'teacher-review',
+    '/teacher/challenges': 'teacher-challenges',
+    '/teacher/profile': 'profile',
+  };
+  return routes[route] ?? null;
+}
+
+function pathForTab(tab: TabId, role: 'student' | 'teacher' = 'student'): string {
+  const routes: Record<TabId, string> = {
+    hero: '/student/overview',
+    challenges: '/student/challenges',
+    leaderboard: '/student/leaderboard',
+    wardrobe: '/student/wardrobe',
+    profile: role === 'teacher' ? '/teacher/profile' : '/student/profile',
+    'teacher-class': '/teacher/class',
+    'teacher-review': '/teacher/review',
+    'teacher-challenges': '/teacher/challenges',
+  };
+  return routes[tab];
+}
+
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      const saved = localStorage.getItem('school-hero:theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      // Use the system preference when storage is unavailable.
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const [state, setState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [bootError, setBootError] = useState('');
-  const [tab, setTab] = useState<TabId>('hero');
+  const [tab, setTab] = useState<TabId>(() => tabFromPath(window.location.pathname) ?? 'hero');
   const [toast, setToast] = useState<ToastData | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [challengeId, setChallengeId] = useState<number | null>(null);
@@ -92,6 +135,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('school-hero:theme', theme);
+    } catch {
+      // The current DOM theme remains usable in restricted webviews.
+    }
+  }, [theme]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
@@ -107,10 +159,21 @@ export default function App() {
     if (!state) return;
     const isTeacher = state.viewer.role === 'teacher';
     const allowed = isTeacher ? TEACHER_TABS : STUDENT_TABS;
-    if (!allowed.includes(tab)) {
-      setTab(isTeacher ? lastTeacherTab.current : lastStudentTab.current);
+    if (!tabFromPath(window.location.pathname) || !allowed.includes(tab)) {
+      const next = isTeacher ? lastTeacherTab.current : lastStudentTab.current;
+      setTab(next);
+      window.history.replaceState({}, '', pathForTab(next, isTeacher ? 'teacher' : 'student'));
     }
   }, [state, tab]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const next = tabFromPath(window.location.pathname);
+      if (next) setTab(next);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     document.title = state?.viewer.role === 'teacher' ? 'Кабинет педагога · Школьный герой' : 'Школьный герой';
@@ -121,6 +184,7 @@ export default function App() {
       if (state?.viewer.role === 'teacher') lastTeacherTab.current = next;
       else lastStudentTab.current = next;
       setTab(next);
+      window.history.pushState({}, '', pathForTab(next, state?.viewer.role ?? 'student'));
       setChallengeId(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       tapHaptic();
@@ -232,6 +296,7 @@ export default function App() {
     if (role === 'teacher') lastTeacherTab.current = nextTab;
     else lastStudentTab.current = nextTab;
     setTab(nextTab);
+    window.history.pushState({}, '', pathForTab(nextTab, role));
     setChallengeId(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     showToast(
@@ -247,6 +312,7 @@ export default function App() {
     if (!response) return false;
     lastStudentTab.current = 'hero';
     setTab('hero');
+    window.history.pushState({}, '', pathForTab('hero'));
     showToast('Демо-профиль восстановлен: 420 XP и заявка на проверке', 'success', 'refresh');
     return true;
   };
@@ -260,6 +326,7 @@ export default function App() {
       const response = await api.onboarding(firstName, avatar);
       setState(response.state);
       setTab('hero');
+      window.history.replaceState({}, '', pathForTab('hero'));
       showToast(`Добро пожаловать в игру, ${firstName}!`, 'success', 'sparkles');
       return true;
     } catch (error) {
@@ -350,13 +417,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="ambient" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-
-      <div className="shell">
+      <div className="shell shell--dashboard">
         <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} />
 
         <main className="screen-wrap" key={tab}>
@@ -396,6 +457,8 @@ export default function App() {
               onResetDemo={handleReset}
               onShare={() => void handleShare()}
               onNavigate={navigate}
+              theme={theme}
+              onThemeChange={setTheme}
             />
           ) : null}
 

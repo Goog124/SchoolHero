@@ -23,6 +23,13 @@ def _ids_env(name: str) -> set[str]:
     return {part.strip() for part in raw.split(",") if part.strip()}
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     base_dir: Path = BASE_DIR
@@ -32,6 +39,7 @@ class Settings:
     init_data_max_age: int = 3600
     teacher_max_ids: set[str] = field(default_factory=set)
     default_class_id: int = 1
+    serve_frontend: bool = False
 
     @property
     def demo_mode(self) -> bool:
@@ -48,4 +56,5 @@ class Settings:
             init_data_max_age=_int_env("INIT_DATA_MAX_AGE", 3600),
             teacher_max_ids=_ids_env("TEACHER_MAX_IDS"),
             default_class_id=_int_env("DEFAULT_CLASS_ID", 1),
+            serve_frontend=_bool_env("SERVE_FRONTEND", False),
         )

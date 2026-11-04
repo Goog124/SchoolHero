@@ -55,9 +55,9 @@ export function ChallengesScreen({ state, onOpenChallenge }: ChallengesScreenPro
   return (
     <div className="screen">
       <ScreenTitle
-        eyebrow="Арена заданий"
+        eyebrow="Учебная активность"
         title="Челленджи"
-        subtitle="Выполняй, отправляй подтверждение и получай опыт после проверки педагога."
+        subtitle="Выбирай учебные и внеучебные активности. Педагог подтвердит результат."
       />
 
       <div className="challenge-summary">
@@ -105,8 +105,8 @@ export function ChallengesScreen({ state, onOpenChallenge }: ChallengesScreenPro
 
       <section className="how-card">
         <div className="how-card__head">
-          <span className="panel-eyebrow">Правила арены</span>
-          <h2>Как получить XP</h2>
+          <span className="panel-eyebrow">Порядок участия</span>
+          <h2>Как это работает</h2>
         </div>
         <ol className="how-steps">
           <li>

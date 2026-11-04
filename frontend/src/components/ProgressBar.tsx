@@ -1,25 +1,22 @@
+import '../styles/student.css';
+
 type ProgressBarProps = {
   value: number;
   max: number;
+  /** Оставлено для совместимости; цвет шкалы единый. */
   tone?: 'violet' | 'cyan' | 'gold' | 'lime' | 'pink';
   height?: number;
   label?: string;
   className?: string;
 };
 
-export function ProgressBar({
-  value,
-  max,
-  tone = 'violet',
-  height = 10,
-  label,
-  className = '',
-}: ProgressBarProps) {
+export function ProgressBar({ value, max, height = 8, label, className = '' }: ProgressBarProps) {
   const safeMax = Math.max(1, max);
   const percent = Math.max(0, Math.min(100, (value / safeMax) * 100));
+
   return (
     <div
-      className={`progress progress--${tone} ${className}`.trim()}
+      className={`st-progress ${className}`.trim()}
       style={{ height }}
       role="progressbar"
       aria-valuemin={0}
@@ -27,8 +24,7 @@ export function ProgressBar({
       aria-valuenow={Math.max(0, Math.min(value, safeMax))}
       aria-label={label}
     >
-      <div className="progress__fill" style={{ width: `${percent}%` }} />
-      <div className="progress__segments" aria-hidden="true" />
+      <div className="st-progress__fill" style={{ width: `${percent}%` }} />
     </div>
   );
 }

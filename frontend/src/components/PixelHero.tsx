@@ -36,6 +36,21 @@ const OUTFIT: Record<
   suit_cosmic: { main: '#312e81', dark: '#1e1b4b', light: '#818cf8', accent: '#f0abfc' },
 };
 
+/** Сетка пиксельного героя (viewBox 0 0 32 42): ширина и высота в клетках. */
+export const HERO_GRID = { w: 32, h: 42 } as const;
+
+/**
+ * Рамки частей тела в клетках сетки (x0,y0 включительно, x1,y1 исключительно),
+ * вычислены по реальным rect-ам ниже: голова y0..18 (причёски: хвост до x=29, каре до y=19),
+ * торс с руками y17..32, ноги y31..41. Используются «камерой» гардероба.
+ */
+export const HERO_PARTS = {
+  head: { x0: 4, y0: 0, x1: 29, y1: 20 },
+  face: { x0: 7, y0: 2, x1: 25, y1: 19 },
+  neck: { x0: 6, y0: 9, x1: 26, y1: 27 },
+  torso: { x0: 3, y0: 17, x1: 29, y1: 33 },
+} as const;
+
 const OUTLINE = '#180c29';
 const PANTS = '#2a1b3e';
 const PANTS_DARK = '#1b1029';
@@ -506,6 +521,7 @@ export function PixelHero({
             50% { transform: translateY(-1.5px); }
           }
           .pixel-hero-bob { animation: pixel-hero-bob 3.6s ease-in-out infinite; }
+          @media (prefers-reduced-motion: reduce) { .pixel-hero-bob { animation: none; } }
         `}</style>
       ) : null}
       <g className={animate ? 'pixel-hero-bob' : undefined}>

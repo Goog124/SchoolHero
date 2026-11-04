@@ -1,0 +1,169 @@
+/* Печатные документы. Все правила с префиксом pr-. */
+
+.pr-sheet {
+  display: none;
+}
+
+.pr-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary, #5f6773);
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 15mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body > *:not(.pr-sheet) {
+    display: none !important;
+  }
+
+  .pr-sheet {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #000;
+    font-family: Onest, 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.35;
+    text-shadow: none;
+  }
+
+  .pr-sheet *,
+  .pr-sheet *::before,
+  .pr-sheet *::after {
+    box-sizing: border-box;
+    background: transparent !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .pr-title {
+    margin: 0 0 4pt;
+    font-size: 16pt;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .pr-meta {
+    margin: 0 0 12pt;
+    padding: 0;
+    list-style: none;
+    font-size: 11pt;
+  }
+
+  .pr-meta li {
+    margin: 0 0 2pt;
+  }
+
+  .pr-h2 {
+    margin: 14pt 0 6pt;
+    font-size: 12pt;
+    font-weight: 700;
+    break-after: avoid;
+  }
+
+  .pr-kpi {
+    width: 100%;
+    margin: 0 0 4pt;
+    border-collapse: collapse;
+  }
+
+  .pr-kpi th,
+  .pr-kpi td {
+    padding: 3pt 0;
+    border-bottom: 0.5pt solid #000;
+    text-align: left;
+    font-weight: 400;
+    vertical-align: top;
+  }
+
+  .pr-kpi td {
+    text-align: right;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .pr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5pt;
+  }
+
+  .pr-table thead {
+    display: table-header-group;
+  }
+
+  .pr-table tfoot {
+    display: table-footer-group;
+  }
+
+  .pr-table th,
+  .pr-table td {
+    padding: 3pt 5pt;
+    border: 0.5pt solid #000;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .pr-table th {
+    font-weight: 700;
+  }
+
+  .pr-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .pr-table .pr-r {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .pr-note {
+    margin: 6pt 0 0;
+    font-size: 10pt;
+  }
+
+  .pr-sign {
+    margin-top: 28pt;
+    display: flex;
+    gap: 24pt;
+    align-items: flex-end;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .pr-sign__field {
+    flex: 1 1 0;
+    padding-top: 2pt;
+    border-top: 0.5pt solid #000;
+    font-size: 9.5pt;
+  }
+
+  .pr-sign__field--date {
+    flex: 0 0 38mm;
+  }
+}

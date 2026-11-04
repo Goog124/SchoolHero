@@ -1,0 +1,46 @@
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f3f5f8;
+  --text: #14171c;
+  --muted: #444b57;
+  --line: #c9ced6;
+  --accent: #0b4fb3;
+  --accent-text: #ffffff;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: Onest, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+}
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+a { color: var(--accent); }
+a:focus-visible, .button:focus-visible { outline: 3px solid #f2a900; outline-offset: 2px; }
+.skip { position: absolute; left: -999px; top: 0; background: #fff; padding: 8px 12px; }
+.skip:focus { left: 8px; top: 8px; z-index: 10; }
+header.site { border-bottom: 1px solid var(--line); }
+header.site .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
+.brand { font-weight: 700; color: var(--text); text-decoration: none; }
+nav { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 16px; }
+.hero { padding-top: 56px; padding-bottom: 40px; }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.15; margin: 0 0 16px; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 14px; }
+h3 { font-size: 19px; margin: 20px 0 6px; }
+.lead { font-size: 20px; color: var(--muted); max-width: 640px; }
+section { padding: 40px 0; border-top: 1px solid var(--line); }
+section.alt { background: var(--bg-alt); }
+.button { display: inline-block; margin-top: 12px; padding: 12px 22px; background: var(--accent); color: var(--accent-text); border-radius: 6px; text-decoration: none; font-weight: 600; }
+.button:hover { background: #083c8a; }
+ul, ol { padding-left: 22px; }
+li { margin: 4px 0; }
+.note { color: var(--muted); font-size: 16px; }
+footer { border-top: 1px solid var(--line); padding: 24px 0 40px; color: var(--muted); font-size: 16px; }
+@media (min-width: 720px) {
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .cols h3 { margin-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

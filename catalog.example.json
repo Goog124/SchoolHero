@@ -1,0 +1,16 @@
+{
+  "schools": [
+    {
+      "name": "Название школы",
+      "city": "Город",
+      "classes": [
+        {
+          "name": "8А",
+          "invite_code": "SCHOOL-8A",
+          "weekly_goal": 1600,
+          "teacher_max_ids": ["MAX_ID_классного_руководителя"]
+        }
+      ]
+    }
+  ]
+}

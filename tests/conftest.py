@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 from app import app  # noqa: E402
 from backend.config import Settings  # noqa: E402
 from backend.db import connect, init_db  # noqa: E402
-from backend.seed import seed_database  # noqa: E402
+from backend.demo_seed import seed_demo_database  # noqa: E402
 
 DEMO_HEADERS = {"X-Client-Id": "demo-test-client"}
 MAX_TOKEN = "test-bot-token"
@@ -30,6 +30,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "base_dir": ROOT,
         "static_dir": ROOT / "static",
         "db_path": tmp_path / "test.db",
+        "app_mode": "demo",
         "bot_token": "",
         "init_data_max_age": 3600,
         "teacher_max_ids": set(),
@@ -43,7 +44,7 @@ def build_client(settings: Settings) -> TestClient:
     init_db(settings.db_path)
     conn = connect(settings.db_path)
     try:
-        seed_database(conn)
+        seed_demo_database(conn)
     finally:
         conn.close()
     # TestClient only runs the app lifespan when used as a context manager.
@@ -68,6 +69,7 @@ def demo_client(demo_settings: Settings):
 def max_settings(tmp_path: Path) -> Settings:
     return make_settings(
         tmp_path,
+        app_mode="prod",
         bot_token=MAX_TOKEN,
         teacher_max_ids={"9001"},
     )

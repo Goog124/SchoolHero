@@ -186,32 +186,6 @@ export function errorHaptic(): void {
   }
 }
 
-export async function shareText(text: string): Promise<'max' | 'native' | 'clipboard' | 'failed'> {
-  const current = getBridge();
-  if (current?.shareMaxContent) {
-    try {
-      await current.shareMaxContent({ text });
-      return 'max';
-    } catch {
-      // Try the next available mechanism.
-    }
-  }
-  if (typeof navigator !== 'undefined' && navigator.share) {
-    try {
-      await navigator.share({ text });
-      return 'native';
-    } catch {
-      // The user may have cancelled — no need to show an error.
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    return 'clipboard';
-  } catch {
-    return 'failed';
-  }
-}
-
 export function bindBackButton(visible: boolean, handler: () => void): () => void {
   const current = getBridge();
   if (!current?.BackButton) return () => undefined;

@@ -1,0 +1,30 @@
+[Unit]
+Description=School Hero (MAX mini app)
+After=network.target
+
+[Service]
+Type=simple
+User=schoolhero
+Group=schoolhero
+WorkingDirectory=/opt/school-hero
+EnvironmentFile=/opt/school-hero/.env
+Environment=APP_MODE=prod
+Environment=CATALOG_FILE=/var/lib/school-hero/catalog.json
+Environment=HOST=127.0.0.1
+Environment=PORT=8000
+Environment=SERVE_FRONTEND=true
+Environment=STATIC_DIR=/opt/school-hero/static
+Environment=DATA_DIR=/var/lib/school-hero
+# env перебивает APP_MODE из EnvironmentFile: на сервере всегда prod.
+ExecStart=/usr/bin/env APP_MODE=prod /opt/school-hero/.venv/bin/python app.py
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/school-hero
+
+[Install]
+WantedBy=multi-user.target

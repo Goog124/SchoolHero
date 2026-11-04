@@ -313,19 +313,22 @@ def test_teacher_creates_and_archives_challenge(demo_client):
         for item in archived.json()["state"]["challenges"]
     )
 
-    bad_xp = demo_client.post(
-        "/api/challenges",
-        json={
-            "title": "Странное задание",
-            "description": "",
-            "category": "help",
-            "xp": 55,
-            "kind": "daily",
-        },
-        headers=DEMO_HEADERS,
-    )
-    assert bad_xp.status_code == 400
-    assert "Опыт" in bad_xp.json()["detail"]
+    def post_xp(value):
+        return demo_client.post(
+            "/api/challenges",
+            json={"title": "Задание с наградой", "description": "", "category": "help",
+                  "xp": value, "kind": "daily"},
+            headers=DEMO_HEADERS,
+        )
+
+    # One rule everywhere: any integer 10..300 (the API schema and the service agree).
+    assert post_xp(55).status_code == 200
+    assert post_xp(10).status_code == 200
+    assert post_xp(300).status_code == 200
+    for bad in (9, 301, 500, 0, -20):
+        assert post_xp(bad).status_code in {400, 422}, bad
+    reward = demo_client.post("/api/teacher/reward", json={"student_id": 1, "amount": 301}, headers=DEMO_HEADERS)
+    assert reward.status_code in {400, 422}
 
     missing = demo_client.post(
         "/api/challenges/999999/archive", headers=DEMO_HEADERS
@@ -428,7 +431,7 @@ def test_demo_role_validation(demo_client):
 
 
 def test_max_mode_requires_valid_init_data(max_client):
-    assert max_client.get("/api/health").json()["mode"] == "max"
+    assert max_client.get("/api/health").json()["mode"] == "prod"
     assert max_client.get("/api/state").status_code == 401
     assert (
         max_client.get(
@@ -443,7 +446,7 @@ def test_max_mode_requires_valid_init_data(max_client):
     )
     assert response.status_code == 200, response.text
     state = response.json()
-    assert state["mode"] == "max"
+    assert state["mode"] == "prod"
     assert state["verified"] is True
     assert state["viewer"]["name"] == "Алиса Морозова"
     assert state["viewer"]["role"] == "student"
@@ -506,3 +509,143 @@ def test_max_student_cannot_use_teacher_endpoints(max_client):
         "/api/reviews/1", json={"action": "approve"}, headers=headers
     )
     assert review.status_code == 403
+
+def test_director_role_and_batch_review(demo_client):
+    director_state = switch_role(demo_client, "director")
+    assert director_state["viewer"]["role"] == "director"
+    assert director_state["director"] is not None
+    kpi = director_state["director"]["kpi"]
+    assert kpi["total_students"] > 0
+    assert len(director_state["director"]["grades"]) > 0
+    assert "directions" in director_state["director"]
+
+    # Teacher switch and batch approve
+    teacher_state = switch_role(demo_client, "teacher")
+    pending = teacher_state["teacher"]["pending"]
+    assert len(pending) >= 2
+    ids = [pending[0]["id"], pending[1]["id"]]
+    batch_resp = demo_client.post(
+        "/api/reviews/batch",
+        json={"completion_ids": ids, "action": "approve"},
+        headers=DEMO_HEADERS,
+    )
+    assert batch_resp.status_code == 200
+    res = batch_resp.json()["result"]
+    assert res["approved"] == 2
+    assert len(res["results"]) == 2
+
+
+def test_teacher_reward_student(demo_client):
+    switch_role(demo_client, "teacher")
+    state = demo_client.get("/api/state", headers=DEMO_HEADERS).json()
+    student = state["teacher"]["students"][0]
+    initial_xp = student["xp"]
+    resp = demo_client.post(
+        "/api/teacher/reward",
+        json={"student_id": student["id"], "amount": 50, "reason": "Активность на уроке математики"},
+        headers=DEMO_HEADERS,
+    )
+    assert resp.status_code == 200
+    updated_state = resp.json()["state"]
+    updated_student = next(s for s in updated_state["teacher"]["students"] if s["id"] == student["id"])
+    assert updated_student["xp"] == initial_xp + 50
+    assert "recent_works" in updated_student
+    assert "subject_stats" in updated_student
+
+
+
+def test_school_check_code_and_catalog(demo_client):
+    # Test valid code KVANT-8A
+    resp = demo_client.get("/api/school/check-code?code=KVANT-8A", headers=DEMO_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["valid"] is True
+    assert data["class_name"] == "8А"
+    assert "Кванториум" in data["school_name"]
+    assert data["teacher_name"] == "Константин Зверев"
+
+    # Test invalid code
+    bad_resp = demo_client.get("/api/school/check-code?code=NONEXISTENT", headers=DEMO_HEADERS)
+    assert bad_resp.status_code == 200
+    assert bad_resp.json()["valid"] is False
+
+    # Test catalog
+    cat_resp = demo_client.get("/api/school/catalog", headers=DEMO_HEADERS)
+    assert cat_resp.status_code == 200
+    cat_data = cat_resp.json()
+    assert "Великий Новгород" in cat_data["cities"]
+    assert len(cat_data["schools"]) >= 5
+    assert len(cat_data["classes"]) >= 8
+
+    # Test join class
+    join_resp = demo_client.post("/api/school/join", json={"invite_code": "KVANT-8A"}, headers=DEMO_HEADERS)
+    assert join_resp.status_code == 200
+    assert join_resp.json()["state"]["viewer"]["class_name"] == "8А"
+
+    # Test onboarding with last_name and invite_code
+    onboard_resp = demo_client.post(
+        "/api/onboarding",
+        json={
+            "first_name": "Сергей",
+            "last_name": "Иванов",
+            "invite_code": "KVANT-8A",
+            "avatar": {"skin": "skin_warm", "hair": "hair_short"},
+        },
+        headers=DEMO_HEADERS,
+    )
+    assert onboard_resp.status_code == 200
+    viewer = onboard_resp.json()["state"]["viewer"]
+    assert viewer["first_name"] == "Сергей"
+    assert viewer["last_name"] == "Иванов"
+    assert viewer["class_name"] == "8А"
+    assert viewer["onboarded"] is True
+
+
+def test_demo_mode_cannot_be_enabled_by_empty_token(tmp_path):
+    from backend.config import Settings
+
+    settings = Settings(app_mode="prod", bot_token="")
+    assert not settings.demo_mode
+    try:
+        settings.validate()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("prod without token must fail")
+
+
+def test_prod_catalog_creates_no_users(tmp_path):
+    import json
+
+    from backend.catalog import import_catalog
+    from backend.db import connect, init_db
+
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "schools": [
+                    {
+                        "name": "Школа 1",
+                        "city": "Город",
+                        "classes": [
+                            {"name": "5А", "invite_code": "S1-5A", "teacher_max_ids": ["42"]}
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = tmp_path / "prod.db"
+    init_db(db)
+    conn = connect(db)
+    try:
+        import_catalog(conn, catalog)
+        import_catalog(conn, catalog)  # idempotent
+        assert conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM classes").fetchone()["n"] == 1
+        assert conn.execute("SELECT COUNT(*) AS n FROM challenges").fetchone()["n"] == 0
+        assert conn.execute("SELECT class_id FROM class_staff WHERE max_user_id='42'").fetchone()
+    finally:
+        conn.close()

@@ -78,7 +78,11 @@ export function Segmented<T extends string>({
             onClick={() => onChange(option.id)}
           >
             <span>{option.label}</span>
-            {option.badge ? <span className="segmented__badge">{option.badge}</span> : null}
+            {option.badge ? (
+              <span className="segmented__badge">
+                {option.badge}
+              </span>
+            ) : null}
           </button>
         );
       })}

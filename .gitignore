@@ -8,3 +8,6 @@ data/*.db-shm
 data/*.db-wal
 frontend/node_modules/
 static/
+.idea/
+catalog.json
+data/catalog.json

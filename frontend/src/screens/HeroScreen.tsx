@@ -1,310 +1,271 @@
-import type { IconName } from '../components/Icon';
+import { useMemo, useState } from 'react';
+import '../styles/student.css';
 import type { GameState, TabId } from '../types';
 import { AvatarFrame } from '../components/AvatarFrame';
 import { ChallengeCard } from '../components/ChallengeCard';
-import { Chip } from '../components/Chip';
-import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { ProgressBar } from '../components/ProgressBar';
 import { StatTile } from '../components/StatTile';
-import {
-  RANK_TITLES,
-  formatLongDate,
-  formatNumber,
-  formatRelative,
-  greeting,
-  plural,
-} from '../game';
+import { formatLongDate, formatNumber, formatRelative, greeting, plural } from '../game';
 
 type HeroScreenProps = {
   state: GameState;
   onOpenChallenge: (id: number) => void;
   onNavigate: (tab: TabId) => void;
-  onShare: () => void;
+  /** Не используется: кнопки «Поделиться» на экране нет. */
+  onShare?: () => void;
 };
 
-export function HeroScreen({ state, onOpenChallenge, onNavigate, onShare }: HeroScreenProps) {
-  const { viewer, class_sprint: sprint, challenges, week, feed, achievements } = state;
-  const available = challenges.filter((challenge) => challenge.status === 'available');
-  const pending = challenges.filter((challenge) => challenge.status === 'pending');
-  const featured = (available.length ? available : pending).slice(0, 3);
-  const nextTitle = viewer.next_level ? RANK_TITLES[viewer.next_level - 1] : null;
-  const unlocked = achievements.filter((item) => item.unlocked).length;
+const TASKS_LIMIT = 3;
+
+export function HeroScreen({ state, onOpenChallenge, onNavigate }: HeroScreenProps) {
+  const { viewer, class_sprint: sprint, challenges, week, feed, leaderboard } = state;
+  const [showAll, setShowAll] = useState(false);
+
+  // Сначала то, что нужно исправить, затем доступные задания.
+  const nextTasks = useMemo(() => {
+    const rejected = challenges.filter((c) => c.status === 'rejected');
+    const available = challenges.filter((c) => c.status === 'available');
+    return [...rejected, ...available].slice(0, TASKS_LIMIT);
+  }, [challenges]);
+
+  const contributors = useMemo(
+    () =>
+      [...leaderboard.students].sort((a, b) => b.weekly_xp - a.weekly_xp || b.xp - a.xp),
+    [leaderboard.students],
+  );
+  const shownContributors = showAll ? contributors : contributors.slice(0, 3);
+
+  const level = viewer.level;
+  const classLine = [viewer.class_name, viewer.school_name].filter(Boolean).join(' · ');
+  const hasSprint = Boolean(sprint && sprint.goal > 0);
 
   return (
-    <div className="screen screen--hero">
-      <div className="hero-greet">
-        <span className="hero-greet__eyebrow">{formatLongDate()}</span>
+    <div className="st-page">
+      <header className="st-head">
         <h1>
-          {greeting()}, <span>{viewer.first_name}</span>!
+          {greeting()}, {viewer.first_name}
         </h1>
-        <p>Учебные достижения становятся видимыми и помогают классу двигаться вперёд.</p>
+        <p>{formatLongDate()}</p>
+      </header>
+
+      <div className="st-stats st-stats--4">
+        <StatTile
+          label="Место в классе"
+          value={viewer.personal_rank > 0 ? `${viewer.personal_rank}` : '—'}
+          hint={
+            leaderboard.students.length
+              ? `из ${leaderboard.students.length}`
+              : undefined
+          }
+        />
+        <StatTile
+          label="Серия"
+          value={`${viewer.streak} ${plural(viewer.streak, 'день', 'дня', 'дней')}`}
+        />
+        <StatTile label="Принято" value={viewer.stats.confirmed} hint="заданий" />
+        <StatTile label="На проверке" value={viewer.stats.pending} hint="заданий" />
       </div>
 
-      <section className="hero-stage">
-        <div className="hero-stage__grid" aria-hidden="true" />
-        <div className="hero-stage__top">
-          <Chip icon="flame" tone="orange">
-            {viewer.streak} {plural(viewer.streak, 'день', 'дня', 'дней')} подряд
-          </Chip>
-          <div className="hero-stage__actions">
-            <Chip icon="spark" tone="gold">
-              {formatNumber(viewer.sparks)}
-            </Chip>
-            <button
-              type="button"
-              className="icon-btn icon-btn--soft"
-              onClick={onShare}
-              aria-label="Поделиться героем"
-            >
-              <Icon name="share" size={17} />
-            </button>
-          </div>
-        </div>
-
-        <div className="hero-stage__figure">
-          <span className="hero-stage__glow" aria-hidden="true" />
-          <span className="hero-stage__pixel hero-stage__pixel--a" aria-hidden="true" />
-          <span className="hero-stage__pixel hero-stage__pixel--b" aria-hidden="true" />
-          <AvatarFrame
-            avatar={viewer.avatar}
-            size={182}
-            level={viewer.level.level}
-            animate
-          />
-        </div>
-
-        <div className="hero-stage__identity">
-          <span className="hero-stage__name">{viewer.name}</span>
-          <span className="hero-stage__rank">
-            Уровень {viewer.level.level} · {viewer.level.title}
-          </span>
-        </div>
-
-        <div className="hero-stage__progress">
-          <div className="hero-stage__xp">
-            <span>{formatNumber(viewer.xp)} XP</span>
-            <span>
-              {viewer.level.is_max
-                ? 'Максимальный уровень'
-                : `${formatNumber(viewer.level.xp_in_level)} / ${formatNumber(viewer.level.xp_for_level)}`}
-            </span>
-          </div>
-          <ProgressBar
-            value={viewer.level.xp_in_level}
-            max={viewer.level.xp_for_level || 1}
-            tone="violet"
-            height={12}
-            label="Опыт внутри уровня"
-          />
-          <p className="hero-stage__next">
-            {viewer.level.is_max ? (
-              <>
-                Ты — <strong>легенда школы</strong>. Теперь помогай другим добраться до вершины.
-              </>
-            ) : (
-              <>
-                Ещё <strong>{formatNumber(viewer.to_next)} XP</strong> до уровня «{nextTitle}»
-              </>
-            )}
-          </p>
-        </div>
-      </section>
-
-      <div className="stat-grid stat-grid--three">
-        <StatTile
-          icon="trophy"
-          label="место в классе"
-          value={`#${viewer.personal_rank}`}
-          tone="gold"
-        />
-        <StatTile
-          icon="check"
-          label="подтверждено"
-          value={viewer.stats.confirmed}
-          tone="lime"
-        />
-        <StatTile
-          icon="clock"
-          label="на проверке"
-          value={viewer.stats.pending}
-          tone="cyan"
-        />
-      </div>
-
-      <section className="panel sprint-card">
-        <div className="panel-head">
-          <div>
-            <span className="panel-eyebrow">Классный спринт недели</span>
-            <h2>
-              {sprint.name} <span className="panel-head__muted">· {sprint.school}</span>
-            </h2>
-          </div>
-          <span className="rank-badge">#{sprint.rank}</span>
-        </div>
-        <div className="sprint-card__numbers">
-          <strong>{formatNumber(sprint.xp)} XP</strong>
-          <span>цель {formatNumber(sprint.goal)} XP</span>
-        </div>
-        <ProgressBar value={sprint.xp} max={sprint.goal} tone="cyan" height={12} />
-        <div className="sprint-card__foot">
-          <span>{sprint.percent}% цели</span>
-          <span>
-            {sprint.xp >= sprint.goal
-              ? 'Цель недели взята!'
-              : `ещё ${formatNumber(sprint.goal - sprint.xp)} XP`}
-          </span>
-        </div>
-        <div className="sprint-card__top">
-          {sprint.top ? (
-            <>
-              <AvatarFrame avatar={sprint.top.avatar} size={36} decorative />
-              <div className="sprint-card__leader">
-                <span>Лидер недели</span>
-                <strong>{sprint.top.name}</strong>
-              </div>
-              <span className="sprint-card__leader-xp">+{formatNumber(sprint.top.xp)} XP</span>
-            </>
-          ) : (
-            <div className="sprint-card__leader">
-              <span>На этой неделе</span>
-              <strong>Ещё нет активности</strong>
-            </div>
-          )}
-          <button
-            type="button"
-            className="link-btn"
-            onClick={() => onNavigate('leaderboard')}
-          >
-            Рейтинг <Icon name="chevronRight" size={14} />
-          </button>
-        </div>
-      </section>
-
-      <section className="section">
-        <div className="section-head">
-          <div>
-            <h2>Задания для тебя</h2>
-            <p>{available.length ? `${available.length} можно выполнить прямо сейчас` : 'Всё отправлено на проверку'}</p>
-          </div>
-          <button type="button" className="link-btn" onClick={() => onNavigate('challenges')}>
-            Все задания <Icon name="chevronRight" size={14} />
-          </button>
-        </div>
-        {featured.length ? (
-          <div className="challenge-list">
-            {featured.map((challenge) => (
-              <ChallengeCard
-                key={challenge.id}
-                challenge={challenge}
-                onOpen={onOpenChallenge}
-                compact
-              />
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            icon="check"
-            title="На сегодня всё закрыто"
-            text="Новые задания появятся завтра. А пока загляни в рейтинг или гардероб."
-            compact
-          />
-        )}
-      </section>
-
-      <section className="panel streak-card">
-        <div className="panel-head">
-          <div>
-            <span className="panel-eyebrow">Серия дней</span>
-            <h2>{viewer.streak} дней подряд</h2>
-          </div>
-          <Chip icon="flame" tone="orange">
-            +50 XP за неделю
-          </Chip>
-        </div>
-        <div className="week-strip">
-          {week.map((day) => (
-            <div
-              key={day.date}
-              className={`week-day ${day.active ? 'is-active' : ''} ${
-                day.is_today ? 'is-today' : ''
-              }`.trim()}
-            >
-              <span className="week-day__label">{day.label}</span>
-              <span className="week-day__dot">
-                {day.active ? <Icon name="flame" size={15} filled /> : <span />}
-              </span>
-            </div>
-          ))}
-        </div>
-        <p className="streak-card__hint">
-          Заходи каждый день и отмечай хотя бы одно задание. Серия не любит пропусков.
-        </p>
-      </section>
-
-      <section className="panel achievements-panel">
-        <div className="panel-head">
-          <div>
-            <span className="panel-eyebrow">Достижения</span>
-            <h2>{unlocked} из {achievements.length} открыто</h2>
-          </div>
-          <button type="button" className="link-btn" onClick={() => onNavigate('profile')}>
-            Все <Icon name="chevronRight" size={14} />
-          </button>
-        </div>
-        <div className="achievement-badges">
-          {achievements.slice(0, 4).map((achievement) => (
-            <div
-              key={achievement.id}
-              className={`achievement-badge ${achievement.unlocked ? 'is-unlocked' : ''}`.trim()}
-            >
-              <span className="achievement-badge__icon">
-                <Icon
-                  name={achievement.icon as IconName}
-                  size={18}
-                  filled={achievement.unlocked}
-                />
-              </span>
-              <span>{achievement.title}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="section">
-        <div className="section-head">
-          <div>
-            <h2>Лента класса</h2>
-            <p>Кто и за что получил опыт</p>
-          </div>
-        </div>
-        <div className="panel feed-panel">
-          {feed.length ? (
-            feed.slice(0, 5).map((item) => (
-              <div
-                key={item.id}
-                className={`feed-item ${item.user_id === viewer.id ? 'is-viewer' : ''}`.trim()}
+      <div className="st-grid st-grid--2">
+        <div className="st-col">
+          <section className="st-card" aria-labelledby="st-profile-title">
+            <div className="st-profile">
+              <button
+                type="button"
+                className="st-profile__avatar"
+                onClick={() => onNavigate('wardrobe')}
+                aria-label="Изменить внешний вид героя"
               >
-                <AvatarFrame avatar={item.avatar} size={38} decorative />
-                <div className="feed-item__text">
-                  <span>
-                    <strong>{item.name}</strong> · {item.reason}
-                  </span>
-                  <small>{formatRelative(item.created_at)}</small>
-                </div>
-                <span className="feed-item__xp">+{item.amount}</span>
+                <AvatarFrame avatar={viewer.avatar} size={80} level={level.level} />
+              </button>
+              <div className="st-profile__info">
+                <h2 className="st-profile__name" id="st-profile-title">
+                  {viewer.name}
+                </h2>
+                {classLine ? <p className="st-profile__meta">{classLine}</p> : null}
+                <p className="st-profile__meta">
+                  Уровень {level.level} · {level.title}
+                </p>
               </div>
-            ))
-          ) : (
-            <EmptyState
-              icon="users"
-              title="Лента пока пустая"
-              text="Стань первым, кто получит опыт на этой неделе."
-              compact
-            />
-          )}
+            </div>
+
+            <div className="st-level">
+              <div className="st-level__row">
+                <span>
+                  <strong>{formatNumber(viewer.xp)} XP</strong> всего
+                </span>
+                {level.is_max ? (
+                  <span className="st-muted">Максимальный уровень</span>
+                ) : (
+                  <span className="st-muted">
+                    {formatNumber(level.xp_in_level)} / {formatNumber(level.xp_for_level)} XP
+                  </span>
+                )}
+              </div>
+              <ProgressBar
+                value={level.xp_in_level}
+                max={level.xp_for_level || 1}
+                height={8}
+                label="Прогресс до следующего уровня"
+              />
+              {!level.is_max ? (
+                <p className="st-level__note">
+                  До следующего уровня: {formatNumber(viewer.to_next)} XP
+                </p>
+              ) : null}
+            </div>
+          </section>
+
+          <section aria-labelledby="st-next-title">
+            <div className="st-card__head">
+              <h2 className="st-h2" id="st-next-title">
+                Что сделать
+              </h2>
+              <button type="button" className="st-link" onClick={() => onNavigate('challenges')}>
+                Все задания
+                <Icon name="chevronRight" size={14} />
+              </button>
+            </div>
+            {nextTasks.length ? (
+              <div className="st-list">
+                {nextTasks.map((challenge) => (
+                  <ChallengeCard
+                    key={challenge.id}
+                    challenge={challenge}
+                    onOpen={onOpenChallenge}
+                    compact
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="st-empty">
+                <h3>Новых заданий нет</h3>
+                <p>Когда учитель добавит задания, они появятся здесь.</p>
+              </div>
+            )}
+          </section>
         </div>
-      </section>
+
+        <div className="st-col">
+          {hasSprint ? (
+            <section className="st-card" aria-labelledby="st-sprint-title">
+              <div className="st-card__head">
+                <h2 className="st-h2" id="st-sprint-title">
+                  Цель класса на неделю
+                </h2>
+                {sprint.rank > 0 ? (
+                  <span className="st-muted">{sprint.rank} место среди классов</span>
+                ) : null}
+              </div>
+              <div className="st-level__row">
+                <strong>{formatNumber(sprint.xp)} XP</strong>
+                <span className="st-muted">цель {formatNumber(sprint.goal)} XP</span>
+              </div>
+              <ProgressBar
+                value={sprint.xp}
+                max={sprint.goal}
+                height={8}
+                label="Прогресс класса к цели недели"
+              />
+              <p className="st-level__note">
+                {sprint.xp >= sprint.goal
+                  ? 'Цель недели достигнута'
+                  : `Осталось ${formatNumber(sprint.goal - sprint.xp)} XP`}
+              </p>
+
+              {contributors.length ? (
+                <div className="st-level">
+                  <div className="st-level__row">
+                    <h3 className="st-h2" style={{ fontSize: 15 }}>
+                      Вклад за неделю
+                    </h3>
+                    {contributors.length > 3 ? (
+                      <button
+                        type="button"
+                        className="st-link"
+                        onClick={() => setShowAll((prev) => !prev)}
+                        aria-expanded={showAll}
+                      >
+                        {showAll ? 'Свернуть' : 'Показать всех'}
+                      </button>
+                    ) : null}
+                  </div>
+                  <ol className="st-rows">
+                    {shownContributors.map((c, idx) => (
+                      <li key={c.id} className="st-row">
+                        <span className="st-row__rank">{idx + 1}</span>
+                        <AvatarFrame avatar={c.avatar} size={32} decorative />
+                        <span className="st-row__main">
+                          <span className="st-row__name">
+                            {c.name}
+                            {c.id === viewer.id ? ' (вы)' : ''}
+                          </span>
+                        </span>
+                        <span className="st-row__val">+{formatNumber(c.weekly_xp)} XP</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {week.length ? (
+            <section className="st-card" aria-labelledby="st-week-title">
+              <div className="st-card__head">
+                <h2 className="st-h2" id="st-week-title">
+                  Неделя
+                </h2>
+                <span className="st-muted">
+                  Серия: {viewer.streak} {plural(viewer.streak, 'день', 'дня', 'дней')}
+                </span>
+              </div>
+              <ul className="st-week">
+                {week.map((day) => (
+                  <li
+                    key={day.date}
+                    className={`st-day${day.active ? ' st-day--active' : ''}${
+                      day.is_today ? ' st-day--today' : ''
+                    }${day.is_future ? ' st-day--future' : ''}`}
+                    aria-label={`${day.label}: ${day.active ? 'есть активность' : 'нет активности'}`}
+                  >
+                    <span>{day.label}</span>
+                    <span aria-hidden="true">{day.active ? <Icon name="check" size={14} /> : '·'}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <section className="st-card" aria-labelledby="st-feed-title">
+            <h2 className="st-h2" id="st-feed-title" style={{ marginBottom: 8 }}>
+              События класса
+            </h2>
+            {feed.length ? (
+              <ul className="st-rows">
+                {feed.slice(0, 6).map((item) => (
+                  <li key={item.id} className="st-row">
+                    <AvatarFrame avatar={item.avatar} size={32} decorative />
+                    <span className="st-row__main">
+                      <span className="st-row__name">{item.name}</span>
+                      <span className="st-row__sub">
+                        {item.reason}
+                        {item.created_at ? ` · ${formatRelative(item.created_at)}` : ''}
+                      </span>
+                    </span>
+                    <span className="st-row__val">+{formatNumber(item.amount)} XP</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="st-empty st-empty--inline">
+                <p>Пока нет событий. Здесь появятся принятые работы класса.</p>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,17 +1,9 @@
-import { useState } from 'react';
-import { Chip } from '../components/Chip';
+import { useId, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { ScreenTitle } from '../components/ScreenTitle';
-import { Segmented } from '../components/Segmented';
 import { Sheet } from '../components/Sheet';
-import {
-  CATEGORY_META,
-  daysFromNow,
-  formatDeadline,
-  formatNumber,
-  toDateInput,
-} from '../game';
+import { daysFromNow, formatDeadline, formatNumber, plural } from '../game';
 import type {
   ChallengeCategory,
   ChallengeKind,
@@ -19,40 +11,70 @@ import type {
   TeacherChallenge,
   TeacherData,
 } from '../types';
+import '../styles/teacher.css';
+
+type ProofType = 'text' | 'link' | 'photo';
 
 type FormState = {
   title: string;
   description: string;
   category: ChallengeCategory;
-  xp: number;
+  subject: string;
+  xp: string;
   kind: ChallengeKind;
   deadline: string;
+  proof_type: ProofType;
 };
+
+type FormErrors = Partial<Record<'title' | 'xp' | 'deadline' | 'description', string>>;
 
 const initialForm = (): FormState => ({
   title: '',
   description: '',
   category: 'homework',
-  xp: 20,
+  subject: '',
+  xp: '50',
   kind: 'weekly',
   deadline: daysFromNow(3),
+  proof_type: 'text',
 });
 
-const CATEGORIES: ChallengeCategory[] = [
-  'homework',
-  'club',
-  'help',
-  'weekly',
-  'olympiad',
-  'event',
+const SUBJECTS = [
+  'Математика',
+  'Физика',
+  'Русский язык',
+  'Литература',
+  'Информатика',
+  'Химия',
+  'Биология',
+  'История',
+  'Обществознание',
+  'Иностранный язык',
 ];
 
-const XP_OPTIONS = [20, 30, 40, 50, 100];
-const KIND_OPTIONS = [
-  { id: 'daily' as ChallengeKind, label: 'На сегодня' },
-  { id: 'weekly' as ChallengeKind, label: 'На неделю' },
-  { id: 'event' as ChallengeKind, label: 'Событие' },
+const CATEGORIES: { id: ChallengeCategory; label: string }[] = [
+  { id: 'homework', label: 'Учебное задание' },
+  { id: 'olympiad', label: 'Олимпиада или конкурс' },
+  { id: 'club', label: 'Кружок и внеурочная деятельность' },
+  { id: 'help', label: 'Волонтёрство и взаимопомощь' },
+  { id: 'weekly', label: 'Задание недели' },
+  { id: 'event', label: 'Школьное событие' },
 ];
+
+const KINDS: { id: ChallengeKind; label: string }[] = [
+  { id: 'daily', label: 'Ежедневное' },
+  { id: 'weekly', label: 'Недельное' },
+  { id: 'event', label: 'Событие' },
+];
+
+const PROOF_TYPES: { id: ProofType; label: string }[] = [
+  { id: 'text', label: 'Текст' },
+  { id: 'link', label: 'Ссылка' },
+  { id: 'photo', label: 'Фото' },
+];
+
+const XP_MIN = 10;
+const XP_MAX = 300;
 
 type TeacherChallengesScreenProps = {
   state: GameState;
@@ -64,6 +86,8 @@ type TeacherChallengesScreenProps = {
     xp: number;
     kind: string;
     deadline: string;
+    subject?: string;
+    proof_type?: ProofType;
   }) => Promise<boolean>;
   onArchive: (challengeId: number) => Promise<boolean>;
   busy: boolean;
@@ -76,39 +100,58 @@ export function TeacherChallengesScreen({
   onArchive,
   busy,
 }: TeacherChallengesScreenProps) {
+  const uid = useId();
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<FormState>(initialForm);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState<FormErrors>({});
   const [archiveTarget, setArchiveTarget] = useState<TeacherChallenge | null>(null);
   const [archiving, setArchiving] = useState(false);
 
   const challenges = teacher.challenges;
-  const totalPending = challenges.reduce((sum, item) => sum + item.pending_total, 0);
-  const totalParticipants = challenges.reduce((sum, item) => sum + item.participants, 0);
+  const totalPending = challenges.reduce((sum, c) => sum + c.pending_total, 0);
+  const totalApproved = challenges.reduce((sum, c) => sum + c.approved_total, 0);
 
   const openCreate = () => {
     setForm(initialForm());
-    setError('');
+    setErrors({});
     setCreateOpen(true);
   };
 
-  const update = <K extends keyof FormState,>(key: K, value: FormState[K]) => {
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
-    setError('');
+    setErrors((current) => ({ ...current, [key]: undefined }));
+  };
+
+  const validate = (): FormErrors => {
+    const next: FormErrors = {};
+    const title = form.title.trim();
+    if (title.length < 3 || title.length > 80) next.title = 'Название: от 3 до 80 символов.';
+    const xp = Number(form.xp);
+    if (!Number.isInteger(xp) || xp < XP_MIN || xp > XP_MAX) {
+      next.xp = `Награда: целое число от ${XP_MIN} до ${XP_MAX}.`;
+    }
+    if (!form.deadline) {
+      next.deadline = 'Укажите срок сдачи.';
+    } else if (form.deadline < daysFromNow(0)) {
+      next.deadline = 'Срок сдачи не может быть в прошлом.';
+    }
+    if (form.description.length > 320) next.description = 'Описание: не более 320 символов.';
+    return next;
   };
 
   const submit = async () => {
-    if (form.title.trim().length < 3) {
-      setError('Название должно быть от 3 до 80 символов');
-      return;
-    }
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length) return;
     const ok = await onCreate({
       title: form.title.trim(),
       description: form.description.trim(),
       category: form.category,
-      xp: form.xp,
+      xp: Number(form.xp),
       kind: form.kind,
       deadline: form.deadline,
+      subject: form.subject.trim() || undefined,
+      proof_type: form.proof_type,
     });
     if (ok) {
       setCreateOpen(false);
@@ -124,267 +167,345 @@ export function TeacherChallengesScreen({
     if (ok) setArchiveTarget(null);
   };
 
+  const fieldId = (name: string) => `${uid}-${name}`;
+  const describe = (name: keyof FormErrors) => (errors[name] ? `${fieldId(name)}-err` : undefined);
+
   return (
-    <div className="screen">
+    <div className="screen tc-page">
       <ScreenTitle
-        eyebrow="Конструктор заданий"
-        title="Задания класса"
-        subtitle={`${state.viewer.class_name} · создавай челленджи и следи за участием`}
+        title="Задания"
+        subtitle={`Класс ${state.viewer.class_name}`}
         action={
-          <button type="button" className="icon-btn icon-btn--accent" onClick={openCreate} aria-label="Создать задание">
-            <Icon name="plus" size={19} />
+          <button type="button" className="tc-btn tc-btn--primary" onClick={openCreate}>
+            <Icon name="plus" size={16} />
+            Новое задание
           </button>
         }
       />
 
-      <div className="teacher-stats-strip">
-        <div>
-          <span>активных</span>
-          <strong>{challenges.length}</strong>
+      <div className="tc-stats tc-stats--3">
+        <div className="tc-stat">
+          <span className="tc-stat__label">Активных заданий</span>
+          <span className="tc-stat__value">{challenges.length}</span>
         </div>
-        <div>
-          <span>участников</span>
-          <strong>{formatNumber(totalParticipants)}</strong>
+        <div className={`tc-stat ${totalPending ? 'tc-stat--warn' : ''}`}>
+          <span className="tc-stat__label">На проверке</span>
+          <span className="tc-stat__value">{totalPending}</span>
         </div>
-        <div className={totalPending ? 'is-warn' : ''}>
-          <span>ждут проверки</span>
-          <strong>{totalPending}</strong>
+        <div className="tc-stat">
+          <span className="tc-stat__label">Подтверждено</span>
+          <span className="tc-stat__value">{totalApproved}</span>
         </div>
       </div>
 
-      <button type="button" className="create-banner" onClick={openCreate}>
-        <span className="create-banner__icon">
-          <Icon name="plus" size={20} />
-        </span>
-        <span>
-          <strong>Новое задание</strong>
-          <small>Домашка, помощь, олимпиада или событие — за 30 секунд</small>
-        </span>
-        <Icon name="chevronRight" size={18} />
-      </button>
-
-      {challenges.length ? (
-        <div className="teacher-challenge-list">
-          {challenges.map((challenge) => {
-            const meta = CATEGORY_META[challenge.category];
-            const progress = challenge.participants
-              ? Math.round((challenge.approved_total / challenge.participants) * 100)
-              : 0;
-            return (
-              <article key={challenge.id} className="teacher-challenge">
-                <header className="teacher-challenge__head">
-                  <span className={`category-mark tone-${meta.tone}`}>
-                    <Icon name={meta.icon} size={18} />
-                  </span>
-                  <div className="teacher-challenge__title">
-                    <span>
-                      {challenge.category_label} · {challenge.kind_label}
+      {challenges.length > 0 ? (
+        <div className="tc-panel tc-panel--flush">
+          <div className="tc-table-wrap">
+            <table className="tc-table">
+              <caption>Активные задания класса</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Задание</th>
+                  <th scope="col">Срок</th>
+                  <th scope="col" className="tc-r">
+                    Награда
+                  </th>
+                  <th scope="col" className="tc-r">
+                    Сдали
+                  </th>
+                  <th scope="col" className="tc-r">
+                    На проверке
+                  </th>
+                  <th scope="col">
+                    <span className="tc-sr">
+                      Действия
                     </span>
-                    <h3>{challenge.title}</h3>
-                  </div>
-                  <button
-                    type="button"
-                    className="icon-btn icon-btn--soft"
-                    onClick={() => setArchiveTarget(challenge)}
-                    aria-label={`Архивировать ${challenge.title}`}
-                  >
-                    <Icon name="archive" size={16} />
-                  </button>
-                </header>
-
-                {challenge.description ? (
-                  <p className="teacher-challenge__desc">{challenge.description}</p>
-                ) : null}
-
-                <div className="teacher-challenge__meta">
-                  <Chip icon="clock" size="sm">
-                    {formatDeadline(challenge.deadline)}
-                  </Chip>
-                  <Chip icon="spark" tone="gold" size="sm">
-                    +{challenge.xp} XP
-                  </Chip>
-                  {challenge.pending_total ? (
-                    <Chip icon="clock" tone="red" size="sm">
-                      {challenge.pending_total} на проверке
-                    </Chip>
-                  ) : null}
-                </div>
-
-                <div className="teacher-challenge__progress">
-                  <div>
-                    <span>
-                      <Icon name="users" size={13} /> {challenge.participants} участн.
-                    </span>
-                    <span>{challenge.approved_total} подтверждено</span>
-                  </div>
-                  <div className="micro-progress">
-                    <span style={{ width: `${ProgressWidth(progress)}%` }} />
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {challenges.map((c) => (
+                  <tr key={c.id}>
+                    <td className="tc-cell--main">
+                      <strong>{c.title}</strong>
+                      <div className="tc-faint">
+                        {[c.subject, c.category_label, c.kind_label].filter(Boolean).join(' · ')}
+                      </div>
+                      {c.description ? (
+                        <div className="tc-muted tc-clamp">{c.description}</div>
+                      ) : null}
+                    </td>
+                    <td data-label="Срок">{c.deadline ? formatDeadline(c.deadline) : 'Без срока'}</td>
+                    <td data-label="Награда" className="tc-r tc-num">
+                      {c.xp} XP
+                    </td>
+                    <td data-label="Сдали" className="tc-r tc-num">
+                      {formatNumber(c.participants)}
+                    </td>
+                    <td data-label="На проверке" className="tc-r tc-num">
+                      {c.pending_total > 0 ? (
+                        <span className="tc-badge tc-badge--warn">{c.pending_total}</span>
+                      ) : (
+                        0
+                      )}
+                    </td>
+                    <td className="tc-cell--actions">
+                      <div className="tc-actions">
+                        <button
+                          type="button"
+                          className="tc-btn tc-btn--sm"
+                          onClick={() => setArchiveTarget(c)}
+                          aria-label={`В архив: ${c.title}`}
+                        >
+                          <Icon name="archive" size={16} />
+                          В архив
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <EmptyState
           icon="list"
-          title="Заданий пока нет"
-          text="Создай первое задание — ученики увидят его сразу в своих челленджах."
+          title="Нет активных заданий"
+          text="Создайте задание: ученики класса увидят его в своём списке."
           action={
-            <button type="button" className="btn btn--sm" onClick={openCreate}>
-              <Icon name="plus" size={16} /> Создать задание
+            <button type="button" className="tc-btn tc-btn--primary" onClick={openCreate}>
+              <Icon name="plus" size={16} />
+              Новое задание
             </button>
           }
         />
       )}
 
-      <div className="review-note">
-        <Icon name="info" size={16} />
-        <span>
-          Задание видят только ученики твоего класса. После архивации оно исчезает из
-          списка, но история остаётся в опыте ребят.
-        </span>
-      </div>
-
+      {/* Создание задания */}
       <Sheet
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => (busy ? undefined : setCreateOpen(false))}
         title="Новое задание"
-        subtitle={`Для класса ${state.viewer.class_name}`}
+        subtitle={`Класс ${state.viewer.class_name}`}
         footer={
-          <button
-            type="button"
-            className="btn btn--block"
-            onClick={submit}
-            disabled={busy || form.title.trim().length < 3}
-          >
-            {busy ? 'Публикуем…' : 'Опубликовать задание'}
-            {!busy ? <Icon name="send" size={16} /> : null}
-          </button>
+          <div className="tc-actions" style={{ width: '100%' }}>
+            <button type="button" className="tc-btn" onClick={() => setCreateOpen(false)} disabled={busy}>
+              Отмена
+            </button>
+            <button type="button" className="tc-btn tc-btn--primary" onClick={() => void submit()} disabled={busy}>
+              {busy ? 'Сохраняем…' : 'Опубликовать'}
+            </button>
+          </div>
         }
       >
-        <div className="create-form">
-          <label className="field">
-            <span>Название</span>
+        <form
+          className="tc-form"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <div className="tc-field">
+            <label className="tc-label" htmlFor={fieldId('title')}>
+              Название
+            </label>
             <input
+              id={fieldId('title')}
+              className="tc-input"
+              type="text"
               value={form.title}
-              onChange={(event) => update('title', event.target.value)}
               maxLength={80}
-              placeholder="Например, прочитать главу по истории"
+              onChange={(e) => update('title', e.target.value)}
+              aria-invalid={Boolean(errors.title)}
+              aria-describedby={describe('title')}
+              required
             />
-            <small>{form.title.length} / 80</small>
-          </label>
+            {errors.title ? (
+              <p className="tc-error" id={describe('title')} role="alert">
+                {errors.title}
+              </p>
+            ) : null}
+          </div>
 
-          <label className="field">
-            <span>Описание</span>
+          <div className="tc-form__row">
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('subject')}>
+                Предмет <small>(необязательно)</small>
+              </label>
+              <input
+                id={fieldId('subject')}
+                className="tc-input"
+                type="text"
+                list={fieldId('subjects')}
+                value={form.subject}
+                maxLength={40}
+                onChange={(e) => update('subject', e.target.value)}
+              />
+              <datalist id={fieldId('subjects')}>
+                {SUBJECTS.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('category')}>
+                Тип
+              </label>
+              <select
+                id={fieldId('category')}
+                className="tc-select"
+                value={form.category}
+                onChange={(e) => update('category', e.target.value as ChallengeCategory)}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="tc-form__row">
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('kind')}>
+                Периодичность
+              </label>
+              <select
+                id={fieldId('kind')}
+                className="tc-select"
+                value={form.kind}
+                onChange={(e) => update('kind', e.target.value as ChallengeKind)}
+              >
+                {KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('proof')}>
+                Как сдаётся
+              </label>
+              <select
+                id={fieldId('proof')}
+                className="tc-select"
+                value={form.proof_type}
+                onChange={(e) => update('proof_type', e.target.value as ProofType)}
+              >
+                {PROOF_TYPES.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="tc-form__row">
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('xp')}>
+                Награда, XP
+              </label>
+              <input
+                id={fieldId('xp')}
+                className="tc-input"
+                type="number"
+                inputMode="numeric"
+                min={XP_MIN}
+                max={XP_MAX}
+                step={5}
+                value={form.xp}
+                onChange={(e) => update('xp', e.target.value)}
+                aria-invalid={Boolean(errors.xp)}
+                aria-describedby={describe('xp')}
+              />
+              {errors.xp ? (
+                <p className="tc-error" id={describe('xp')} role="alert">
+                  {errors.xp}
+                </p>
+              ) : null}
+            </div>
+            <div className="tc-field">
+              <label className="tc-label" htmlFor={fieldId('deadline')}>
+                Срок сдачи
+              </label>
+              <input
+                id={fieldId('deadline')}
+                className="tc-input"
+                type="date"
+                min={daysFromNow(0)}
+                value={form.deadline}
+                onChange={(e) => update('deadline', e.target.value)}
+                aria-invalid={Boolean(errors.deadline)}
+                aria-describedby={describe('deadline')}
+              />
+              {errors.deadline ? (
+                <p className="tc-error" id={describe('deadline')} role="alert">
+                  {errors.deadline}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="tc-field">
+            <label className="tc-label" htmlFor={fieldId('description')}>
+              Описание и критерии <small>(необязательно)</small>
+            </label>
             <textarea
-              value={form.description}
-              onChange={(event) => update('description', event.target.value)}
+              id={fieldId('description')}
+              className="tc-textarea"
+              rows={4}
               maxLength={320}
-              rows={3}
-              placeholder="Что нужно сделать и как подтвердить результат"
+              value={form.description}
+              onChange={(e) => update('description', e.target.value)}
+              aria-invalid={Boolean(errors.description)}
+              aria-describedby={describe('description')}
             />
-            <small>{form.description.length} / 320</small>
-          </label>
-
-          <div className="form-block">
-            <span className="form-block__label">Категория</span>
-            <div className="option-row option-row--wrap">
-              {CATEGORIES.map((category) => {
-                const meta = CATEGORY_META[category];
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    className={`option-pill option-pill--icon ${
-                      form.category === category ? 'is-active' : ''
-                    }`.trim()}
-                    onClick={() => update('category', category)}
-                  >
-                    <Icon name={meta.icon} size={14} />
-                    {meta.label}
-                  </button>
-                );
-              })}
-            </div>
+            <span className="tc-counter">{form.description.length}/320</span>
+            {errors.description ? (
+              <p className="tc-error" id={describe('description')} role="alert">
+                {errors.description}
+              </p>
+            ) : null}
           </div>
-
-          <div className="form-block">
-            <span className="form-block__label">Сколько XP</span>
-            <div className="xp-options">
-              {XP_OPTIONS.map((xp) => (
-                <button
-                  key={xp}
-                  type="button"
-                  className={`xp-option ${form.xp === xp ? 'is-active' : ''}`.trim()}
-                  onClick={() => update('xp', xp)}
-                >
-                  +{xp}
-                  <small>XP</small>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="form-block">
-            <span className="form-block__label">Срок</span>
-            <Segmented
-              options={KIND_OPTIONS}
-              value={form.kind}
-              onChange={(kind) => update('kind', kind)}
-              ariaLabel="Тип задания"
-            />
-          </div>
-
-          <label className="field">
-            <span>Выполнить до</span>
-            <input
-              type="date"
-              value={form.deadline}
-              min={toDateInput(new Date())}
-              onChange={(event) => update('deadline', event.target.value)}
-            />
-          </label>
-
-          {error ? <p className="form-error">{error}</p> : null}
-        </div>
+          <button type="submit" hidden />
+        </form>
       </Sheet>
 
+      {/* Архивация */}
       <Sheet
         open={Boolean(archiveTarget)}
-        onClose={() => setArchiveTarget(null)}
-        title="Архивировать задание?"
-        subtitle={archiveTarget?.title}
+        onClose={() => (archiving ? undefined : setArchiveTarget(null))}
+        title="Перенести в архив?"
+        subtitle={archiveTarget?.title ?? ''}
         footer={
-          <div className="sheet-actions">
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() => setArchiveTarget(null)}
-              disabled={archiving}
-            >
+          <div className="tc-actions" style={{ width: '100%' }}>
+            <button type="button" className="tc-btn" onClick={() => setArchiveTarget(null)} disabled={archiving}>
               Отмена
             </button>
             <button
               type="button"
-              className="btn btn--danger"
-              onClick={confirmArchive}
+              className="tc-btn tc-btn--danger"
+              onClick={() => void confirmArchive()}
               disabled={archiving}
             >
-              {archiving ? 'Архивируем…' : 'В архив'}
+              {archiving ? 'Переносим…' : 'В архив'}
             </button>
           </div>
         }
       >
-        <p className="confirm-text">
-          Ученики больше не увидят это задание. Уже подтверждённый опыт останется в их
-          профилях и рейтинге класса.
+        <p className="tc-muted" style={{ margin: 0 }}>
+          Задание исчезнет из списка учеников. Уже отправленные работы
+          {archiveTarget && archiveTarget.pending_total > 0
+            ? ` (на проверке: ${archiveTarget.pending_total} ${plural(archiveTarget.pending_total, 'работа', 'работы', 'работ')})`
+            : ''}{' '}
+          и начисленные баллы сохраняются.
         </p>
       </Sheet>
     </div>
   );
-}
-
-function ProgressWidth(value: number): number {
-  return Math.max(0, Math.min(100, value));
 }

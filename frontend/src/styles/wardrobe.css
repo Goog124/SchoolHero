@@ -1,0 +1,314 @@
+/* Гардероб «Стиль» с летающей камерой. Префикс wd- */
+
+.wd {
+  --wd-top: calc(var(--safe-top, 0px) + 61px);
+  width: 100%;
+  min-width: 0;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+}
+
+.wd-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.wd-layout > * {
+  min-width: 0;
+}
+
+/* Сцена закреплена сверху: герой + строка примерки */
+.wd-stage {
+  position: sticky;
+  top: var(--wd-top);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.wd-scene {
+  position: relative;
+  height: clamp(190px, 36dvh, 340px);
+  overflow: hidden;
+  background: var(--bg-subtle);
+  border-radius: 8px;
+}
+
+.wd-world {
+  position: absolute;
+  transform-origin: 0 0;
+  will-change: transform;
+  transition: transform 600ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.wd-hop {
+  width: 100%;
+  height: 100%;
+  animation: wd-hop 320ms ease-out;
+}
+
+@keyframes wd-hop {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(-2.5%); }
+  100% { transform: translateY(0); }
+}
+
+.wd-balance {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.wd-balance strong {
+  color: var(--text-primary);
+}
+
+.wd-tryon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.wd-tryon[data-active='true'] {
+  padding: 8px;
+  background: var(--sferum-soft);
+  border: 1px solid var(--sferum-blue);
+  border-radius: 8px;
+}
+
+.wd-tryon__text {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.wd-tryon[data-active='true'] .wd-tryon__text {
+  color: var(--text-primary);
+}
+
+.wd-tryon__actions {
+  display: flex;
+  flex: 1 1 200px;
+  gap: 8px;
+}
+
+.wd-tryon__actions .wd-btn {
+  flex: 1 1 0;
+}
+
+.wd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wd-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.wd-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wd-btn--primary {
+  color: var(--accent-contrast);
+  background: var(--sferum-blue);
+  border-color: var(--sferum-blue);
+}
+
+.wd-btn--primary:hover:not(:disabled) {
+  background: var(--sferum-hover);
+}
+
+/* Каталог */
+.wd-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.wd-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wd-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.wd-tab {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wd-tab[aria-selected='true'] {
+  color: var(--accent-contrast);
+  background: var(--sferum-blue);
+  border-color: var(--sferum-blue);
+}
+
+.wd-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wd-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wd-item[aria-pressed='true'] {
+  border-color: var(--sferum-blue);
+  box-shadow: inset 0 0 0 1px var(--sferum-blue);
+}
+
+.wd-item__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 72px;
+  background: var(--bg-subtle);
+  border-radius: 8px;
+}
+
+.wd-swatch {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.wd-item__name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.wd-item__state {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.wd-item__state--on {
+  color: var(--sferum-blue);
+  font-weight: 600;
+}
+
+.wd-empty {
+  margin: 0;
+  padding: 16px;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+}
+
+.wd-btn:focus-visible,
+.wd-tab:focus-visible,
+.wd-item:focus-visible {
+  outline: 2px solid var(--sferum-blue);
+  outline-offset: 2px;
+}
+
+@media (min-width: 640px) {
+  .wd-items {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .wd-layout {
+    grid-template-columns: minmax(300px, 2fr) 3fr;
+    gap: 24px;
+  }
+
+  .wd-scene {
+    height: clamp(320px, 60dvh, 520px);
+  }
+}
+
+@media (min-width: 1024px) {
+  .wd {
+    --wd-top: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wd-world {
+    transition: none;
+  }
+
+  .wd-hop {
+    animation: none;
+  }
+}

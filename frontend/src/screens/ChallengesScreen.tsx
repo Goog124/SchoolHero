@@ -1,27 +1,28 @@
 import { useMemo, useState } from 'react';
+import '../styles/student.css';
 import { ChallengeCard } from '../components/ChallengeCard';
-import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
-import { ScreenTitle } from '../components/ScreenTitle';
-import { Segmented, type SegmentOption } from '../components/Segmented';
 import { formatNumber } from '../game';
+import { tapHaptic } from '../max';
 import type { Challenge, GameState } from '../types';
 
-type FilterId = 'all' | 'daily' | 'weekly' | 'event' | 'pending';
+type StatusFilter = 'all' | 'available' | 'pending' | 'approved';
+type SortOption = 'default' | 'xp-desc' | 'xp-asc' | 'deadline';
 
-const FILTERS: SegmentOption<FilterId>[] = [
+const STATUS_OPTIONS: { id: StatusFilter; label: string }[] = [
   { id: 'all', label: 'Все' },
-  { id: 'daily', label: 'Сегодня' },
-  { id: 'weekly', label: 'Неделя' },
-  { id: 'event', label: 'События' },
-  { id: 'pending', label: 'Проверка' },
+  { id: 'available', label: 'Доступные' },
+  { id: 'pending', label: 'На проверке' },
+  { id: 'approved', label: 'Выполненные' },
 ];
 
-function matches(challenge: Challenge, filter: FilterId): boolean {
-  if (filter === 'all') return true;
-  if (filter === 'pending') return challenge.status === 'pending';
-  return challenge.kind === filter;
-}
+const STATUS_WEIGHT: Record<Challenge['status'], number> = {
+  available: 0,
+  rejected: 1,
+  pending: 2,
+  approved: 3,
+  expired: 4,
+};
 
 type ChallengesScreenProps = {
   state: GameState;
@@ -29,113 +30,183 @@ type ChallengesScreenProps = {
 };
 
 export function ChallengesScreen({ state, onOpenChallenge }: ChallengesScreenProps) {
-  const [filter, setFilter] = useState<FilterId>('all');
-  const available = state.challenges.filter((item) => item.status === 'available');
-  const pending = state.challenges.filter((item) => item.status === 'pending');
-  const availableXp = available.reduce((sum, item) => sum + item.xp, 0);
+  const [query, setQuery] = useState('');
+  const [subject, setSubject] = useState('all');
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [sort, setSort] = useState<SortOption>('default');
 
-  const visible = useMemo(
-    () =>
-      state.challenges
-        .filter((challenge) => matches(challenge, filter))
-        .slice()
-        .sort((a, b) => {
-          const weight: Record<Challenge['status'], number> = {
-            available: 0,
-            rejected: 1,
-            pending: 2,
-            approved: 3,
-            expired: 4,
-          };
-          return weight[a.status] - weight[b.status] || a.id - b.id;
-        }),
-    [state.challenges, filter],
+  const all = state.challenges;
+  const counts = useMemo(
+    () => ({
+      all: all.length,
+      available: all.filter((c) => c.status === 'available').length,
+      pending: all.filter((c) => c.status === 'pending').length,
+      approved: all.filter((c) => c.status === 'approved').length,
+    }),
+    [all],
   );
 
+  // Предметы берём из самих заданий, без жёстко заданного списка.
+  const subjects = useMemo(
+    () => Array.from(new Set(all.map((c) => c.subject).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+    [all],
+  );
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = all.filter((c) => {
+      if (q && !`${c.title} ${c.description} ${c.subject}`.toLowerCase().includes(q)) return false;
+      if (status !== 'all' && c.status !== status) return false;
+      if (subject !== 'all' && c.subject !== subject) return false;
+      return true;
+    });
+
+    if (sort === 'xp-desc') return list.sort((a, b) => b.xp - a.xp);
+    if (sort === 'xp-asc') return list.sort((a, b) => a.xp - b.xp);
+    if (sort === 'deadline') {
+      return list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+    }
+    return list.sort((a, b) => STATUS_WEIGHT[a.status] - STATUS_WEIGHT[b.status] || b.xp - a.xp);
+  }, [all, query, status, subject, sort]);
+
+  const hasFilters = query !== '' || subject !== 'all' || status !== 'all' || sort !== 'default';
+
+  const reset = () => {
+    tapHaptic();
+    setQuery('');
+    setSubject('all');
+    setStatus('all');
+    setSort('default');
+  };
+
   return (
-    <div className="screen">
-      <ScreenTitle
-        eyebrow="Учебная активность"
-        title="Челленджи"
-        subtitle="Выбирай учебные и внеучебные активности. Педагог подтвердит результат."
-      />
+    <div className="st-page">
+      <header className="st-head">
+        <h1>Задания</h1>
+        <p>Выполните задание и отправьте результат учителю. После проверки начисляются XP.</p>
+      </header>
 
-      <div className="challenge-summary">
-        <div className="challenge-summary__cell">
-          <span>Доступно</span>
-          <strong>{available.length}</strong>
-        </div>
-        <div className="challenge-summary__cell challenge-summary__cell--accent">
-          <span>Можно заработать</span>
-          <strong>
-            {formatNumber(availableXp)} <small>XP</small>
-          </strong>
-        </div>
-        <div className="challenge-summary__cell">
-          <span>На проверке</span>
-          <strong>{pending.length}</strong>
-        </div>
-      </div>
-
-      <Segmented
-        options={FILTERS}
-        value={filter}
-        onChange={setFilter}
-        ariaLabel="Фильтр заданий"
-        scrollable
-      />
-
-      {visible.length ? (
-        <div className="challenge-list challenge-list--roomy">
-          {visible.map((challenge) => (
-            <ChallengeCard key={challenge.id} challenge={challenge} onOpen={onOpenChallenge} />
-          ))}
+      {all.length === 0 ? (
+        <div className="st-empty">
+          <h3>Заданий пока нет</h3>
+          <p>Когда учитель добавит задания для класса, они появятся здесь.</p>
         </div>
       ) : (
-        <EmptyState
-          icon="sparkles"
-          title="Здесь пока пусто"
-          text={
-            filter === 'pending'
-              ? 'Ты ещё не отправлял работы на проверку. Выбери задание и расскажи, что сделал.'
-              : 'В этой подборке пока нет заданий. Загляни в другие разделы.'
-          }
-        />
-      )}
+        <>
+          <div className="st-search" role="search">
+            <Icon name="search" size={18} />
+            <input
+              type="search"
+              className="st-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Поиск по названию или предмету"
+              aria-label="Поиск заданий"
+            />
+            {query ? (
+              <button type="button" className="st-clear" onClick={() => setQuery('')} aria-label="Очистить поиск">
+                ×
+              </button>
+            ) : null}
+          </div>
 
-      <section className="how-card">
-        <div className="how-card__head">
-          <span className="panel-eyebrow">Порядок участия</span>
-          <h2>Как это работает</h2>
-        </div>
-        <ol className="how-steps">
-          <li>
-            <span className="how-steps__num">01</span>
-            <div>
-              <strong>Выбери задание</strong>
-              <p>Домашка, кружок, помощь другу или школьное событие.</p>
+          <div className="st-filters">
+            <div className="st-tabs" role="group" aria-label="Фильтр по статусу">
+              {STATUS_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className="st-tab"
+                  aria-pressed={status === opt.id}
+                  onClick={() => {
+                    tapHaptic();
+                    setStatus(opt.id);
+                  }}
+                >
+                  {opt.label}
+                  <small>{counts[opt.id]}</small>
+                </button>
+              ))}
             </div>
-          </li>
-          <li>
-            <span className="how-steps__num">02</span>
-            <div>
-              <strong>Отправь подтверждение</strong>
-              <p>Пара слов, фото или ссылка — педагог увидит это в кабинете.</p>
+
+            <div className="st-field">
+              {subjects.length > 1 ? (
+                <select
+                  className="st-input"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  aria-label="Предмет"
+                >
+                  <option value="all">Все предметы</option>
+                  {subjects.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <select
+                className="st-input"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as SortOption)}
+                aria-label="Сортировка"
+              >
+                <option value="default">По статусу</option>
+                <option value="xp-desc">Больше XP</option>
+                <option value="xp-asc">Меньше XP</option>
+                <option value="deadline">По сроку</option>
+              </select>
             </div>
-          </li>
-          <li>
-            <span className="how-steps__num">03</span>
-            <div>
-              <strong>Получи опыт</strong>
-              <p>Один тап педагога — и XP идёт тебе и в копилку класса.</p>
+          </div>
+
+          {visible.length ? (
+            <section aria-label="Список заданий" className="st-col" style={{ gap: 8 }}>
+              <div className="st-count">
+                <span>
+                  Найдено: {formatNumber(visible.length)}
+                </span>
+                {hasFilters ? (
+                  <button type="button" className="st-link" onClick={reset}>
+                    Сбросить
+                  </button>
+                ) : null}
+              </div>
+              <div className="st-list">
+                {visible.map((challenge) => (
+                  <ChallengeCard key={challenge.id} challenge={challenge} onOpen={onOpenChallenge} />
+                ))}
+              </div>
+            </section>
+          ) : (
+            <div className="st-empty">
+              <h3>Ничего не найдено</h3>
+              <p>По выбранным условиям заданий нет.</p>
+              {hasFilters ? (
+                <button type="button" className="st-btn st-btn--ghost" onClick={reset}>
+                  Сбросить фильтры
+                </button>
+              ) : null}
             </div>
-          </li>
-        </ol>
-        <div className="how-card__note">
-          <Icon name="info" size={16} />
-          <span>Опыт начисляется только после подтверждения. Честная игра — это важно.</span>
-        </div>
-      </section>
+          )}
+
+          <section className="st-card" aria-labelledby="st-how-title">
+            <h2 className="st-h2" id="st-how-title" style={{ marginBottom: 8 }}>
+              Как это работает
+            </h2>
+            <ol className="st-steps">
+              <li>
+                <strong>Выберите задание.</strong> Откройте карточку и прочитайте условие.
+              </li>
+              <li>
+                <strong>Отправьте результат.</strong> Напишите, что сделано, или приложите ссылку.
+              </li>
+              <li>
+                <strong>Дождитесь проверки.</strong> Учитель подтвердит работу, и XP попадут в рейтинг.
+              </li>
+            </ol>
+          </section>
+        </>
+      )}
     </div>
   );
 }

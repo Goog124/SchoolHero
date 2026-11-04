@@ -30,16 +30,18 @@ export function TabBar({ tabs, active, onChange }: TabBarProps) {
             type="button"
             className={`tab ${selected ? 'tab--active' : ''}`.trim()}
             aria-current={selected ? 'page' : undefined}
+            aria-label={tab.badge ? `${tab.label}, новых: ${tab.badge}` : tab.label}
             onClick={() => onChange(tab.id)}
           >
             <span className="tab__icon">
-              <Icon name={tab.icon} size={21} filled={selected && tab.icon === 'flame'} />
+              <Icon name={tab.icon} size={22} />
               {tab.badge ? (
-                <span className="tab__badge">{tab.badge > 9 ? '9+' : tab.badge}</span>
+                <span className="tab__badge" aria-hidden="true">
+                  {tab.badge > 9 ? '9+' : tab.badge}
+                </span>
               ) : null}
             </span>
             <span className="tab__label">{tab.label}</span>
-            <span className="tab__pip" aria-hidden="true" />
           </button>
         );
       })}

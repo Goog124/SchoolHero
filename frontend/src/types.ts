@@ -31,12 +31,16 @@ export type Viewer = {
   first_name: string;
   last_name: string;
   username: string;
-  role: 'student' | 'teacher';
+  role: 'student' | 'teacher' | 'director';
   is_teacher_preview: boolean;
-  class_id: number;
+  class_id: number | null;
   class_name: string;
+  school_id: number | null;
   school_name: string;
+  school_status: '' | 'active' | 'pending' | 'rejected';
   city: string;
+  invite_code?: string;
+  is_platform_admin: boolean;
   xp: number;
   level: LevelInfo;
   sparks: number;
@@ -81,8 +85,11 @@ export type Challenge = {
   kind: ChallengeKind;
   kind_label: string;
   deadline: string;
+  subject: string;
+  proof_type: 'text' | 'link' | 'photo';
   status: ChallengeStatus;
   proof: string;
+  proof_url?: string;
   submitted_at: string | null;
   reject_reason: string;
   participants: number;
@@ -216,8 +223,30 @@ export type ReviewItem = {
   kind: ChallengeKind;
   xp: number;
   proof: string;
+  proof_url?: string;
+  subject?: string;
+  proof_type?: 'text' | 'link' | 'photo';
   created_at: string;
   is_self: boolean;
+};
+
+export type StudentWorkItem = {
+  id: number;
+  title: string;
+  category: ChallengeCategory;
+  subject: string;
+  xp: number;
+  status: ChallengeStatus;
+  date: string;
+  proof: string;
+  proof_url: string;
+  reject_reason: string;
+};
+
+export type SubjectStat = {
+  subject: string;
+  count: number;
+  xp: number;
 };
 
 export type TeacherStudent = {
@@ -231,6 +260,11 @@ export type TeacherStudent = {
   level_title: string;
   streak: number;
   pending_count: number;
+  approved_count?: number;
+  rejected_count?: number;
+  risk_reasons?: string[];
+  recent_works?: StudentWorkItem[];
+  subject_stats?: SubjectStat[];
   last_active: string;
   at_risk: boolean;
   is_viewer: boolean;
@@ -260,6 +294,7 @@ export type TeacherChartItem = {
 };
 
 export type TeacherData = {
+  invite_code?: string;
   pending: ReviewItem[];
   students: TeacherStudent[];
   stats: TeacherStats;
@@ -267,8 +302,111 @@ export type TeacherData = {
   challenges: TeacherChallenge[];
 };
 
+export type SchoolClassInfo = {
+  valid: boolean;
+  kind?: 'student' | 'teacher';
+  class_id?: number;
+  class_name?: string;
+  school_name?: string;
+  city?: string;
+  teacher_name?: string;
+  invite_code?: string;
+  detail?: string;
+};
+
+export type SchoolCatalog = {
+  cities: string[];
+  schools: Array<{ id: number; name: string; city: string }>;
+  classes: Array<{ id: number; school_id: number; name: string }>;
+};
+
+export type ManagedClass = {
+  id: number;
+  name: string;
+  weekly_goal: number;
+  members: number;
+  invite_code: string;
+  teacher_code: string;
+  teachers: string[];
+};
+
+export type ManagedSchool = {
+  id: number;
+  name: string;
+  city: string;
+  status: 'active' | 'pending' | 'rejected';
+  classes: ManagedClass[];
+};
+
+export type SchoolAdminData = {
+  active_school_id: number | null;
+  max_schools: number;
+  schools_left: number;
+  max_classes: number;
+  schools: ManagedSchool[];
+};
+
+export type PlatformAdminData = {
+  approval_mode: 'auto' | 'manual';
+  pending: Array<{
+    id: number;
+    name: string;
+    city: string;
+    classes: number;
+    created_by: string;
+    created_at: string;
+  }>;
+};
+
+export type NewSchoolPayload = {
+  name: string;
+  city: string;
+  classes: Array<{ name: string; weekly_goal: number }>;
+};
+
+export type GradeEntry = {
+  grade: string;
+  label: string;
+  classes_count: number;
+  students_count: number;
+  total_xp: number;
+  weekly_xp: number;
+  active_students: number;
+  engagement: number;
+  avg_student_xp: number;
+};
+
+export type DirectionStats = {
+  label: string;
+  count: number;
+  xp: number;
+};
+
+export type DirectorKPI = {
+  total_students: number;
+  total_classes: number;
+  active_students_week: number;
+  engagement_rate: number;
+  total_school_xp: number;
+  total_weekly_xp: number;
+  completed_fop_tasks?: number;
+  social_activity_index?: number;
+  leading_grade?: string;
+};
+
+export type DirectorData = {
+  kpi: DirectorKPI;
+  grades: GradeEntry[];
+  directions: Record<
+    'study' | 'olympiads' | 'sport_creative' | 'volunteering' | 'patriotic',
+    DirectionStats
+  >;
+  classes: ClassEntry[];
+  report_generated_at: string;
+};
+
 export type GameState = {
-  mode: 'demo' | 'max';
+  mode: 'demo' | 'prod' | 'sandbox';
   verified: boolean;
   today: string;
   viewer: Viewer;
@@ -280,7 +418,11 @@ export type GameState = {
   achievements: Achievement[];
   cosmetics: Cosmetic[];
   teacher: TeacherData | null;
+  director?: DirectorData | null;
+  school_admin?: SchoolAdminData | null;
+  platform_admin?: PlatformAdminData | null;
   demo_teacher_available: boolean;
+  demo_director_available?: boolean;
 };
 
 export type ReviewResult = {
@@ -289,6 +431,13 @@ export type ReviewResult = {
   xp_awarded: number;
   student_level?: LevelInfo;
   level_up?: boolean;
+};
+
+export type BatchReviewResult = {
+  action: string;
+  approved: number;
+  rejected: number;
+  total: number;
 };
 
 export type SubmitResult = {
@@ -309,4 +458,9 @@ export type TabId =
   | 'profile'
   | 'teacher-class'
   | 'teacher-review'
-  | 'teacher-challenges';
+  | 'teacher-challenges'
+  | 'director-overview'
+  | 'director-classes'
+  | 'director-setup'
+  | 'admin-schools'
+  | 'director-reports';

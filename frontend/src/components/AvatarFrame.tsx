@@ -28,7 +28,11 @@ export function AvatarFrame({
           <PixelHero avatar={avatar} decorative={decorative} animate={animate} />
         </div>
       </div>
-      {level ? <span className="avatar-frame__level">{level}</span> : null}
+      {level ? (
+        <span className="avatar-frame__level" aria-hidden="true">
+          {level}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { AppHeader } from './components/AppHeader';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
 import { DesktopSidebar } from './components/DesktopSidebar';
+import { NameScreen } from './components/NameScreen';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SandboxBar } from './components/SandboxBar';
 import { Sheet } from './components/Sheet';
@@ -26,6 +27,7 @@ import {
   listSandboxUsers,
   setSandboxDetail,
   switchSandboxUser,
+  syncSandboxBoot,
   type SandboxUser,
 } from './sandbox';
 import { ChallengesScreen } from './screens/ChallengesScreen';
@@ -131,6 +133,7 @@ export default function App() {
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [audience, setAudience] = useState<'student' | 'school' | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [sandboxReset, setSandboxReset] = useState(false);
   const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
@@ -169,6 +172,7 @@ export default function App() {
       // В prod вход возможен только изнутри MAX: без подписи запросы не делаем.
       const health = await api.health().catch(() => null);
       if (health?.mode === 'sandbox') {
+        if (syncSandboxBoot(health.boot_id)) setSandboxReset(true);
         enableSandbox();
         setSandbox({ users: listSandboxUsers(), active: activeSandboxClientId() ?? '' });
       } else if (health?.mode === 'prod' && !isMaxEnvironment()) {
@@ -229,7 +233,9 @@ export default function App() {
     if (!active) return;
     const roleLabel = { student: 'ученик', teacher: 'педагог', director: 'директор' }[state.viewer.role];
     const registered = state.viewer.onboarded || state.viewer.role !== 'student';
-    const detail = registered ? `${state.viewer.first_name}, ${roleLabel}` : '';
+    // «Герой» - имя по умолчанию: для него показываем только роль.
+    const named = state.viewer.first_name && state.viewer.first_name !== 'Герой';
+    const detail = !registered ? '' : named ? ` — ${state.viewer.first_name}, ${roleLabel}` : `, ${roleLabel}`;
     if (setSandboxDetail(active, detail)) {
       setSandbox({ users: listSandboxUsers(), active });
     }
@@ -478,6 +484,7 @@ export default function App() {
 
   const switchSandbox = (change: () => void) => {
     change();
+    setSandboxReset(false);
     lastStudentTab.current = 'hero';
     lastTeacherTab.current = 'teacher-class';
     lastDirectorTab.current = 'director-overview';
@@ -488,6 +495,19 @@ export default function App() {
     window.history.replaceState({}, '', '/');
     setSandbox({ users: listSandboxUsers(), active: activeSandboxClientId() ?? '' });
     void load();
+  };
+
+  /** Возвращает текст ошибки или null. Имя сохраняется на сервере и не затирается данными MAX. */
+  const handleSetName = async (firstName: string, lastName: string): Promise<string | null> => {
+    try {
+      const response = await api.setName(firstName, lastName);
+      setState(response.state);
+      showToast('Имя сохранено', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось сохранить имя.';
+    }
   };
 
   const goToRoleHome = (role: 'student' | 'teacher' | 'director', next?: TabId) => {
@@ -501,13 +521,22 @@ export default function App() {
     window.scrollTo({ top: 0 });
   };
 
-  const handleCreateSchool = async (payload: NewSchoolPayload): Promise<boolean> => {
-    const response = await mutate('school-create', () => api.createSchool(payload));
-    if (!response) return false;
-    setAudience(null);
-    goToRoleHome('director', 'director-setup');
-    showToast('Школа создана', 'success', 'check');
-    return true;
+  /** Возвращает текст ошибки или null: ошибка показывается прямо в форме. */
+  const handleCreateSchool = async (payload: NewSchoolPayload): Promise<string | null> => {
+    setBusy('school-create');
+    try {
+      const response = await api.createSchool(payload);
+      setState(response.state);
+      setAudience(null);
+      goToRoleHome('director', 'director-setup');
+      showToast('Школа создана', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось создать школу. Попробуйте ещё раз.';
+    } finally {
+      setBusy(null);
+    }
   };
 
   /** Возвращает текст ошибки или null при успехе. */
@@ -546,11 +575,37 @@ export default function App() {
     }
   };
 
-  const handleAddClass = async (schoolId: number, name: string, goal: number): Promise<boolean> => {
-    const response = await mutate('school-class', () => api.addClass(schoolId, name, goal));
-    if (!response) return false;
-    showToast(`Класс ${name} добавлен`, 'success', 'check');
-    return true;
+  const handleAddClass = async (schoolId: number, name: string): Promise<string | null> => {
+    setBusy('school-class');
+    try {
+      const response = await api.addClass(schoolId, name);
+      setState(response.state);
+      showToast(`Класс ${name} добавлен`, 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось добавить класс.';
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleUpdateClass = async (
+    classId: number,
+    patch: { name?: string; weekly_goal?: number },
+  ): Promise<string | null> => {
+    setBusy('school-class');
+    try {
+      const response = await api.updateClass(classId, patch);
+      setState(response.state);
+      showToast('Класс обновлён', 'success', 'check');
+      return null;
+    } catch (error) {
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось сохранить изменения.';
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleDeleteClass = async (classId: number): Promise<boolean> => {
@@ -645,10 +700,25 @@ export default function App() {
       <SandboxBar
         users={sandbox.users}
         active={sandbox.active}
+        notice={sandboxReset ? 'Сервер песочницы перезапущен, тестовые пользователи сброшены.' : null}
+        onDismissNotice={() => setSandboxReset(false)}
         onSwitch={(id) => switchSandbox(() => switchSandboxUser(id))}
         onNew={() => switchSandbox(() => addSandboxUser())}
       />
     ) : null;
+
+  // Педагог и директор без имени: имя спрашиваем до остальных экранов.
+  // Пользователю без роли (ученику) имя спрашивает онбординг.
+  if (state.viewer.needs_name && state.viewer.role !== 'student') {
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          <NameScreen onSubmit={handleSetName} />
+        </div>
+      </div>
+    );
+  }
 
   // Ученик без профиля или без класса проходит регистрацию. В демо класс есть всегда.
   const needsRegistration =
@@ -694,7 +764,13 @@ export default function App() {
 
   const studentTabs: TabItem[] = [
     { id: 'hero', label: 'Мой трек', icon: 'home' },
-    { id: 'challenges', label: 'Задания', icon: 'list' },
+    {
+      id: 'challenges',
+      label: 'Задания',
+      icon: 'list',
+      // Доступные задания и работы, возвращённые на доработку.
+      badge: state.challenges.filter((c) => c.status === 'available' || c.status === 'rejected').length,
+    },
     { id: 'leaderboard', label: 'Рейтинг', icon: 'trophy' },
     { id: 'wardrobe', label: 'Стиль', icon: 'shirt' },
     { id: 'profile', label: 'Профиль', icon: 'user' },
@@ -827,6 +903,7 @@ export default function App() {
             <ProfileScreen
               state={state}
               onNavigate={navigate}
+              onChangeName={handleSetName}
               theme={theme}
               onThemeChange={setTheme}
             />
@@ -872,14 +949,11 @@ export default function App() {
               busy={busy !== null}
               notify={showToast}
               onAddClass={handleAddClass}
+              onUpdateClass={handleUpdateClass}
               onDeleteClass={handleDeleteClass}
               onResetCode={handleResetCode}
               onSelectSchool={handleSelectSchool}
-              onCreateSchool={async (payload) => {
-                const response = await mutate('school-create', () => api.createSchool(payload));
-                if (response) showToast('Школа создана', 'success', 'check');
-                return Boolean(response);
-              }}
+              onCreateSchool={handleCreateSchool}
             />
           ) : null}
 

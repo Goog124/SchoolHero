@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date, datetime, time, timezone
 from typing import Any
@@ -34,7 +35,7 @@ from .game import (
     week_days,
     week_start_utc_sql,
 )
-from .security import DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
+from .security import DEFAULT_FIRST_NAME, DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
 
 
 class GameError(Exception):
@@ -129,10 +130,12 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
     if row is not None:
         if identity.kind == "max":
             updates = {}
-            if identity.first_name and identity.first_name != row["first_name"]:
-                updates["first_name"] = identity.first_name
-            if identity.last_name and identity.last_name != row["last_name"]:
-                updates["last_name"] = identity.last_name
+            # A name typed by the person is never replaced by MAX data.
+            if not row["name_locked"]:
+                if identity.first_name and identity.first_name != row["first_name"]:
+                    updates["first_name"] = identity.first_name
+                if identity.last_name and identity.last_name != row["last_name"]:
+                    updates["last_name"] = identity.last_name
             if identity.username and identity.username != row["username"]:
                 updates["username"] = identity.username
             if identity.photo_url and identity.photo_url != row["photo_url"]:
@@ -167,7 +170,7 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 ).fetchone()
         return row
 
-    initial_name = identity.first_name or "Герой"
+    initial_name = identity.first_name or DEFAULT_FIRST_NAME
     last_name = identity.last_name or ""
     demo = identity.kind == "demo"
     role = identity.role_hint if identity.kind == "max" else "student"
@@ -1095,6 +1098,10 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "city": school_row["city"] if school_row else "",
         "invite_code": (class_row["invite_code"] or "") if class_row else "",
         "is_platform_admin": is_platform_admin(viewer, settings),
+        # Teachers and directors are asked for a name when they have none.
+        "needs_name": role in {"teacher", "director"}
+        and not viewer["name_locked"]
+        and (not viewer["first_name"] or viewer["first_name"] == DEFAULT_FIRST_NAME),
         "xp": int(viewer["xp"]),
         "level": level,
         "sparks": int(viewer["sparks"]),
@@ -1233,36 +1240,71 @@ def _natural_key(name: str) -> tuple[int, str]:
     return (int(digits) if digits else 999, name)
 
 
+def search_cities(conn, query: str = "", limit: int = 10) -> dict[str, Any]:
+    """Cities that have active schools, for suggestions while typing.
+
+    Substring match without regard to case; cities starting with the text come
+    first, then the ones with more schools. Only a handful of rows is read.
+    """
+    needle = query.strip().casefold()[:60]
+    limit = max(1, min(int(limit), 20))
+    rows = conn.execute(
+        """
+        SELECT city, COUNT(*) AS n FROM schools
+        WHERE status = 'active' AND (? = '' OR instr(casefold(city), ?) > 0)
+        GROUP BY city
+        ORDER BY (instr(casefold(city), ?) = 1) DESC, n DESC, city
+        LIMIT ?
+        """,
+        (needle, needle, needle, limit),
+    ).fetchall()
+    total = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM schools WHERE status = 'active' "
+        "AND (? = '' OR instr(casefold(city), ?) > 0) GROUP BY city)",
+        (needle, needle),
+    ).fetchone()[0]
+    return {
+        "cities": [{"name": r["city"], "schools": int(r["n"])} for r in rows],
+        "total": int(total),
+    }
+
+
 def get_school_catalog(
     conn,
     city: str = "",
     query: str = "",
     limit: int = 500,
     only_cities: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Public list of active schools. Invite codes are never included.
 
-    ``city``/``query`` narrow the list on the server so it stays small however
-    many schools exist; ``only_cities`` skips schools and classes entirely.
+    ``city``/``query`` narrow the list on the server (``limit``/``offset`` page
+    it) so it stays small however many schools exist. The full city list is
+    returned only for an unfiltered request or ``only_cities``; use
+    ``search_cities`` for typing suggestions.
     """
-    cities = [
-        row["city"]
-        for row in conn.execute(
-            "SELECT DISTINCT city FROM schools WHERE status = 'active' ORDER BY city"
-        )
-    ]
+    cities: list[str] = []
+    if only_cities or not (city or query.strip()):
+        cities = [
+            row["city"]
+            for row in conn.execute(
+                "SELECT DISTINCT city FROM schools WHERE status = 'active' "
+                "ORDER BY city LIMIT 500"
+            )
+        ]
     if only_cities:
-        return {"cities": cities, "schools": [], "classes": []}
+        return {"cities": cities, "schools": [], "classes": [], "total": 0, "has_more": False}
     limit = max(1, min(int(limit), 500))
-    schools_rows = conn.execute(
-        "SELECT id, name, city FROM schools WHERE status = 'active' "
-        "AND (? = '' OR city = ?) ORDER BY city, name, id",
-        (city, city),
-    ).fetchall()
+    offset = max(0, int(offset))
     needle = query.strip().casefold()
-    if needle:
-        schools_rows = [s for s in schools_rows if needle in s["name"].casefold()]
-    schools_rows = schools_rows[:limit]
+    where = "status = 'active' AND (? = '' OR city = ?) AND (? = '' OR instr(casefold(name), ?) > 0)"
+    params = (city, city, needle, needle)
+    total = conn.execute(f"SELECT COUNT(*) FROM schools WHERE {where}", params).fetchone()[0]
+    schools_rows = conn.execute(
+        f"SELECT id, name, city FROM schools WHERE {where} ORDER BY city, name, id LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    ).fetchall()
     schools = [
         {"id": int(s["id"]), "name": s["name"], "city": s["city"]} for s in schools_rows
     ]
@@ -1280,7 +1322,13 @@ def get_school_catalog(
             ),
             key=lambda c: (c["school_id"], _natural_key(c["name"])),
         )
-    return {"cities": cities, "schools": schools, "classes": classes}
+    return {
+        "cities": cities,
+        "schools": schools,
+        "classes": classes,
+        "total": int(total),
+        "has_more": offset + len(schools) < int(total),
+    }
 
 
 def _class_for_join(conn, class_id: int) -> sqlite3.Row:
@@ -1350,19 +1398,41 @@ def join_school_class(
     }
 
 
-def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
+_NAME_RE = re.compile(r"[^\W\d_](?:[^\W\d_]|[ .'\u2019\-])*")
+
+
+def _parse_name(viewer: sqlite3.Row, payload: dict[str, Any]) -> tuple[str, str]:
+    """Name rules shared by onboarding and the profile: first name 2-24 chars,
+    last name up to 32; one "Имя Фамилия" field is accepted too."""
     entered_name = " ".join(str(payload.get("first_name", "")).split())
     if not 2 <= len(entered_name) <= 24:
         raise GameError("Имя должно быть от 2 до 24 символов")
     parts = entered_name.split()
     first_name = parts[0]
-    raw_last_name = str(payload.get("last_name", "")).strip()
+    raw_last_name = " ".join(str(payload.get("last_name", "")).split())
     if raw_last_name:
         last_name = raw_last_name[:32]
     elif len(parts) > 1:
         last_name = " ".join(parts[1:])[:32]
     else:
         last_name = viewer["last_name"]
+    typed = [first_name] + ([last_name] if (raw_last_name or len(parts) > 1) else [])
+    for value in typed:
+        if value and not _NAME_RE.fullmatch(value):
+            raise GameError("Имя и фамилия: только буквы, пробел, дефис, точка и апостроф")
+    return first_name, last_name
+
+
+def set_profile_name(conn, viewer: sqlite3.Row, payload: dict[str, Any]) -> None:
+    first_name, last_name = _parse_name(viewer, payload)
+    conn.execute(
+        "UPDATE users SET first_name = ?, last_name = ?, name_locked = 1 WHERE id = ?",
+        (first_name, last_name, viewer["id"]),
+    )
+
+
+def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
+    first_name, last_name = _parse_name(viewer, payload)
 
     target_class_id = viewer["class_id"]
     new_role = viewer["role"]
@@ -1392,14 +1462,21 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
     avatar.update(allowed)
     conn.execute(
         "UPDATE users SET first_name = ?, last_name = ?, class_id = ?, role = ?, avatar = ?, "
-        "onboarded = 1 WHERE id = ?",
+        "onboarded = 1, name_locked = 1 WHERE id = ?",
         (first_name, last_name, target_class_id, new_role, dump_avatar(avatar), viewer["id"]),
     )
+
+
+def _require_student_hero(viewer: sqlite3.Row) -> None:
+    """The hero, level and shop belong to students; staff do not have one."""
+    if viewer["role"] != "student" and not (viewer["preview_role"] or "") == "student":
+        raise GameError("Герой и магазин доступны только ученикам", 403)
 
 
 def equip_item(
     conn, viewer: sqlite3.Row, key: str, item_id: str
 ) -> None:
+    _require_student_hero(viewer)
     level = level_info(int(viewer["xp"]))["level"]
     owned = load_owned(viewer["owned"])
     avatar = load_avatar(viewer["avatar"])
@@ -1414,6 +1491,7 @@ def equip_item(
 
 
 def buy_item(conn, viewer: sqlite3.Row, item_id: str) -> None:
+    _require_student_hero(viewer)
     item = COSMETIC_BY_ID.get(item_id)
     if item is None:
         raise GameError("Предмет не найден")

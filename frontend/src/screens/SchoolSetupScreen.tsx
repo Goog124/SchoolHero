@@ -1,4 +1,6 @@
 import { useState, type FormEvent } from 'react';
+import { CityInput } from '../components/CityInput';
+import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
 import type {
   GameState,
@@ -13,16 +15,25 @@ import '../styles/setup.css';
 
 export type Notify = (message: string, tone?: 'success' | 'info' | 'error') => void;
 
-const GOAL_DEFAULT = 1600;
+/** Возвращает текст ошибки или null, если действие выполнено. */
+export type ActionResult = Promise<string | null>;
 
-type ClassRow = { key: number; name: string; goal: string };
+const MAX_CLASSES = 40;
+const GRADES = Array.from({ length: 11 }, (_, i) => i + 1);
+const LETTERS = ['А', 'Б', 'В', 'Г', 'Д'];
+const PRESETS = [
+  { label: '1–4', from: 1, to: 4 },
+  { label: '5–9', from: 5, to: 9 },
+  { label: '10–11', from: 10, to: 11 },
+  { label: '1–11', from: 1, to: 11 },
+];
+const CLASS_NAME_RE = /^[\p{L}\p{N}_][\p{L}\p{N}_ .\-/]*$/u;
+const CITY_RE = /^\p{L}(?:[\p{L} .'’-])*$/u;
 
-let rowKey = 0;
-const newRow = (name = '', goal = String(GOAL_DEFAULT)): ClassRow => ({
-  key: (rowKey += 1),
-  name,
-  goal,
-});
+const MSG_NAME = 'Название школы: от 3 до 80 символов, должно содержать буквы';
+const MSG_CITY = 'Город: от 2 до 60 символов, только буквы, пробел, дефис и точка';
+const MSG_CLASS_NAME = 'Название класса: от 1 до 12 символов, например 8А';
+const MSG_GOAL = 'Цель недели: от 100 до 20 000';
 
 async function copyText(text: string, notify: Notify) {
   try {
@@ -31,6 +42,14 @@ async function copyText(text: string, notify: Notify) {
   } catch {
     notify('Не удалось скопировать. Выделите код и скопируйте вручную.', 'error');
   }
+}
+
+function cleanName(value: string): string {
+  return value.split(/\s+/).filter(Boolean).join(' ');
+}
+
+function validClassName(value: string): boolean {
+  return value.length >= 1 && value.length <= 12 && CLASS_NAME_RE.test(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,82 +102,161 @@ export function AudienceChoice({
 // Форма новой школы
 // ---------------------------------------------------------------------------
 
-function validateSchool(name: string, city: string, rows: ClassRow[]): string | null {
-  if (name.trim().length < 3) return 'Название школы: не короче 3 символов';
-  if (city.trim().length < 2) return 'Укажите город';
-  const filled = rows.filter((r) => r.name.trim());
-  if (filled.length === 0) return 'Добавьте хотя бы один класс';
-  const seen = new Set<string>();
-  for (const row of filled) {
-    const key = row.name.trim().toLowerCase();
-    if (seen.has(key)) return `Класс «${row.name.trim()}» указан дважды`;
-    seen.add(key);
-    const goal = Number(row.goal);
-    if (!Number.isInteger(goal) || goal < 100 || goal > 20000) {
-      return `Класс «${row.name.trim()}»: цель недели от 100 до 20 000 XP`;
-    }
-  }
+type FieldErrors = Partial<Record<'name' | 'city' | 'classes', string>>;
+
+function fieldOfError(message: string): keyof FieldErrors | null {
+  if (/уже зарегистрирована|Название школы/.test(message)) return 'name';
+  if (/^Город/.test(message)) return 'city';
+  if (/[Кк]ласс/.test(message)) return 'classes';
   return null;
+}
+
+function Chip({
+  pressed,
+  onClick,
+  children,
+  label,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  children: string;
+  label?: string;
+}) {
+  return (
+    <button type="button" className="su-chip" aria-pressed={pressed} aria-label={label} onClick={onClick}>
+      {children}
+    </button>
+  );
 }
 
 export function NewSchoolForm({
   busy,
   onSubmit,
   onCancel,
+  onUseTeacherCode,
   submitLabel = 'Создать школу',
 }: {
   busy: boolean;
-  onSubmit: (payload: NewSchoolPayload) => Promise<boolean>;
+  onSubmit: (payload: NewSchoolPayload) => ActionResult;
   onCancel?: () => void;
+  onUseTeacherCode?: () => void;
   submitLabel?: string;
 }) {
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
-  const [rows, setRows] = useState<ClassRow[]>(() => [newRow()]);
-  const [grade, setGrade] = useState('');
-  const [letters, setLetters] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [grades, setGrades] = useState<number[]>([]);
+  const [letters, setLetters] = useState<string[]>(['А']);
+  const [custom, setCustom] = useState('');
+  const [extras, setExtras] = useState<string[]>([]);
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [extraInput, setExtraInput] = useState('');
+  const [extraError, setExtraError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const setRow = (key: number, patch: Partial<ClassRow>) =>
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const customLetters = Array.from(new Set(Array.from(custom.toUpperCase().replace(/[^\p{L}]/gu, ''))))
+    .filter((l) => !LETTERS.includes(l))
+    .slice(0, 12);
+  const activeLetters = [...LETTERS.filter((l) => letters.includes(l)), ...customLetters];
+  const generated = [...grades]
+    .sort((a, b) => a - b)
+    .flatMap((g) => activeLetters.map((l) => `${g}${l}`));
+  const seen = new Set<string>();
+  const classNames = [...generated, ...extras].filter((n) => {
+    const key = n.toLowerCase();
+    if (seen.has(key) || removed.includes(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const tooMany = classNames.length > MAX_CLASSES;
 
-  const addParallel = () => {
-    const g = grade.trim();
-    const chars = Array.from(letters.replace(/[^\p{L}]/gu, '').toUpperCase());
-    if (!/^\d{1,2}$/.test(g) || chars.length === 0) {
-      setError('Параллель: номер, например 8, и буквы, например АБВ');
-      return;
+  const unremove = (match: (key: string) => boolean) =>
+    setRemoved((prev) => prev.filter((key) => !match(key)));
+  const gradeOf = (key: string) => /^(\d+)\p{L}$/u.exec(key)?.[1];
+  const letterOf = (key: string) => /^\d+(\p{L})$/u.exec(key)?.[1];
+
+  const toggleGrade = (g: number) => {
+    if (grades.includes(g)) setGrades(grades.filter((x) => x !== g));
+    else {
+      setGrades([...grades, g]);
+      unremove((k) => gradeOf(k) === String(g));
     }
-    setError(null);
-    setRows((prev) => {
-      const have = new Set(prev.map((r) => r.name.trim().toLowerCase()));
-      const fresh = chars
-        .map((c) => `${g}${c}`)
-        .filter((n) => !have.has(n.toLowerCase()))
-        .map((n) => newRow(n));
-      const merged = [...prev.filter((r) => r.name.trim()), ...fresh].slice(0, 40);
-      return merged.length > 0 ? merged : [newRow()];
-    });
-    setLetters('');
+  };
+  const toggleLetter = (l: string) => {
+    if (letters.includes(l)) setLetters(letters.filter((x) => x !== l));
+    else {
+      setLetters([...letters, l]);
+      unremove((k) => letterOf(k) === l.toLowerCase());
+    }
+  };
+  const applyPreset = (from: number, to: number) => {
+    const range = GRADES.filter((g) => g >= from && g <= to);
+    setGrades(range);
+    unremove((k) => range.includes(Number(gradeOf(k))));
+  };
+  const presetActive = (from: number, to: number) => {
+    const range = GRADES.filter((g) => g >= from && g <= to);
+    return range.length === grades.length && range.every((g) => grades.includes(g));
+  };
+  const changeCustom = (value: string) => {
+    setCustom(value);
+    const next = Array.from(value.toLowerCase().replace(/[^\p{L}]/gu, ''));
+    unremove((k) => next.includes(letterOf(k) ?? ''));
+  };
+
+  const removeClass = (className: string) => {
+    const key = className.toLowerCase();
+    setExtras((prev) => prev.filter((n) => n.toLowerCase() !== key));
+    setRemoved((prev) => (prev.includes(key) ? prev : [...prev, key]));
+  };
+
+  const addExtra = () => {
+    const value = cleanName(extraInput);
+    if (!validClassName(value)) return setExtraError(MSG_CLASS_NAME);
+    if (classNames.some((n) => n.toLowerCase() === value.toLowerCase())) {
+      return setExtraError('Такой класс уже есть в списке');
+    }
+    if (classNames.length >= MAX_CLASSES) return setExtraError(`Не больше ${MAX_CLASSES} классов`);
+    setExtraError(null);
+    setExtras((prev) => [...prev, value]);
+    unremove((k) => k === value.toLowerCase());
+    setExtraInput('');
+  };
+
+  const validate = (): FieldErrors => {
+    const next: FieldErrors = {};
+    const n = cleanName(name);
+    const c = cleanName(city);
+    if (n.length < 3 || n.length > 80 || !/\p{L}/u.test(n)) next.name = MSG_NAME;
+    if (c.length < 2 || c.length > 60 || !CITY_RE.test(c)) next.city = MSG_CITY;
+    if (classNames.length < 1) next.classes = 'Добавьте от 1 до 40 классов: выберите параллели и буквы';
+    else if (tooMany) next.classes = `Не больше ${MAX_CLASSES} классов. Уберите лишние.`;
+    return next;
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const problem = validateSchool(name, city, rows);
-    if (problem) {
-      setError(problem);
+    const problems = validate();
+    setErrors(problems);
+    const first = Object.values(problems)[0];
+    if (first) {
+      setFormError(first);
       return;
     }
-    setError(null);
-    const ok = await onSubmit({
-      name: name.trim(),
-      city: city.trim(),
-      classes: rows
-        .filter((r) => r.name.trim())
-        .map((r) => ({ name: r.name.trim(), weekly_goal: Number(r.goal) })),
+    setFormError(null);
+    const error = await onSubmit({
+      name: cleanName(name),
+      city: cleanName(city),
+      classes: classNames.map((n) => ({ name: n })),
     });
-    if (!ok) setError('Не удалось создать школу. Проверьте данные и повторите попытку.');
+    if (error) {
+      setFormError(error);
+      const field = fieldOfError(error);
+      setErrors(field ? { [field]: error } : {});
+    }
   };
+
+  const duplicate = Boolean(formError && /уже зарегистрирована/.test(formError));
 
   return (
     <form className="su-form" onSubmit={(e) => void submit(e)} noValidate>
@@ -170,98 +268,151 @@ export function NewSchoolForm({
           value={name}
           maxLength={80}
           placeholder="Например, Гимназия №5"
+          aria-invalid={Boolean(errors.name)}
+          aria-describedby={errors.name ? 'su-name-err' : undefined}
           onChange={(e) => setName(e.target.value)}
         />
+        {errors.name && <span id="su-name-err" className="ob-error">{errors.name}</span>}
       </div>
+
       <div className="ob-field">
         <label className="ob-label" htmlFor="su-city">Город</label>
-        <input
+        <CityInput
           id="su-city"
-          className="ob-input"
           value={city}
-          maxLength={60}
-          autoComplete="address-level2"
-          onChange={(e) => setCity(e.target.value)}
+          onChange={setCity}
+          placeholder="Начните вводить"
+          invalid={Boolean(errors.city)}
+          describedBy={errors.city ? 'su-city-err' : 'su-city-hint'}
         />
+        {errors.city ? (
+          <span id="su-city-err" className="ob-error">{errors.city}</span>
+        ) : (
+          <span id="su-city-hint" className="ob-hint">
+            Если город уже есть в списке подсказок, выберите его оттуда.
+          </span>
+        )}
       </div>
 
-      <fieldset className="su-classes">
-        <legend className="ob-label">Классы</legend>
+      <fieldset className="su-classes" aria-describedby={errors.classes ? 'su-classes-err' : undefined}>
+        <legend className="ob-label">Классы школы</legend>
         <p className="ob-hint">
-          Для каждого класса сервер создаст код ученика и код педагога. Цель недели в XP
-          можно оставить по умолчанию.
+          Выберите параллели и буквы, список классов соберётся сам. Для каждого класса будут
+          созданы код ученика и код педагога.
         </p>
-        <ul className="su-rows">
-          {rows.map((row, index) => (
-            <li key={row.key} className="su-row">
-              <input
-                className="ob-input su-row__name"
-                aria-label={`Класс ${index + 1}`}
-                value={row.name}
-                maxLength={12}
-                placeholder="8А"
-                onChange={(e) => setRow(row.key, { name: e.target.value })}
-              />
-              <input
-                className="ob-input su-row__goal"
-                aria-label={`Цель недели, класс ${index + 1}`}
-                inputMode="numeric"
-                value={row.goal}
-                onChange={(e) => setRow(row.key, { goal: e.target.value.replace(/\D/g, '') })}
-              />
-              <button
-                type="button"
-                className="su-icon-btn"
-                aria-label={`Удалить класс ${row.name || index + 1}`}
-                disabled={rows.length === 1}
-                onClick={() => setRows((prev) => prev.filter((r) => r.key !== row.key))}
-              >
-                <Icon name="x" size={18} />
-              </button>
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          className="ob-btn ob-btn--ghost"
-          disabled={rows.length >= 40}
-          onClick={() => setRows((prev) => [...prev, newRow()])}
-        >
-          <Icon name="plus" size={16} />
-          Добавить класс
-        </button>
 
-        <div className="su-parallel">
-          <span className="ob-label">Добавить параллель</span>
-          <div className="ob-row">
-            <input
-              className="ob-input su-parallel__grade"
-              aria-label="Номер параллели"
-              inputMode="numeric"
-              maxLength={2}
-              placeholder="8"
-              value={grade}
-              onChange={(e) => setGrade(e.target.value.replace(/\D/g, ''))}
-            />
-            <input
-              className="ob-input"
-              aria-label="Буквы классов"
-              maxLength={10}
-              placeholder="АБВ"
-              value={letters}
-              onChange={(e) => setLetters(e.target.value)}
-            />
-            <button type="button" className="ob-btn" onClick={addParallel}>
-              Добавить
-            </button>
+        <div className="su-group">
+          <span className="ob-label" id="su-grades-label">Параллели</span>
+          <div className="su-chips" role="group" aria-labelledby="su-grades-label">
+            {GRADES.map((g) => (
+              <Chip key={g} pressed={grades.includes(g)} onClick={() => toggleGrade(g)} label={`${g} классы`}>
+                {String(g)}
+              </Chip>
+            ))}
+          </div>
+          <div className="su-chips su-chips--presets" role="group" aria-label="Быстрый выбор параллелей">
+            {PRESETS.map((p) => (
+              <Chip key={p.label} pressed={presetActive(p.from, p.to)} onClick={() => applyPreset(p.from, p.to)}>
+                {p.label}
+              </Chip>
+            ))}
           </div>
         </div>
+
+        <div className="su-group">
+          <span className="ob-label" id="su-letters-label">Буквы</span>
+          <div className="su-chips" role="group" aria-labelledby="su-letters-label">
+            {LETTERS.map((l) => (
+              <Chip key={l} pressed={letters.includes(l)} onClick={() => toggleLetter(l)}>
+                {l}
+              </Chip>
+            ))}
+          </div>
+          <label className="ob-label" htmlFor="su-custom">Свои буквы</label>
+          <input
+            id="su-custom"
+            className="ob-input"
+            value={custom}
+            maxLength={30}
+            placeholder="Е, Ж"
+            autoComplete="off"
+            onChange={(e) => changeCustom(e.target.value)}
+          />
+        </div>
+
+        <div className="su-group">
+          <div className="su-count" aria-live="polite">
+            <span className="ob-label">Классов: {classNames.length}</span>
+            {tooMany && <span className="ob-error">Максимум {MAX_CLASSES}</span>}
+          </div>
+          {classNames.length === 0 ? (
+            <p className="ob-hint">Пока пусто. Выберите хотя бы одну параллель и букву.</p>
+          ) : (
+            <ul className="su-tags">
+              {classNames.map((n) => (
+                <li key={n.toLowerCase()}>
+                  <button type="button" className="su-tag" aria-label={`Убрать класс ${n}`} onClick={() => removeClass(n)}>
+                    {n}
+                    <Icon name="x" size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="su-group">
+          <label className="ob-label" htmlFor="su-extra">Другое название класса</label>
+          <div className="ob-row">
+            <input
+              id="su-extra"
+              className="ob-input"
+              value={extraInput}
+              maxLength={12}
+              placeholder="10 физмат"
+              autoComplete="off"
+              aria-invalid={Boolean(extraError)}
+              onChange={(e) => {
+                setExtraInput(e.target.value);
+                setExtraError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addExtra();
+                }
+              }}
+            />
+            <button type="button" className="ob-btn ob-btn--ghost" onClick={addExtra}>
+              <Icon name="plus" size={16} />
+              Добавить класс
+            </button>
+          </div>
+          {extraError && <span className="ob-error" role="alert">{extraError}</span>}
+        </div>
+        {errors.classes && <span id="su-classes-err" className="ob-error">{errors.classes}</span>}
       </fieldset>
 
-      {error && (
+      {formError && (
         <div className="ob-notice ob-notice--error" role="alert">
           <Icon name="alert" size={16} />
-          <span>{error}</span>
+          <span>{formError}</span>
+        </div>
+      )}
+      {duplicate && (
+        <div className="ob-notice">
+          <Icon name="info" size={16} />
+          <span>
+            Если это ваша школа, войдите по коду педагога: его выдаёт директор.
+            {onUseTeacherCode && (
+              <>
+                {' '}
+                <button type="button" className="su-link" onClick={onUseTeacherCode}>
+                  Ввести код педагога
+                </button>
+              </>
+            )}
+          </span>
         </div>
       )}
 
@@ -291,8 +442,8 @@ export function SchoolRegisterScreen({
 }: {
   busy: boolean;
   onBack: () => void;
-  onCreate: (payload: NewSchoolPayload) => Promise<boolean>;
-  onJoinTeacher: (code: string) => Promise<string | null>;
+  onCreate: (payload: NewSchoolPayload) => ActionResult;
+  onJoinTeacher: (code: string) => ActionResult;
 }) {
   const [mode, setMode] = useState<'new' | 'code'>('new');
   const [code, setCode] = useState('');
@@ -332,7 +483,7 @@ export function SchoolRegisterScreen({
           </div>
 
           {mode === 'new' ? (
-            <NewSchoolForm busy={busy} onSubmit={onCreate} />
+            <NewSchoolForm busy={busy} onSubmit={onCreate} onUseTeacherCode={() => setMode('code')} />
           ) : (
             <div className="ob-field">
               <label className="ob-label" htmlFor="su-tcode">Код педагога</label>
@@ -423,49 +574,147 @@ function ClassCard({
   notify,
   onReset,
   onDelete,
+  onUpdate,
 }: {
   cls: ManagedClass;
   busy: boolean;
   notify: Notify;
   onReset: (classId: number, kind: 'student' | 'teacher') => void;
   onDelete: (classId: number) => void;
+  onUpdate: (classId: number, patch: { name?: string; weekly_goal?: number }) => ActionResult;
 }) {
-  const confirmReset = (kind: 'student' | 'teacher') => {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(cls.name);
+  const [goal, setGoal] = useState(String(cls.weekly_goal));
+  const [error, setError] = useState<string | null>(null);
+
+  const { confirm, dialog } = useConfirm();
+
+  const confirmReset = async (kind: 'student' | 'teacher') => {
     const what = kind === 'student' ? 'код ученика' : 'код педагога';
-    if (window.confirm(`Выпустить новый ${what} для класса ${cls.name}? Старый код перестанет работать.`)) {
-      onReset(cls.id, kind);
-    }
+    const ok = await confirm({
+      title: `Выпустить новый ${what}?`,
+      message: `Класс ${cls.name}. Старый код перестанет работать.`,
+      confirmLabel: 'Выпустить',
+    });
+    if (ok) onReset(cls.id, kind);
   };
+
+  const confirmDelete = async () => {
+    const ok = await confirm({
+      title: 'Удалить класс?',
+      message: `Класс ${cls.name} будет удалён вместе с его кодами.`,
+      confirmLabel: 'Удалить',
+      danger: true,
+    });
+    if (ok) onDelete(cls.id);
+  };
+
+  const startEdit = () => {
+    setName(cls.name);
+    setGoal(String(cls.weekly_goal));
+    setError(null);
+    setEditing(true);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const nextName = cleanName(name);
+    const nextGoal = Number(goal);
+    if (!validClassName(nextName)) return setError(MSG_CLASS_NAME);
+    if (!Number.isInteger(nextGoal) || nextGoal < 100 || nextGoal > 20000) return setError(MSG_GOAL);
+    const patch: { name?: string; weekly_goal?: number } = {};
+    if (nextName !== cls.name) patch.name = nextName;
+    if (nextGoal !== cls.weekly_goal) patch.weekly_goal = nextGoal;
+    if (!patch.name && !patch.weekly_goal) {
+      setEditing(false);
+      return;
+    }
+    const problem = await onUpdate(cls.id, patch);
+    if (problem) setError(problem);
+    else setEditing(false);
+  };
+
   return (
     <li className="su-class">
       <div className="su-class__head">
         <h3 className="su-class__name">{cls.name}</h3>
-        <span className="su-class__meta">
-          Учеников: {cls.members} · цель {cls.weekly_goal} XP
-        </span>
+        <span className="su-class__meta">Учеников: {cls.members}</span>
       </div>
+
+      {editing ? (
+        <form className="su-edit" onSubmit={(e) => void save(e)} noValidate>
+          <div className="ob-field">
+            <label className="ob-label" htmlFor={`su-en-${cls.id}`}>Название класса</label>
+            <input
+              id={`su-en-${cls.id}`}
+              className="ob-input"
+              value={name}
+              maxLength={12}
+              aria-invalid={Boolean(error)}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="ob-field">
+            <label className="ob-label" htmlFor={`su-eg-${cls.id}`}>Цель недели, XP</label>
+            <input
+              id={`su-eg-${cls.id}`}
+              className="ob-input"
+              inputMode="numeric"
+              value={goal}
+              aria-invalid={Boolean(error)}
+              onChange={(e) => setGoal(e.target.value.replace(/\D/g, ''))}
+            />
+            <span className="ob-hint">От 100 до 20 000 XP.</span>
+          </div>
+          {error && <span className="ob-error" role="alert">{error}</span>}
+          <div className="su-actions">
+            <button type="button" className="ob-btn ob-btn--ghost" onClick={() => setEditing(false)} disabled={busy}>
+              Отмена
+            </button>
+            <button type="submit" className="ob-btn" disabled={busy}>
+              Сохранить
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="su-goal">
+          <div className="su-goal__row">
+            <span className="su-goal__value">Цель недели: {cls.weekly_goal} XP</span>
+            <button type="button" className="su-link" onClick={startEdit} disabled={busy}>
+              Изменить
+            </button>
+          </div>
+          <p className="su-goal__hint">
+            Сколько XP класс должен набрать вместе за неделю. По этой цели строится шкала на
+            главной у учеников и в отчётах. Можно изменить.
+          </p>
+        </div>
+      )}
+
       <CodeLine
         label="Код ученика"
         value={cls.invite_code}
         busy={busy}
         onCopy={() => void copyText(cls.invite_code, notify)}
-        onReset={() => confirmReset('student')}
+        onReset={() => void confirmReset('student')}
       />
       <CodeLine
         label="Код педагога"
         value={cls.teacher_code}
         busy={busy}
         onCopy={() => void copyText(cls.teacher_code, notify)}
-        onReset={() => confirmReset('teacher')}
+        onReset={() => void confirmReset('teacher')}
       />
       <p className="su-class__teachers">
         {cls.teachers.length > 0 ? `Педагог: ${cls.teachers.join(', ')}` : 'Педагог пока не подключён'}
       </p>
       {cls.members === 0 && (
-        <button type="button" className="su-link su-link--danger" onClick={() => onDelete(cls.id)} disabled={busy}>
+        <button type="button" className="su-link su-link--danger" onClick={() => void confirmDelete()} disabled={busy}>
           Удалить класс
         </button>
       )}
+      {dialog}
     </li>
   );
 }
@@ -475,6 +724,7 @@ export function SchoolSetupScreen({
   busy,
   notify,
   onAddClass,
+  onUpdateClass,
   onDeleteClass,
   onResetCode,
   onSelectSchool,
@@ -484,16 +734,16 @@ export function SchoolSetupScreen({
   admin: SchoolAdminData;
   busy: boolean;
   notify: Notify;
-  onAddClass: (schoolId: number, name: string, goal: number) => Promise<boolean>;
+  onAddClass: (schoolId: number, name: string) => ActionResult;
+  onUpdateClass: (classId: number, patch: { name?: string; weekly_goal?: number }) => ActionResult;
   onDeleteClass: (classId: number) => Promise<boolean>;
   onResetCode: (classId: number, kind: 'student' | 'teacher') => Promise<boolean>;
   onSelectSchool: (schoolId: number) => Promise<boolean>;
-  onCreateSchool: (payload: NewSchoolPayload) => Promise<boolean>;
+  onCreateSchool: (payload: NewSchoolPayload) => ActionResult;
 }) {
   const school: ManagedSchool | undefined =
     admin.schools.find((s) => s.id === admin.active_school_id) ?? admin.schools[0];
   const [newName, setNewName] = useState('');
-  const [newGoal, setNewGoal] = useState(String(GOAL_DEFAULT));
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -501,15 +751,12 @@ export function SchoolSetupScreen({
 
   const addClass = async (event: FormEvent) => {
     event.preventDefault();
-    const name = newName.trim();
-    const goal = Number(newGoal);
-    if (!name) return setFormError('Введите название класса');
-    if (!Number.isInteger(goal) || goal < 100 || goal > 20000) {
-      return setFormError('Цель недели: от 100 до 20 000 XP');
-    }
+    const name = cleanName(newName);
+    if (!validClassName(name)) return setFormError(MSG_CLASS_NAME);
     setFormError(null);
-    const ok = await onAddClass(school.id, name, goal);
-    if (ok) setNewName('');
+    const problem = await onAddClass(school.id, name);
+    if (problem) setFormError(problem);
+    else setNewName('');
   };
 
   return (
@@ -557,41 +804,38 @@ export function SchoolSetupScreen({
         <ul className="su-classes-list">
           {school.classes.map((cls) => (
             <ClassCard
-              key={cls.id}
+              key={`${cls.id}-${cls.name}-${cls.weekly_goal}`}
               cls={cls}
               busy={busy}
               notify={notify}
               onReset={(id, kind) => void onResetCode(id, kind)}
-              onDelete={(id) => {
-                if (window.confirm(`Удалить класс ${cls.name}?`)) void onDeleteClass(id);
-              }}
+              onUpdate={onUpdateClass}
+              onDelete={(id) => void onDeleteClass(id)}
             />
           ))}
         </ul>
 
         {school.classes.length < admin.max_classes && (
           <form className="su-add" onSubmit={(e) => void addClass(e)} noValidate>
-            <span className="ob-label">Добавить класс</span>
+            <label className="ob-label" htmlFor="su-add-name">Добавить класс</label>
             <div className="ob-row">
               <input
+                id="su-add-name"
                 className="ob-input"
-                aria-label="Название класса"
                 maxLength={12}
                 placeholder="9В"
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-              />
-              <input
-                className="ob-input su-row__goal"
-                aria-label="Цель недели, XP"
-                inputMode="numeric"
-                value={newGoal}
-                onChange={(e) => setNewGoal(e.target.value.replace(/\D/g, ''))}
+                aria-invalid={Boolean(formError)}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  setFormError(null);
+                }}
               />
               <button type="submit" className="ob-btn" disabled={busy}>
                 Добавить
               </button>
             </div>
+            <span className="ob-hint">Цель недели по умолчанию 1600 XP, её можно изменить у класса.</span>
             {formError && <span className="ob-error" role="alert">{formError}</span>}
           </form>
         )}
@@ -608,9 +852,9 @@ export function SchoolSetupScreen({
               busy={busy}
               onCancel={() => setCreating(false)}
               onSubmit={async (payload) => {
-                const ok = await onCreateSchool(payload);
-                if (ok) setCreating(false);
-                return ok;
+                const problem = await onCreateSchool(payload);
+                if (!problem) setCreating(false);
+                return problem;
               }}
             />
           ) : (

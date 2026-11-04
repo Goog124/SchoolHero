@@ -4,6 +4,7 @@
   "scripts": {
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:backend": "python app.py",
-    "sandbox": "python tools/run_sandbox.py"
+    "sandbox": "python tools/run_sandbox.py",
+    "sandbox-wipe": "python tools/run_sandbox.py --wipe"
   }
 }

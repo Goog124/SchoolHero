@@ -86,7 +86,7 @@ def test_empty_production_starts_without_class(client):
     assert state["challenges"] == []
     assert state["leaderboard"]["classes"] == []
     catalog = client.get("/api/school/catalog", headers=hdr(1)).json()
-    assert catalog == {"cities": [], "schools": [], "classes": []}
+    assert (catalog["cities"], catalog["schools"], catalog["classes"]) == ([], [], [])
     submit = client.post("/api/challenges/1/submit", json={"proof": "x"}, headers=hdr(1))
     assert submit.status_code in {400, 404}
 
@@ -457,3 +457,98 @@ def test_pupil_with_a_class_cannot_turn_into_a_teacher(client):
     client.post("/api/school/join", json={"invite_code": classes["8А"]["teacher_code"]}, headers=hdr(2))
     moved = client.post("/api/school/join", json={"invite_code": classes["8Б"]["teacher_code"]}, headers=hdr(2))
     assert moved.status_code == 200 and moved.json()["state"]["viewer"]["class_name"] == "8Б"
+
+
+def test_school_can_be_created_without_weekly_goal(client):
+    r = client.post(
+        "/api/school/create",
+        json={"name": "Школа без цели", "city": "Тверь", "classes": [{"name": "5А"}, {"name": "5Б"}]},
+        headers=hdr(100),
+    )
+    assert r.status_code == 200, r.text
+    assert all(c["weekly_goal"] == 1600 for c in class_codes(client, 100).values())
+
+
+def test_director_edits_class_name_and_goal(client):
+    create_school(client, 100, classes=("8А", "8Б"))
+    cls = class_codes(client, 100)["8А"]
+    url = f"/api/school/classes/{cls['id']}"
+    r = client.patch(url, json={"weekly_goal": 2500}, headers=hdr(100))
+    assert r.status_code == 200, r.text
+    assert class_codes(client, 100)["8А"]["weekly_goal"] == 2500
+    # the pupils' sprint uses the new goal
+    onboard_student(client, 1, cls["invite_code"])
+    assert client.get("/api/state", headers=hdr(1)).json()["class_sprint"]["goal"] == 2500
+    r = client.patch(url, json={"name": "8В", "weekly_goal": 3000}, headers=hdr(100))
+    assert r.status_code == 200
+    renamed = class_codes(client, 100)["8В"]
+    assert renamed["id"] == cls["id"] and renamed["weekly_goal"] == 3000
+    assert renamed["invite_code"] == cls["invite_code"]
+    # the same name is fine for the class itself, not for a sibling
+    assert client.patch(url, json={"name": "8в"}, headers=hdr(100)).status_code == 200
+    sibling = class_codes(client, 100)["8Б"]["id"]
+    dup = client.patch(f"/api/school/classes/{sibling}", json={"name": "8В"}, headers=hdr(100))
+    assert dup.status_code == 400
+    for bad in ({"weekly_goal": 99}, {"weekly_goal": 20001}, {"name": ""}, {"name": "очень длинное имя класса"}):
+        assert client.patch(url, json=bad, headers=hdr(100)).status_code in {400, 422}, bad
+    assert client.patch(url, json={}, headers=hdr(100)).status_code == 400
+
+
+def test_only_the_school_director_can_edit_a_class(client):
+    create_school(client, 100, name="Школа Один", classes=("5А",))
+    create_school(client, 101, name="Школа Два", city="Москва", classes=("6А",))
+    cid = class_codes(client, 100)["5А"]["id"]
+    for who in (101, 1):
+        r = client.patch(f"/api/school/classes/{cid}", json={"weekly_goal": 5000}, headers=hdr(who))
+        assert r.status_code == 404
+    client.post("/api/school/join", json={"invite_code": class_codes(client, 100)["5А"]["teacher_code"]}, headers=hdr(2))
+    assert client.patch(f"/api/school/classes/{cid}", json={"weekly_goal": 5000}, headers=hdr(2)).status_code == 404
+    assert client.patch("/api/school/classes/9999", json={"weekly_goal": 5000}, headers=hdr(100)).status_code == 404
+    assert class_codes(client, 100)["5А"]["weekly_goal"] == 1600
+
+
+def city_names(client, uid, **params):
+    r = client.get("/api/school/cities", params=params, headers=hdr(uid))
+    assert r.status_code == 200, r.text
+    return [c["name"] for c in r.json()["cities"]], r.json()
+
+
+def test_city_search_is_case_insensitive_substring_with_limit(client):
+    for i, city in enumerate(["Москва", "Мурманск", "Новгород", "Великий Новгород", "Тула"]):
+        create_school(client, 100 + i, name=f"Школа {city}", city=city)
+    names, data = city_names(client, 1, q="МОС")
+    assert names == ["Москва"] and data["total"] == 1
+    names, _ = city_names(client, 1, q="новгород")
+    assert names == ["Новгород", "Великий Новгород"]  # prefix match first
+    names, data = city_names(client, 1, q="")
+    assert len(names) == 5 and data["total"] == 5
+    names, data = city_names(client, 1, q="", limit=2)
+    assert len(names) == 2 and data["total"] == 5
+    assert data["cities"][0]["schools"] == 1
+    assert city_names(client, 1, q="zzz")[0] == []
+
+
+def test_city_search_hides_pending_and_rejected_schools(tmp_path):
+    c = make_client(tmp_path, school_approval="manual")
+    try:
+        create_school(c, 100, name="Школа Ожидания", city="Тверь")
+        assert city_names(c, 1, q="")[0] == []
+        sid = admin_view(c, 100)["schools"][0]["id"]
+        c.post(f"/api/admin/schools/{sid}/status", json={"status": "active"}, headers=hdr(ADMIN_ID))
+        assert city_names(c, 1, q="тв")[0] == ["Тверь"]
+        c.post(f"/api/admin/schools/{sid}/status", json={"status": "rejected"}, headers=hdr(ADMIN_ID))
+        assert city_names(c, 1, q="")[0] == []
+    finally:
+        c.close()
+
+
+def test_school_list_is_paged_and_searchable(client):
+    for i in range(5):
+        create_school(client, 100 + i, name=f"Лицей номер {i}", city="Тула")
+    page = client.get("/api/school/catalog?city=Тула&limit=2", headers=hdr(1)).json()
+    assert len(page["schools"]) == 2 and page["total"] == 5 and page["has_more"] is True
+    last = client.get("/api/school/catalog?city=Тула&limit=2&offset=4", headers=hdr(1)).json()
+    assert len(last["schools"]) == 1 and last["has_more"] is False
+    found = client.get("/api/school/catalog?city=Тула&q=НОМЕР 3", headers=hdr(1)).json()
+    assert [s["name"] for s in found["schools"]] == ["Лицей номер 3"]
+    assert client.get("/api/school/catalog?city=Омск", headers=hdr(1)).json()["schools"] == []

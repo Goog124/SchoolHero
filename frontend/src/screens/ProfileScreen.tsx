@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { AvatarFrame } from '../components/AvatarFrame';
+import { NameForm } from '../components/NameScreen';
+import { Sheet } from '../components/Sheet';
 import { Icon } from '../components/Icon';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatNumber, formatXp } from '../game';
@@ -10,6 +13,8 @@ type ProfileScreenProps = {
   state: GameState;
   onShare?: () => void;
   onNavigate: (tab: TabId) => void;
+  /** Смена имени педагогом и директором; возвращает текст ошибки или null. */
+  onChangeName?: (firstName: string, lastName: string) => Promise<string | null>;
   theme?: 'light' | 'dark';
   onThemeChange?: (theme: 'light' | 'dark') => void;
   // Демо-переключатели рисует оболочка; экран их не использует.
@@ -26,9 +31,11 @@ const ROLE_LABEL: Record<string, string> = {
 export function ProfileScreen({
   state,
   onNavigate,
+  onChangeName,
   theme,
   onThemeChange,
 }: ProfileScreenProps) {
+  const [nameOpen, setNameOpen] = useState(false);
   const { viewer, achievements } = state;
   const isStudent = viewer.role === 'student';
   const unlocked = achievements.filter((a) => a.unlocked).length;
@@ -47,11 +54,13 @@ export function ProfileScreen({
 
       <section className="pf-card" aria-label="Мой профиль">
         <div className="pf-head">
-          <AvatarFrame avatar={viewer.avatar} size={88} level={viewer.level.level} decorative />
+          {isStudent && (
+            <AvatarFrame avatar={viewer.avatar} size={88} level={viewer.level.level} decorative />
+          )}
           <div className="pf-head__text">
             <h2 className="pf-name">{viewer.name}</h2>
             <div className="pf-muted">{ROLE_LABEL[viewer.role] ?? ''}</div>
-            <div className="pf-muted">{place || 'Класс не выбран'}</div>
+            <div className="pf-muted">{place || (isStudent ? 'Класс не выбран' : '')}</div>
           </div>
         </div>
 
@@ -95,6 +104,19 @@ export function ProfileScreen({
               Изменить героя
             </button>
           )}
+          {!isStudent && onChangeName && (
+            <button
+              type="button"
+              className="pf-btn"
+              onClick={() => {
+                tapHaptic();
+                setNameOpen(true);
+              }}
+            >
+              <Icon name="edit" size={16} />
+              Изменить имя
+            </button>
+          )}
           {theme && onThemeChange && (
             <button
               type="button"
@@ -109,6 +131,22 @@ export function ProfileScreen({
           )}
         </div>
       </section>
+
+      {!isStudent && onChangeName && (
+        <Sheet open={nameOpen} onClose={() => setNameOpen(false)} title="Изменить имя">
+          <NameForm
+            initialFirst={viewer.first_name === 'Герой' ? '' : viewer.first_name}
+            initialLast={viewer.first_name === 'Герой' ? '' : viewer.last_name}
+            submitLabel="Сохранить"
+            onCancel={() => setNameOpen(false)}
+            onSubmit={async (first, last) => {
+              const result = await onChangeName(first, last);
+              if (!result) setNameOpen(false);
+              return result;
+            }}
+          />
+        </Sheet>
+      )}
 
       {isStudent && (
         <>

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.api import router as api_router
+from backend.maxbot import router as maxbot_router
 from backend.config import Settings
 from backend.db import connect, init_db
 from backend.catalog import import_catalog
@@ -33,12 +35,37 @@ except ImportError:
 settings = Settings.from_env()
 
 
+def _sandbox_boot_id(cfg: Settings, db_existed: bool) -> str:
+    """Identifies one life of the sandbox database.
+
+    A new value whenever the database was wiped; otherwise the value stored
+    next to the database is reused, so a client can tell whether
+    its remembered test users still exist on the server.
+    """
+    path = cfg.db_path.with_name("sandbox_boot_id")
+    if not cfg.sandbox_wipe and db_existed:
+        try:
+            stored = path.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored
+        except OSError:
+            pass
+    value = uuid.uuid4().hex
+    try:
+        path.write_text(value, encoding="utf-8")
+    except OSError:
+        pass
+    return value
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.validate()
-    if settings.sandbox_mode and not settings.sandbox_keep_data:
+    if settings.sandbox_mode and settings.sandbox_wipe:
         for suffix in ("", "-wal", "-shm"):
             Path(str(settings.db_path) + suffix).unlink(missing_ok=True)
+    if settings.sandbox_mode:
+        app.state.boot_id = _sandbox_boot_id(settings, settings.db_path.exists())
     init_db(settings.db_path)
     conn = connect(settings.db_path)
     try:
@@ -103,6 +130,7 @@ async def security_headers(request: Request, call_next):
 
 
 app.include_router(api_router)
+app.include_router(maxbot_router)
 
 
 def _static_file(path: str) -> Path | None:

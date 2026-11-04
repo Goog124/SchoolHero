@@ -262,15 +262,15 @@ def test_buy_and_equip_cosmetic(demo_client):
 
     equipped = demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "cap"},
+        json={"key": "hat", "item_id": "cap"},
         headers=DEMO_HEADERS,
     )
     assert equipped.status_code == 200, equipped.text
-    assert equipped.json()["state"]["viewer"]["avatar"]["accessory"] == "cap"
+    assert equipped.json()["state"]["viewer"]["avatar"]["hat"] == "cap"
 
     locked = demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "halo"},
+        json={"key": "hat", "item_id": "halo"},
         headers=DEMO_HEADERS,
     )
     assert locked.status_code == 400
@@ -380,7 +380,7 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     )
     demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "cap"},
+        json={"key": "hat", "item_id": "cap"},
         headers=DEMO_HEADERS,
     )
     challenge = challenge_by_title(
@@ -406,7 +406,7 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     assert viewer["streak"] == 6
     assert viewer["role"] == "student"
     assert viewer["onboarded"] is True
-    assert viewer["avatar"]["accessory"] == "headphones"
+    assert viewer["avatar"]["hat"] == "headphones"
     assert viewer["owned"] == ["hoodie_cyan"]
     assert viewer["stats"] == {
         "confirmed": 3,
@@ -649,3 +649,20 @@ def test_prod_catalog_creates_no_users(tmp_path):
         assert conn.execute("SELECT class_id FROM class_staff WHERE max_user_id='42'").fetchone()
     finally:
         conn.close()
+
+
+def test_staff_cannot_use_hero_or_shop():
+    import sqlite3
+
+    from backend.service import GameError, buy_item, equip_item
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    staff = conn.execute("SELECT 'teacher' AS role, NULL AS preview_role").fetchone()
+    for call in (lambda: buy_item(conn, staff, "x"), lambda: equip_item(conn, staff, "hair", "x")):
+        try:
+            call()
+        except GameError as exc:
+            assert exc.status == 403
+        else:
+            raise AssertionError("staff must not use hero or shop")

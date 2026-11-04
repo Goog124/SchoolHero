@@ -11,7 +11,7 @@ def test_portal_route_returns_landing_html(demo_client):
 
     assert "Школьный герой" in html
     assert "Сферум" in html
-    assert "m.ospab.org" in html
+    assert "ospab" not in html
     for heading in ("Ученик", "Педагог", "Директор", "Как подключить школу", "Контакты"):
         assert heading in html
     assert "vpn" not in html.lower()

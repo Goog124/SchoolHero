@@ -24,9 +24,11 @@ from .service import (
     ensure_user,
     equip_item,
     get_school_catalog,
+    search_cities,
     join_school_class,
     lookup_class_by_code,
     reset_demo,
+    set_profile_name,
     review_completion,
     save_onboarding,
     submit_challenge,
@@ -90,6 +92,11 @@ class NewClassBody(BaseModel):
     weekly_goal: int = Field(default=1600, ge=100, le=20000)
 
 
+class UpdateClassBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=12)
+    weekly_goal: int | None = Field(default=None, ge=100, le=20000)
+
+
 class NewSchoolBody(BaseModel):
     name: str = Field(min_length=3, max_length=80)
     city: str = Field(min_length=2, max_length=60)
@@ -102,6 +109,11 @@ class CodeResetBody(BaseModel):
 
 class SchoolStatusBody(BaseModel):
     status: str = Field(max_length=10)
+
+
+class NameBody(BaseModel):
+    first_name: str = Field(min_length=2, max_length=24)
+    last_name: str = Field(default="", max_length=32)
 
 
 class OnboardingBody(BaseModel):
@@ -154,10 +166,13 @@ router = APIRouter(prefix="/api")
 @router.get("/health")
 def health(request: Request) -> dict[str, Any]:
     settings: Settings = request.app.state.settings
-    return {
+    result: dict[str, Any] = {
         "status": "ok",
         "mode": settings.app_mode,
     }
+    if settings.sandbox_mode:
+        result["boot_id"] = getattr(request.app.state, "boot_id", None)
+    return result
 
 
 @router.get("/state")
@@ -187,9 +202,19 @@ def school_catalog(
     q: str = "",
     limit: int = 500,
     only_cities: bool = False,
+    offset: int = 0,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
-    return get_school_catalog(ctx.conn, city=city, query=q, limit=limit, only_cities=only_cities)
+    return get_school_catalog(
+        ctx.conn, city=city, query=q, limit=limit, only_cities=only_cities, offset=offset
+    )
+
+
+@router.get("/school/cities")
+def school_cities(
+    q: str = "", limit: int = 10, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    return search_cities(ctx.conn, q, limit)
 
 
 @router.post("/school/join")
@@ -236,6 +261,17 @@ def school_select(school_id: int, ctx: Context = Depends(get_context)) -> dict[s
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
+@router.patch("/school/classes/{class_id}")
+def school_update_class(
+    class_id: int, payload: UpdateClassBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.update_class(
+        ctx.conn, ctx.user, ctx.settings, class_id, payload.name, payload.weekly_goal
+    )
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
 @router.delete("/school/classes/{class_id}")
 def school_delete_class(class_id: int, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     registration.delete_class(ctx.conn, ctx.user, ctx.settings, class_id)
@@ -257,6 +293,13 @@ def admin_school_status(
     school_id: int, payload: SchoolStatusBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.set_school_status(ctx.conn, ctx.user, ctx.settings, school_id, payload.status)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/profile/name")
+def profile_name(payload: NameBody, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    set_profile_name(ctx.conn, ctx.user, payload.model_dump())
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 

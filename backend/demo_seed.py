@@ -208,19 +208,29 @@ def _avatar_for(index: int, xp: int) -> dict[str, str]:
         5: ["suit_cosmic", "armor_silver"],
     }
     accessories_by_level = {
-        1: ["none", "glasses"],
-        2: ["headphones", "glasses", "none"],
-        3: ["headphones", "glasses"],
-        4: ["crown", "headphones"],
-        5: ["halo", "crown"],
+        1: ["none", "scarf", "badge"],
+        2: ["none", "tie", "bowtie"],
+        3: ["necklace", "none", "medal"],
+        4: ["medal", "cape", "none"],
+        5: ["wings", "cape", "none"],
     }
     frames = ["frame_wood", "frame_neon", "frame_gold", "frame_galaxy"]
+    hats = {
+        1: ["hat_none", "hat_cap", "hat_beanie"],
+        2: ["headphones", "hat_cowboy", "cap"],
+        3: ["headphones", "hat_wizard", "hat_bunny"],
+        4: ["crown", "hat_laurel", "hat_pirate"],
+        5: ["halo", "hat_astro", "crown"],
+    }
+    faces = ["face_none", "glasses", "glasses_round", "shades", "mustache"]
     return {
         "skin": skins[index % len(skins)],
         "hair": hairs[index % len(hairs)],
         "hairColor": hair_colors[(index * 2 + 1) % len(hair_colors)],
         "outfit": outfits_by_level[level][index % len(outfits_by_level[level])],
         "accessory": accessories_by_level[level][index % len(accessories_by_level[level])],
+        "hat": hats[level][index % len(hats[level])],
+        "face": faces[index % len(faces)] if level >= 2 else "face_none",
         "frame": frames[min(level - 1, len(frames) - 1)],
     }
 

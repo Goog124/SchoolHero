@@ -4,6 +4,9 @@ export type AvatarConfig = {
   hairColor: string;
   outfit: string;
   accessory: string;
+  /** Новые слоты: у старых данных могут отсутствовать. */
+  hat?: string;
+  face?: string;
   frame: string;
 };
 
@@ -41,6 +44,8 @@ export type Viewer = {
   city: string;
   invite_code?: string;
   is_platform_admin: boolean;
+  /** Педагог или директор без имени: сначала спрашиваем имя. */
+  needs_name: boolean;
   xp: number;
   level: LevelInfo;
   sparks: number;
@@ -179,6 +184,8 @@ export type CosmeticType =
   | 'hair'
   | 'hair_color'
   | 'outfit'
+  | 'hat'
+  | 'face'
   | 'accessory'
   | 'frame';
 
@@ -190,6 +197,7 @@ export type Cosmetic = {
   price: number;
   swatch: string;
   description: string;
+  rarity?: 'common' | 'rare' | 'epic' | 'legendary';
   owned: boolean;
   unlocked: boolean;
   equipped: boolean;
@@ -318,7 +326,11 @@ export type SchoolCatalog = {
   cities: string[];
   schools: Array<{ id: number; name: string; city: string }>;
   classes: Array<{ id: number; school_id: number; name: string }>;
+  total?: number;
+  has_more?: boolean;
 };
+
+export type CitySuggestion = { name: string; schools: number };
 
 export type ManagedClass = {
   id: number;
@@ -361,7 +373,7 @@ export type PlatformAdminData = {
 export type NewSchoolPayload = {
   name: string;
   city: string;
-  classes: Array<{ name: string; weekly_goal: number }>;
+  classes: Array<{ name: string; weekly_goal?: number }>;
 };
 
 export type GradeEntry = {

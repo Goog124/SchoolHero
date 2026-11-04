@@ -36,7 +36,7 @@
 Схема:
 
 ```text
-MAX (клиент) -> HTTPS -> nginx (m.ospab.org) -> uvicorn 127.0.0.1:8000 -> FastAPI (app.py)
+MAX (клиент) -> HTTPS -> nginx (app.example.org) -> uvicorn 127.0.0.1:8000 -> FastAPI (app.py)
                                                    |- /api/*     -> backend/api.py -> service.py / registration.py -> SQLite
                                                    |- /portal    -> landing/index.html
                                                    `- остальное  -> static/ (SPA) при SERVE_FRONTEND=true
@@ -134,6 +134,14 @@ users 1---N xp_events,  users 1---N activity_days
 5. Создаёт индексы; уникальные индексы по кодам и `norm_key` создаются «по возможности»: при конфликте в старых данных индекс пропускается без ошибки.
 
 Все шаги идемпотентны. Для изменения схемы добавляйте `CREATE TABLE IF NOT EXISTS` в `SCHEMA` или проверку колонки в `_migrate_columns`; откатов нет, перед обновлением делайте резервную копию ([deploy.md](deploy.md)).
+
+## Гардероб и образ героя
+
+- Каталог предметов - `COSMETICS` в `backend/game.py`; он же источник правил (уровень, цена, слот, редкость). `GET /api/state` отдаёт его в `cosmetics` вместе с флагами `owned`, `unlocked`, `equipped`.
+- Образ героя хранится в `users.avatar` как JSON по слотам: `skin`, `hair`, `hairColor`, `outfit`, `hat`, `face`, `accessory`, `frame`. `load_avatar` подставляет значения по умолчанию для отсутствующих или неподходящих по слоту ключей, поэтому старые записи работают без миграции. `validate_avatar_patch` проверяет слот предмета, уровень и покупку. Миграция «на лету»: если в старом аватаре `accessory` хранит `glasses` (теперь слот `face`) или `headphones`, `cap`, `crown`, `halo` (слот `hat`), `load_avatar` переносит значение в нужный слот (если он пуст) и сбрасывает `accessory` в `none`; id и покупки не меняются.
+- Герой и магазин доступны только ученикам (`_require_student_hero` в `service.py`).
+- Фронтенд рисует героя по id: `components/PixelHero.tsx` (тело, волосы, цвета) и `components/heroItems.tsx` (одежда, шапки, лицо, аксессуары) на сетке 32x42; рамки - `components/AvatarFrame.tsx` + `styles/frames.css`.
+- Экран «Стиль» (`screens/WardrobeScreen.tsx`) - «летающая камера»: CSS transform на обёртке, кадр вычисляется из геометрии сетки (`HERO_PARTS`) и размера сцены.
 
 ## Роли и права
 

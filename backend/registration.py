@@ -95,7 +95,7 @@ def _check_school_fields(name: Any, city: Any) -> tuple[str, str]:
     if not 3 <= len(name) <= 80 or not re.search(_LETTER, name):
         raise GameError("Название школы: от 3 до 80 символов, должно содержать буквы")
     if not 2 <= len(city) <= 60 or not CITY_RE.fullmatch(city):
-        raise GameError("Город: от 2 до 60 символов, только буквы, пробел и дефис")
+        raise GameError("Город: от 2 до 60 символов, только буквы, пробел, дефис и точка")
     return name, city
 
 
@@ -164,8 +164,7 @@ def create_school(
     key = school_key(name, city)
     if conn.execute("SELECT 1 FROM schools WHERE norm_key = ?", (key,)).fetchone():
         raise GameError(
-            "Школа с таким названием в этом городе уже зарегистрирована. "
-            "Если это ваша школа, попросите у директора код педагога."
+            "Школа с таким названием в этом городе уже зарегистрирована."
         )
 
     status = "pending" if settings.school_approval == "manual" else "active"
@@ -227,6 +226,37 @@ def add_class(
     if class_name.casefold() in existing:
         raise GameError(f"Класс «{class_name}» уже есть в школе")
     return _insert_class(conn, school_id, class_name, weekly_goal)
+
+
+def update_class(
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    class_id: int,
+    name: Any = None,
+    weekly_goal: Any = None,
+) -> None:
+    """Rename a class and/or change its weekly XP goal (director of its school)."""
+    row = _require_class_of_director(conn, viewer, settings, class_id)
+    if name is None and weekly_goal is None:
+        raise GameError("Нечего изменять")
+    new_name, new_goal = _check_class_fields(
+        row["name"] if name is None else name,
+        row["weekly_goal"] if weekly_goal is None else weekly_goal,
+    )
+    taken = {
+        str(r["name"]).casefold()
+        for r in conn.execute(
+            "SELECT name FROM classes WHERE school_id = ? AND id != ?",
+            (row["school_id"], class_id),
+        )
+    }
+    if new_name.casefold() in taken:
+        raise GameError(f"Класс «{new_name}» уже есть в школе")
+    conn.execute(
+        "UPDATE classes SET name = ?, weekly_goal = ? WHERE id = ?",
+        (new_name, new_goal, class_id),
+    )
 
 
 def delete_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int) -> None:

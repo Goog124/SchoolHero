@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
-# Развёртывание School Hero на сервере с nginx (Debian/Ubuntu), домен m.ospab.org.
+# Развёртывание School Hero на сервере с nginx (Debian/Ubuntu) без Docker.
 #
 # Запуск на сервере от root, из распакованной папки проекта:
-#   sudo LE_EMAIL=you@example.com bash deploy/deploy.sh
+#   sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
 #
-# Требования: DNS A/AAAA m.ospab.org -> этот сервер, открыты 80 и 443,
+# Домен выбирается по порядку: --domain (или переменная DOMAIN), затем
+# PUBLIC_URL из .env, затем вопрос в терминале. Почта нужна Let's Encrypt
+# (--email или LE_EMAIL), её можно не указывать.
+#
+# Требования: DNS-запись домена указывает на этот сервер, открыты 80 и 443,
 # в .env заполнен MAX_BOT_TOKEN, собран фронтенд (static/index.html)
 # либо на сервере есть Node.js >= 20.19.
 set -euo pipefail
 
-DOMAIN="m.ospab.org"
 APP_DIR="/opt/school-hero"
 DATA_DIR="/var/lib/school-hero"
 APP_USER="schoolhero"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DOMAIN="${DOMAIN:-}"
 LE_EMAIL="${LE_EMAIL:-}"
+
+usage() { echo "Использование: sudo bash deploy/deploy.sh [--domain app.example.org] [--email you@example.com]"; }
+# shellcheck source=lib.sh
+. "$SRC/deploy/lib.sh"
+parse_args "$@"
 
 [ "$(id -u)" -eq 0 ] || { echo "Запустите от root (sudo)"; exit 1; }
 
@@ -34,6 +43,8 @@ if [ -n "$MODE_LINE" ]; then
     exit 1
   fi
 fi
+
+resolve_domain "$ENV_SRC"
 
 # --- проверка старой базы -------------------------------------------------
 # В боевой базе у каждого пользователя есть MAX id. Пользователи без него
@@ -63,7 +74,7 @@ fi
 # --- пакеты -------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip rsync nginx certbot curl
+apt-get install -y python3 python3-venv python3-pip rsync curl
 
 # --- пользователь и каталоги ---------------------------------------------
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
@@ -78,6 +89,7 @@ CATALOG_DST="$DATA_DIR/catalog.json"
 if [ ! -f "$CATALOG_DST" ] && [ -f "$SRC/catalog.json" ]; then install -m 640 "$SRC/catalog.json" "$CATALOG_DST"; fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR"
 chmod 600 "$APP_DIR/.env"
+ensure_public_url "$APP_DIR/.env"
 
 # --- Python -------------------------------------------------------------
 [ -d "$APP_DIR/.venv" ] || python3 -m venv "$APP_DIR/.venv"
@@ -92,32 +104,7 @@ systemctl enable school-hero
 systemctl restart school-hero
 
 # --- nginx + Let's Encrypt ----------------------------------------------
-CONF="/etc/nginx/conf.d/$DOMAIN.conf"
-if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-  # Временный HTTP-конфиг только для проверки домена.
-  cat > "$CONF" <<NGX
-server {
-    listen 80;
-    server_name $DOMAIN;
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 404; }
-}
-NGX
-  nginx -t && systemctl reload nginx
-  if [ -n "$LE_EMAIL" ]; then EMAIL_ARGS=(--email "$LE_EMAIL"); else EMAIL_ARGS=(--register-unsafely-without-email); fi
-  certbot certonly --webroot -w /var/www/certbot -d "$DOMAIN" \
-    --non-interactive --agree-tos "${EMAIL_ARGS[@]}"
-fi
-
-install -m 644 "$SRC/deploy/$DOMAIN.conf" "$CONF"
-# На сервере без IPv6 директива listen [::] валит nginx.
-if [ ! -e /proc/net/if_inet6 ]; then sed -i '/listen \[::\]/d' "$CONF"; fi
-nginx -t
-systemctl reload nginx
-# certbot.timer (ставится пакетом) продлевает сертификат; перезагружаем nginx после продления.
-mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+setup_nginx_letsencrypt "$SRC"
 
 # --- проверка -----------------------------------------------------------
 sleep 3

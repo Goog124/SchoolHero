@@ -6,6 +6,7 @@ import type {
   MutationResponse,
   NewSchoolPayload,
   ReviewResult,
+  CitySuggestion,
   SchoolCatalog,
   SchoolClassInfo,
   SubmitResult,
@@ -34,6 +35,52 @@ function headers(): HeadersInit {
   return result;
 }
 
+const FIELD_MESSAGES: Record<string, string> = {
+  name: 'Название: проверьте длину и символы',
+  city: 'Город: от 2 до 60 символов',
+  classes: 'Добавьте от 1 до 40 классов',
+  weekly_goal: 'Цель недели: от 100 до 20 000',
+  xp: 'Награда: целое число от 10 до 300',
+  amount: 'Количество баллов: от 10 до 300',
+  title: 'Название задания: от 3 до 80 символов',
+  description: 'Описание слишком длинное',
+  first_name: 'Имя: от 2 до 24 символов',
+  last_name: 'Фамилия слишком длинная',
+  invite_code: 'Проверьте код приглашения',
+  reason: 'Причина слишком длинная',
+  status: 'Неизвестный статус',
+  kind: 'Неизвестный тип',
+};
+
+type ValidationItem = { loc?: unknown[]; msg?: string; type?: string };
+
+/** Русский текст для ответа 422 (FastAPI отдаёт detail массивом). */
+function validationMessage(items: ValidationItem[]): string {
+  const messages: string[] = [];
+  for (const item of items) {
+    const loc = (item.loc ?? []).filter((part) => typeof part === 'string') as string[];
+    const field = loc[loc.length - 1] ?? '';
+    const underClasses = loc.includes('classes');
+    let text: string | undefined;
+    if (field === 'name' && underClasses) text = 'Название класса: от 1 до 12 символов';
+    else if (field === 'name') text = 'Название слишком короткое или длинное';
+    else text = FIELD_MESSAGES[field];
+    if (field === 'classes' && item.type === 'too_long') text = 'Не больше 40 классов';
+    if (!text) text = 'Проверьте введённые данные';
+    if (!messages.includes(text)) messages.push(text);
+  }
+  return messages.join('. ') || 'Проверьте введённые данные';
+}
+
+function statusFallback(status: number): string {
+  if (status === 401) return 'Сессия устарела. Откройте приложение заново.';
+  if (status === 403) return 'Недостаточно прав для этого действия.';
+  if (status === 404) return 'Не найдено.';
+  if (status === 429) return 'Слишком много запросов. Подождите немного и повторите.';
+  if (status >= 500) return 'Ошибка на сервере. Попробуйте ещё раз чуть позже.';
+  return 'Что-то пошло не так. Попробуй ещё раз.';
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -51,10 +98,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    let message = 'Что-то пошло не так. Попробуй ещё раз.';
+    let message = statusFallback(response.status);
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (typeof body.detail === 'string') message = body.detail;
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === 'string' && body.detail.trim()) message = body.detail;
+      else if (Array.isArray(body.detail)) message = validationMessage(body.detail as ValidationItem[]);
     } catch {
       // Keep generic error
     }
@@ -65,8 +113,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health(): Promise<{ mode: 'prod' | 'demo' | 'sandbox' }> {
-    return request<{ mode: 'prod' | 'demo' | 'sandbox' }>('/api/health');
+  health(): Promise<{ mode: 'prod' | 'demo' | 'sandbox'; boot_id?: string | null }> {
+    return request<{ mode: 'prod' | 'demo' | 'sandbox'; boot_id?: string | null }>(
+      '/api/health',
+    );
   },
 
   getState(): Promise<GameState> {
@@ -78,14 +128,28 @@ export const api = {
   },
 
   getSchoolCatalog(
-    params: { city?: string; q?: string; onlyCities?: boolean } = {},
+    params: { city?: string; q?: string; onlyCities?: boolean; limit?: number; offset?: number } = {},
   ): Promise<SchoolCatalog> {
     const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.offset) query.set('offset', String(params.offset));
     if (params.city) query.set('city', params.city);
     if (params.q) query.set('q', params.q);
     if (params.onlyCities) query.set('only_cities', 'true');
     const suffix = query.toString();
     return request<SchoolCatalog>(`/api/school/catalog${suffix ? `?${suffix}` : ''}`);
+  },
+
+  searchCities(q: string, limit = 10): Promise<{ cities: CitySuggestion[]; total: number }> {
+    const query = new URLSearchParams({ q, limit: String(limit) });
+    return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
+  },
+
+  setName(firstName: string, lastName: string): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/profile/name', {
+      method: 'POST',
+      body: JSON.stringify({ first_name: firstName, last_name: lastName }),
+    });
   },
 
   createSchool(payload: NewSchoolPayload): Promise<MutationResponse> {
@@ -95,10 +159,20 @@ export const api = {
     });
   },
 
-  addClass(schoolId: number, name: string, weeklyGoal: number): Promise<MutationResponse> {
+  addClass(schoolId: number, name: string): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/school/${schoolId}/classes`, {
       method: 'POST',
-      body: JSON.stringify({ name, weekly_goal: weeklyGoal }),
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  updateClass(
+    classId: number,
+    patch: { name?: string; weekly_goal?: number },
+  ): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/school/classes/${classId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
     });
   },
 

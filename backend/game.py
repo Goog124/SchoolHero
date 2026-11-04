@@ -69,6 +69,8 @@ DEFAULT_AVATAR = {
     "hairColor": "hair_dark",
     "outfit": "hoodie_violet",
     "accessory": "none",
+    "hat": "hat_none",
+    "face": "face_none",
     "frame": "frame_wood",
 }
 
@@ -78,6 +80,8 @@ BASIC_AVATAR = {
     "hairColor": "hair_dark",
     "outfit": "hoodie_violet",
     "accessory": "none",
+    "hat": "hat_none",
+    "face": "face_none",
     "frame": "frame_wood",
 }
 
@@ -86,7 +90,9 @@ DEMO_AVATAR = {
     "hair": "hair_curls",
     "hairColor": "hair_brown",
     "outfit": "hoodie_violet",
-    "accessory": "headphones",
+    "accessory": "none",
+    "hat": "headphones",
+    "face": "face_none",
     "frame": "frame_neon",
 }
 
@@ -100,6 +106,11 @@ class Cosmetic:
     price: int = 0
     swatch: str = ""
     description: str = ""
+    rarity: str = ""  # пусто = по уровню предмета (RARITY_BY_LEVEL)
+
+    @property
+    def rarity_id(self) -> str:
+        return self.rarity or RARITY_BY_LEVEL.get(self.unlock_level, "common")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -110,7 +121,28 @@ class Cosmetic:
             "price": self.price,
             "swatch": self.swatch,
             "description": self.description,
+            "rarity": self.rarity_id,
         }
+
+
+RARITIES = ("common", "rare", "epic", "legendary")
+RARITY_BY_LEVEL = {1: "common", 2: "common", 3: "rare", 4: "epic", 5: "legendary"}
+COSMETIC_TYPES = (
+    "skin", "hair", "hair_color", "outfit", "hat", "face", "accessory", "frame",
+)
+
+
+def _c(
+    item_id: str,
+    slot: str,
+    name: str,
+    level: int = 1,
+    price: int = 0,
+    swatch: str = "",
+    description: str = "",
+    rarity: str = "",
+) -> Cosmetic:
+    return Cosmetic(item_id, slot, name, level, price, swatch, description, rarity)
 
 
 COSMETICS: list[Cosmetic] = [
@@ -194,7 +226,7 @@ COSMETICS: list[Cosmetic] = [
     Cosmetic("none", "accessory", "Без аксессуара", unlock_level=1, swatch="#2a1b3d"),
     Cosmetic(
         "glasses",
-        "accessory",
+        "face",
         "Умные очки",
         unlock_level=1,
         swatch="#67e8f9",
@@ -202,7 +234,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "headphones",
-        "accessory",
+        "hat",
         "Наушники",
         unlock_level=2,
         swatch="#a855f7",
@@ -210,7 +242,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "cap",
-        "accessory",
+        "hat",
         "Кепка «Квант»",
         unlock_level=2,
         price=50,
@@ -219,7 +251,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "crown",
-        "accessory",
+        "hat",
         "Корона лидера",
         unlock_level=4,
         swatch="#fbbf24",
@@ -227,7 +259,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "halo",
-        "accessory",
+        "hat",
         "Нимб легенды",
         unlock_level=5,
         swatch="#fde68a",
@@ -259,16 +291,100 @@ COSMETICS: list[Cosmetic] = [
         price=80,
         swatch="#818cf8",
         description="Кусочек космоса вокруг аватара.",
+        rarity="legendary",
     ),
+    # ----- Расширение каталога. Чтобы добавить предмет: строка сюда + рисунок в
+    # frontend/src/components/heroItems.tsx (или стиль рамки в styles/frames.css).
+    # Формат: _c(id, слот, название, уровень, цена, цвет-образец[, описание[, редкость]])
+    # Новые причёски и цвета волос
+    _c("hair_long", "hair", "Длинные", 1, 0, "#6b3f2b"),
+    _c("hair_bald", "hair", "Лысый", 1, 0, "#f0c6a3"),
+    _c("hair_afro", "hair", "Афро", 2, 0, "#2e2038"),
+    _c("hair_braids", "hair", "Косички", 2, 40, "#c25a2e"),
+    _c("hair_mohawk", "hair", "Ирокез", 3, 70, "#8b5cf6", "Для тех, кто любит выделяться."),
+    _c("hair_pink", "hair_color", "Розовый", 1, 0, "#ec4899"),
+    _c("hair_white", "hair_color", "Белый", 2, 0, "#e5e7eb"),
+    _c("hair_green", "hair_color", "Зелёный", 2, 30, "#22c55e"),
+    _c("hair_teal", "hair_color", "Бирюзовый", 3, 40, "#14b8a6"),
+    # Одежда
+    _c("hoodie_red", "outfit", "Красное худи", 1, 0, "#ef4444"),
+    _c("hoodie_green", "outfit", "Зелёное худи", 1, 0, "#22c55e"),
+    _c("uniform_school", "outfit", "Школьная форма", 1, 0, "#1e3a8a", "Строго и аккуратно."),
+    _c("tshirt_print", "outfit", "Футболка со смайлом", 1, 30, "#e2e8f0"),
+    _c("tracksuit", "outfit", "Спортивный костюм", 2, 40, "#1d4ed8", "Для физкультуры и переменок."),
+    _c("labcoat", "outfit", "Лабораторный халат", 2, 60, "#f1f5f9", "Для химии и физики."),
+    _c("sweater_deer", "outfit", "Свитер с оленем", 2, 60, "#b91c1c", "Тёплый и праздничный."),
+    _c("kimono", "outfit", "Кимоно", 3, 90, "#0e7490"),
+    _c("pirate_coat", "outfit", "Пиратский камзол", 3, 90, "#7f1d1d", "Йо-хо-хо и домашнее задание."),
+    _c("hero_suit", "outfit", "Костюм супергероя", 3, 100, "#2563eb", "С плащом. Для спасения оценок."),
+    _c("armor_bronze", "outfit", "Бронзовая броня", 4, 120, "#b87333"),
+    _c("spacesuit", "outfit", "Скафандр", 4, 140, "#e5e7eb", "К звёздам через знания."),
+    _c("armor_gold", "outfit", "Золотая броня", 5, 180, "#fbbf24", "Блестящий итог года."),
+    # Головные уборы
+    _c("hat_none", "hat", "Без головного убора", 1, 0, "#2a1b3d"),
+    _c("hat_cap", "hat", "Бейсболка", 1, 0, "#ef4444"),
+    _c("hat_beanie", "hat", "Шапка-бини", 1, 0, "#14b8a6"),
+    _c("hat_party", "hat", "Праздничный колпак", 2, 30, "#ec4899"),
+    _c("hat_chef", "hat", "Поварской колпак", 2, 40, "#f8fafc"),
+    _c("hat_cowboy", "hat", "Ковбойская шляпа", 2, 50, "#b45309"),
+    _c("hat_cat", "hat", "Кошачьи ушки", 2, 60, "#6b7280"),
+    _c("hat_flowers", "hat", "Цветочный венок", 3, 60, "#84cc16"),
+    _c("hat_bunny", "hat", "Заячьи уши", 3, 70, "#f9a8d4"),
+    _c("hat_wizard", "hat", "Колпак волшебника", 3, 90, "#6d28d9", "Звёздный колпак для зелий по химии."),
+    _c("hat_pirate", "hat", "Треуголка", 4, 110, "#1f2937"),
+    _c("hat_laurel", "hat", "Лавровый венок", 4, 120, "#65a30d", "Награда победителю."),
+    _c("hat_astro", "hat", "Шлем астронавта", 5, 200, "#bae6fd"),
+    # Лицо
+    _c("face_none", "face", "Без украшений", 1, 0, "#2a1b3d"),
+    _c("glasses_round", "face", "Круглые очки", 1, 0, "#67e8f9"),
+    _c("mustache", "face", "Усы", 1, 30, "#2b1a12"),
+    _c("shades", "face", "Солнцезащитные очки", 2, 40, "#111827"),
+    _c("glasses_3d", "face", "3D-очки", 2, 50, "#ef4444"),
+    _c("eyepatch", "face", "Пиратская повязка", 3, 60, "#111827"),
+    _c("monocle", "face", "Монокль", 3, 70, "#fbbf24"),
+    _c("mask_hero", "face", "Маска героя", 4, 100, "#dc2626"),
+    _c("glasses_pixel", "face", "Пиксельные очки", 4, 120, "#111827", "Deal with it."),
+    _c("vr_headset", "face", "VR-шлем", 5, 160, "#22d3ee"),
+    # Аксессуары: шея, грудь, спина
+    _c("scarf", "accessory", "Шарф", 1, 0, "#f472b6"),
+    _c("bow", "accessory", "Бант", 1, 0, "#ec4899"),
+    _c("badge", "accessory", "Значок", 1, 0, "#fbbf24"),
+    _c("bowtie", "accessory", "Бабочка", 1, 30, "#dc2626"),
+    _c("backpack", "accessory", "Рюкзак", 1, 40, "#16a34a"),
+    _c("tie", "accessory", "Галстук", 2, 40, "#dc2626"),
+    _c("necklace", "accessory", "Ожерелье", 3, 70, "#a5f3fc"),
+    _c("medal", "accessory", "Медаль", 3, 80, "#fbbf24", "За победу в олимпиаде."),
+    _c("cape", "accessory", "Плащ", 4, 130, "#dc2626"),
+    _c("wings", "accessory", "Крылья", 5, 220, "#f8fafc", "Почти летаешь."),
+    # Рамки (рисуются в styles/frames.css)
+    _c("frame_checker", "frame", "Шахматная клетка", 1, 0, "#e2e8f0"),
+    _c("frame_stars", "frame", "Звёздная рамка", 2, 40, "#fde047"),
+    _c("frame_leaf", "frame", "Рамка из листьев", 2, 40, "#22c55e"),
+    _c("frame_bolt", "frame", "Молнии", 3, 60, "#facc15"),
+    _c("frame_wave", "frame", "Волны", 3, 70, "#38bdf8"),
+    _c("frame_digital", "frame", "Цифровая рамка", 4, 100, "#22c55e"),
+    _c("frame_flame", "frame", "Пиксельное пламя", 4, 120, "#f97316"),
+    _c("frame_rainbow", "frame", "Радужная рамка", 5, 150, "#ec4899"),
 ]
 
 COSMETIC_BY_ID = {item.id: item for item in COSMETICS}
+
+# Предметы, которые в старых аватарах хранились в слоте accessory (id не менялись).
+LEGACY_ACCESSORY_SLOT = {
+    "glasses": "face",
+    "headphones": "hat",
+    "cap": "hat",
+    "crown": "hat",
+    "halo": "hat",
+}
 
 AVATAR_KEYS = {
     "skin": "skin",
     "hair": "hair",
     "hairColor": "hair_color",
     "outfit": "outfit",
+    "hat": "hat",
+    "face": "face",
     "accessory": "accessory",
     "frame": "frame",
 }
@@ -471,11 +587,21 @@ def load_avatar(raw: str | None) -> dict[str, str]:
         value = json.loads(raw or "{}")
     except json.JSONDecodeError:
         value = {}
+    if not isinstance(value, dict):
+        value = {}
+    # Старые образы без новых слотов (hat, face) получают значения по умолчанию.
     avatar = dict(DEFAULT_AVATAR)
-    for key in AVATAR_KEYS:
+    for key, slot in AVATAR_KEYS.items():
         candidate = value.get(key)
-        if isinstance(candidate, str) and candidate in COSMETIC_BY_ID:
+        item = COSMETIC_BY_ID.get(candidate) if isinstance(candidate, str) else None
+        if item is not None and item.type == slot:
             avatar[key] = candidate
+    # Миграция «на лету»: раньше очки, наушники, кепка, корона и нимб лежали в
+    # accessory. Переносим их в face или hat, если тот слот ещё пуст.
+    legacy = value.get("accessory")
+    target = LEGACY_ACCESSORY_SLOT.get(legacy) if isinstance(legacy, str) else None
+    if target and avatar[target] == DEFAULT_AVATAR[target]:
+        avatar[target] = legacy
     return avatar
 
 

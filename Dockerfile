@@ -17,6 +17,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    APP_MODE=prod \
+    CATALOG_FILE=/data/catalog.json \
     HOME=/home/app \
     HOST=0.0.0.0 \
     PORT=8000 \
@@ -36,6 +38,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./
 COPY backend ./backend
 COPY tools ./tools
+COPY landing ./landing
+COPY catalog.example.json ./catalog.example.json
 COPY --from=frontend-build /app/static ./static
 
 USER app

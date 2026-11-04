@@ -1,6 +1,6 @@
 # Запуск в Docker
 
-Весь проект собирается и запускается в Docker: образ содержит собранный фронтенд, бэкенд и страницу-портал; данные лежат в томе. Приложение слушает порт 8000 внутри контейнера и привязано к `127.0.0.1` хоста; HTTPS отдаёт nginx на хосте (основной путь для `m.ospab.org`) или Caddy из профиля `proxy`.
+Весь проект собирается и запускается в Docker: образ содержит собранный фронтенд, бэкенд и страницу-портал; данные лежат в томе. Приложение слушает порт 8000 внутри контейнера и привязано к `127.0.0.1` хоста; HTTPS отдаёт nginx на хосте (основной путь для `app.example.org`) или Caddy из профиля `proxy`.
 
 ## Оглавление
 
@@ -87,26 +87,26 @@ docker compose --profile demo down -v
 
 ## Деплой на сервер с nginx
 
-Основной путь для `m.ospab.org`: приложение в контейнере, nginx и сертификат Let's Encrypt на хосте. Тот же конфиг nginx (`deploy/m.ospab.org.conf`), что и в варианте с systemd: прокси на `127.0.0.1:8000`.
+Приложение в контейнере, nginx и сертификат Let's Encrypt на хосте. Тот же шаблон nginx (`deploy/nginx.conf.template`), что и в варианте с systemd: прокси на `127.0.0.1:8000`.
 
 Подготовка:
 
-1. DNS-запись `m.ospab.org` указывает на сервер, порты 80 и 443 открыты.
+1. DNS-запись `app.example.org` указывает на сервер, порты 80 и 443 открыты.
 2. Проект скопирован на сервер (git clone или копирование папки), в корне лежит `.env` с `MAX_BOT_TOKEN`. Строки `APP_MODE` в `.env` быть не должно или она равна `prod`.
 3. Если раньше был вариант systemd, остановите его: `systemctl disable --now school-hero` (оба используют порт 8000). Данные переносятся отдельно, см. [Переход с systemd](#переход-с-systemd-на-docker).
 
 Запуск:
 
 ```bash
-sudo LE_EMAIL=you@example.com bash deploy/deploy-docker.sh
+sudo bash deploy/deploy-docker.sh --domain app.example.org --email you@example.com
 ```
 
 Скрипт:
 
-1. проверяет Docker, `.env`, токен и отсутствие `APP_MODE` не `prod`, отказывается работать при запущенном сервисе `school-hero`;
+1. выбирает домен (`--domain` или `DOMAIN`, затем `PUBLIC_URL` из `.env`, затем вопрос в терминале; при необходимости добавляет `PUBLIC_URL` в `.env`), проверяет Docker, `.env`, токен и отсутствие `APP_MODE` не `prod`, отказывается работать при запущенном сервисе `school-hero`;
 2. выполняет `docker compose up -d --build app` и ждёт статус `healthy` (до двух минут), при неудаче печатает последние строки логов;
-3. ставит nginx и certbot, получает сертификат методом webroot без остановки nginx, ставит конфиг `deploy/m.ospab.org.conf` (на сервере без IPv6 удаляет строки `listen [::]`) и перезагружает nginx; после продления сертификата nginx перезагружается автоматически;
-4. проверяет `https://m.ospab.org/api/health`.
+3. ставит nginx и certbot, получает сертификат методом webroot без остановки nginx, создаёт конфиг из `deploy/nginx.conf.template` (на сервере без IPv6 удаляет строки `listen [::]`) и перезагружает nginx; после продления сертификата nginx перезагружается автоматически;
+4. проверяет `https://app.example.org/api/health`.
 
 Повторный запуск безопасен: образ пересобирается, контейнер пересоздаётся, данные в томе сохраняются.
 
@@ -117,7 +117,7 @@ sudo LE_EMAIL=you@example.com bash deploy/deploy-docker.sh
 В `.env` добавьте домен без `https://`:
 
 ```bash
-APP_DOMAIN=m.ospab.org
+APP_DOMAIN=app.example.org
 ```
 
 ```bash
@@ -306,6 +306,6 @@ docker run --rm -v school-hero_school_hero_data:/data -v /var/lib/school-hero:/o
 | `/portal` отдаёт 404 | Образ собран из старой версии без каталога `landing/`: пересоберите `docker compose build --no-cache app`. |
 | Ошибка доступа к `/data` | Том создан с другим владельцем: `docker run --rm -v school-hero_school_hero_data:/data alpine chown -R 10001:10001 /data`. |
 | Изменения в `.env` не применяются | Нужно пересоздать контейнер: `docker compose up -d app`. |
-| `https://m.ospab.org` отдаёт 502 | Контейнер не запущен или не `healthy`: `docker compose ps`. |
+| `https://app.example.org` отдаёт 502 | Контейнер не запущен или не `healthy`: `docker compose ps`. |
 | Сертификат не получается | DNS не указывает на сервер или порт 80 закрыт; проверьте `certbot` и `nginx -t`. |
 | Проверить синтаксис compose-файла | `docker compose config` |

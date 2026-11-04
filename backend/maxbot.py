@@ -95,12 +95,11 @@ class MaxClient:
         return self._request("GET", "/me")
 
     def send_message(self, user_id: int, text: str, buttons: list[list[dict]]) -> dict:
-        body = {
-            "text": text,
-            "attachments": [
+        body: dict[str, Any] = {"text": text}
+        if buttons:
+            body["attachments"] = [
                 {"type": "inline_keyboard", "payload": {"buttons": buttons}}
-            ],
-        }
+            ]
         return self._request("POST", "/messages", params={"user_id": user_id}, json_body=body)
 
     def get_subscriptions(self) -> dict:
@@ -193,6 +192,9 @@ def build_buttons(settings: Settings, client: MaxClient) -> list[list[dict]]:
         if bot_id is not None:
             button["contact_id"] = bot_id
         return [[button]]
+    if not settings.public_url:
+        # Нет ни username бота, ни PUBLIC_URL: отправляем текст без кнопки.
+        return []
     return [[{"type": "link", "text": BUTTON_TEXT, "url": settings.public_url}]]
 
 

@@ -36,7 +36,7 @@
 Схема:
 
 ```text
-MAX (клиент) -> HTTPS -> nginx (m.ospab.org) -> uvicorn 127.0.0.1:8000 -> FastAPI (app.py)
+MAX (клиент) -> HTTPS -> nginx (app.example.org) -> uvicorn 127.0.0.1:8000 -> FastAPI (app.py)
                                                    |- /api/*     -> backend/api.py -> service.py / registration.py -> SQLite
                                                    |- /portal    -> landing/index.html
                                                    `- остальное  -> static/ (SPA) при SERVE_FRONTEND=true

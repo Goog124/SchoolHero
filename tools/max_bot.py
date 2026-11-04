@@ -106,6 +106,9 @@ def main(argv: list[str]) -> int:
     if not settings.bot_token:
         print("В .env не задан MAX_BOT_TOKEN")
         return 1
+    if argv[1] in ("subscribe", "status", "unsubscribe") and not settings.public_url:
+        print("В .env не задан PUBLIC_URL (например https://app.example.org)")
+        return 1
     try:
         client = MaxClient(settings)
         return COMMANDS[argv[1]](client, settings)

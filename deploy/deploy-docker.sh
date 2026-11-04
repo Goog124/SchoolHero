@@ -1,19 +1,29 @@
 #!/usr/bin/env bash
-# Развёртывание School Hero в Docker на сервере с nginx (Debian/Ubuntu), домен m.ospab.org.
+# Развёртывание School Hero в Docker на сервере с nginx (Debian/Ubuntu).
 #
 # Запуск на сервере от root из папки проекта (там лежат docker-compose.yml и .env):
-#   sudo LE_EMAIL=you@example.com bash deploy/deploy-docker.sh
+#   sudo bash deploy/deploy-docker.sh --domain app.example.org --email you@example.com
+#
+# Домен выбирается по порядку: --domain (или переменная DOMAIN), затем
+# PUBLIC_URL из .env, затем вопрос в терминале. Почта нужна Let's Encrypt
+# (--email или LE_EMAIL), её можно не указывать.
 #
 # Что делает: проверяет .env, собирает образ и запускает контейнер app на
 # 127.0.0.1:8000, ставит nginx-конфиг и сертификат Let's Encrypt (webroot,
 # без остановки nginx), проверяет /api/health снаружи.
-# Требования: Docker с плагином compose, DNS m.ospab.org -> сервер, порты 80 и 443.
+# Требования: Docker с плагином compose, DNS-запись домена указывает на сервер,
+# открыты порты 80 и 443.
 # Не запускайте одновременно с systemd-вариантом (deploy/deploy.sh): оба используют порт 8000.
 set -euo pipefail
 
-DOMAIN="m.ospab.org"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DOMAIN="${DOMAIN:-}"
 LE_EMAIL="${LE_EMAIL:-}"
+
+usage() { echo "Использование: sudo bash deploy/deploy-docker.sh [--domain app.example.org] [--email you@example.com]"; }
+# shellcheck source=lib.sh
+. "$SRC/deploy/lib.sh"
+parse_args "$@"
 
 [ "$(id -u)" -eq 0 ] || { echo "Запустите от root (sudo)"; exit 1; }
 cd "$SRC"
@@ -31,6 +41,9 @@ if grep -Eq '^[[:space:]]*(export[[:space:]]+)?APP_MODE=' .env \
   echo "В .env задан APP_MODE не prod. Уберите строку или поставьте prod."
   exit 1
 fi
+
+resolve_domain .env
+ensure_public_url .env
 
 if systemctl is-active --quiet school-hero 2>/dev/null; then
   echo "Работает systemd-сервис school-hero и занимает порт 8000."
@@ -58,32 +71,7 @@ fi
 curl -fsS http://127.0.0.1:8000/api/health && echo
 
 # --- nginx + Let's Encrypt ------------------------------------------------
-apt-get install -y nginx certbot curl >/dev/null
-mkdir -p /var/www/certbot
-CONF="/etc/nginx/conf.d/$DOMAIN.conf"
-if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-  cat > "$CONF" <<NGX
-server {
-    listen 80;
-    server_name $DOMAIN;
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 404; }
-}
-NGX
-  nginx -t && systemctl reload nginx
-  if [ -n "$LE_EMAIL" ]; then EMAIL_ARGS=(--email "$LE_EMAIL"); else EMAIL_ARGS=(--register-unsafely-without-email); fi
-  certbot certonly --webroot -w /var/www/certbot -d "$DOMAIN" \
-    --non-interactive --agree-tos "${EMAIL_ARGS[@]}"
-fi
-
-install -m 644 "$SRC/deploy/$DOMAIN.conf" "$CONF"
-# На сервере без IPv6 директива listen [::] валит nginx.
-if [ ! -e /proc/net/if_inet6 ]; then sed -i '/listen \[::\]/d' "$CONF"; fi
-nginx -t
-systemctl reload nginx
-mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+setup_nginx_letsencrypt "$SRC"
 
 # --- проверка снаружи -----------------------------------------------------
 sleep 2

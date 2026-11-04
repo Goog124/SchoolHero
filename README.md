@@ -30,7 +30,7 @@ curl http://127.0.0.1:8000/api/health
 docker compose --profile demo up -d --build demo
 ```
 
-На сервере с nginx и Let's Encrypt (`m.ospab.org`): `sudo LE_EMAIL=you@example.com bash deploy/deploy-docker.sh`. Подробности, резервные копии, обновление и Caddy: [docs/docker.md](docs/docker.md).
+На сервере с nginx и Let's Encrypt: `sudo bash deploy/deploy-docker.sh --domain app.example.org --email you@example.com`. Подробности, резервные копии, обновление и Caddy: [docs/docker.md](docs/docker.md).
 
 ## Быстрый старт (локально, без Docker)
 
@@ -56,7 +56,7 @@ python app.py                   # http://127.0.0.1:8000
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-Развёртывание на `m.ospab.org` (systemd + nginx): `sudo LE_EMAIL=you@example.com bash deploy/deploy.sh`, подробности в [docs/deploy.md](docs/deploy.md).
+Развёртывание без Docker (systemd + nginx): `sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com`, подробности в [docs/deploy.md](docs/deploy.md).
 
 ## Документация
 

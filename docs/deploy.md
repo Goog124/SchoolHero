@@ -18,15 +18,15 @@
 ## Требования
 
 - Сервер Debian/Ubuntu с root-доступом (скрипт использует `apt-get`, `systemctl`).
-- DNS: запись A (и AAAA, если есть IPv6) `m.ospab.org` указывает на сервер.
+- DNS: запись A (и AAAA, если есть IPv6) `app.example.org` указывает на сервер.
 - Открыты порты 80 и 443. Порт 80 нужен и после выпуска сертификата: на нём продление и редирект на HTTPS.
 - Порты 80/443 не заняты другим веб-сервером.
 - Пакеты ставит сам скрипт: `python3 python3-venv python3-pip rsync nginx certbot curl`.
 - Токен бота MAX (`MAX_BOT_TOKEN`).
-- Версия nginx с директивой `http2 on;` (используется в `deploy/m.ospab.org.conf`). Директиву поддерживает nginx 1.25.1 и новее; на более старых пакетах `nginx -t` завершится ошибкой, и конфиг придётся поправить (убрать `http2 on;`, добавить `http2` к `listen 443 ssl`).
+- Версия nginx с директивой `http2 on;` (используется в шаблоне `deploy/nginx.conf.template`). Директиву поддерживает nginx 1.25.1 и новее; на более старых пакетах `nginx -t` завершится ошибкой, и конфиг придётся поправить (убрать `http2 on;`, добавить `http2` к `listen 443 ssl`).
 - Сборка фронтенда (`static/index.html`) или Node.js 20.19+ на сервере.
 
-Домен и пути зашиты в `deploy/deploy.sh` (`DOMAIN`, `APP_DIR=/opt/school-hero`, `DATA_DIR=/var/lib/school-hero`, `APP_USER=schoolhero`) и в `deploy/m.ospab.org.conf`. Для другого домена правьте оба файла и переименуйте конфиг: скрипт берёт `deploy/$DOMAIN.conf`.
+Домен выбирается при запуске (см. ниже) и подставляется в шаблон `deploy/nginx.conf.template`; в репозитории домена нет. Пути зашиты в `deploy/deploy.sh`: `APP_DIR=/opt/school-hero`, `DATA_DIR=/var/lib/school-hero`, `APP_USER=schoolhero`. Общая логика (выбор домена, nginx, сертификат) вынесена в `deploy/lib.sh`.
 
 ## Подготовка
 
@@ -76,10 +76,10 @@ rsync -a --exclude node_modules --exclude .venv --exclude .git --exclude data ./
 
 ```bash
 cd /root/school-hero-src
-sudo LE_EMAIL=you@example.com bash deploy/deploy.sh
+sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
 ```
 
-`LE_EMAIL` - адрес для Let's Encrypt; без него регистрация идёт без почты (`--register-unsafely-without-email`). Скрипт остановится при первой ошибке (`set -euo pipefail`).
+Домен выбирается по порядку: параметр `--domain` (или переменная `DOMAIN`), затем `PUBLIC_URL` из `.env`, затем вопрос в терминале. Имя проверяется: нужно доменное имя вида `app.example.org` (без `https://`, не IP-адрес), регистр приводится к нижнему. Если в `.env` нет `PUBLIC_URL`, скрипт добавит `PUBLIC_URL=https://<домен>` (он нужен боту для webhook); если он есть и отличается от выбранного домена, скрипт предупредит и ничего не изменит. `--email` (или `LE_EMAIL`) - адрес для Let's Encrypt; без него регистрация идёт без почты (`--register-unsafely-without-email`). Скрипт остановится при первой ошибке (`set -euo pipefail`).
 
 1. **Проверка root.** Иначе выход.
 2. **`.env`.** Выбор источника (`/opt/school-hero/.env` или `<проект>/.env`), проверка, что `MAX_BOT_TOKEN` непуст.
@@ -91,20 +91,20 @@ sudo LE_EMAIL=you@example.com bash deploy/deploy.sh
 8. **`.env` и каталог.** Копирование `.env` (если в `/opt` его нет), необязательного `catalog.json`; владелец `schoolhero`; права `.env` 600.
 9. **Python.** Виртуальное окружение `/opt/school-hero/.venv`, `pip install -r requirements.txt`.
 10. **systemd.** Установка `school-hero.service`, `daemon-reload`, `enable`, `restart`.
-11. **nginx и сертификат.** Если сертификата ещё нет: временный конфиг на порту 80 с `/.well-known/acme-challenge/`, `certbot certonly --webroot`. Затем установка `deploy/m.ospab.org.conf` в `/etc/nginx/conf.d/`; если в системе нет IPv6 (`/proc/net/if_inet6` отсутствует), строки `listen [::]` удаляются; `nginx -t`, `reload`.
+11. **nginx и сертификат.** Если сертификата ещё нет: временный конфиг на порту 80 с `/.well-known/acme-challenge/`, `certbot certonly --webroot`. Затем из шаблона `deploy/nginx.conf.template` (подстановка `__DOMAIN__`) создаётся `/etc/nginx/conf.d/<домен>.conf`; если в системе нет IPv6 (`/proc/net/if_inet6` отсутствует), строки `listen [::]` удаляются; `nginx -t`, `reload`.
 12. **Хук продления.** Создаёт `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` (`systemctl reload nginx`).
-13. **Проверка.** Через 3 секунды `curl` на `http://127.0.0.1:8000/api/health` и `https://m.ospab.org/api/health`. Ответ `{"status":"ok","mode":"prod"}`.
+13. **Проверка.** Через 3 секунды `curl` на `http://127.0.0.1:8000/api/health` и `https://app.example.org/api/health`. Ответ `{"status":"ok","mode":"prod"}`.
 
 Скрипт идемпотентен: повторный запуск - способ обновления.
 
 ## Конфигурация nginx и systemd
 
-### `deploy/m.ospab.org.conf`
+### `deploy/nginx.conf.template`
 
 - Порт 80: `/.well-known/acme-challenge/` отдаётся из `/var/www/certbot`, остальное - редирект 301 на HTTPS.
-- Порт 443: TLS 1.2/1.3, сертификаты `/etc/letsencrypt/live/m.ospab.org/`, HSTS (`max-age=31536000`), `client_max_body_size 2m`, gzip для css/js/json/svg.
+- Порт 443: TLS 1.2/1.3, сертификаты `/etc/letsencrypt/live/app.example.org/`, HSTS (`max-age=31536000`), `client_max_body_size 2m`, gzip для css/js/json/svg.
 - `location /` проксирует на `http://127.0.0.1:8000` с заголовками `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, таймаут чтения 60 с.
-- Установленная копия лежит в `/etc/nginx/conf.d/m.ospab.org.conf`; правки делайте в репозитории и перезапускайте скрипт, иначе они потеряются (в частности, удаление `listen [::]`).
+- Установленная копия лежит в `/etc/nginx/conf.d/app.example.org.conf`; правки делайте в репозитории и перезапускайте скрипт, иначе они потеряются (в частности, удаление `listen [::]`).
 
 ### `deploy/school-hero.service`
 
@@ -126,7 +126,7 @@ sudo systemctl stop school-hero
 Первый выпуск делает `deploy.sh` методом webroot (nginx остаётся запущенным). Вручную то же:
 
 ```bash
-sudo certbot certonly --webroot -w /var/www/certbot -d m.ospab.org --non-interactive --agree-tos --email you@example.com
+sudo certbot certonly --webroot -w /var/www/certbot -d app.example.org --non-interactive --agree-tos --email you@example.com
 ```
 
 Продление: пакет certbot ставит `certbot.timer`; проверка:
@@ -144,7 +144,7 @@ sudo certbot renew --dry-run
 2. Сделайте резервную копию базы ([ниже](#резервное-копирование-и-восстановление)).
 3. Перенесите новую версию проекта на сервер (см. «Подготовка», шаг 4). `.env` в `/opt/school-hero` не перезаписывается.
 4. Запустите `sudo bash deploy/deploy.sh`.
-5. Проверьте `curl https://m.ospab.org/api/health` и `journalctl -u school-hero -n 50`.
+5. Проверьте `curl https://app.example.org/api/health` и `journalctl -u school-hero -n 50`.
 
 Схема базы мигрирует сама при старте ([architecture.md](architecture.md#миграции)); откатить миграцию нельзя - только вернуть копию.
 
@@ -204,7 +204,7 @@ sudo tail -n 50 /var/log/nginx/error.log
 
 ```bash
 curl -s http://127.0.0.1:8000/api/health        # напрямую в сервис
-curl -s https://m.ospab.org/api/health          # через nginx
+curl -s https://app.example.org/api/health          # через nginx
 sudo nginx -t
 ```
 
@@ -231,4 +231,4 @@ sudo nginx -t
 
 ## Вариант Docker
 
-Описан отдельно: [docker.md](docker.md) (compose, профили, скрипт `deploy/deploy-docker.sh` для `m.ospab.org`, резервные копии, обновление, бот, переход с systemd). Образ содержит и страницу `/portal`. Не запускайте оба варианта одновременно: оба используют порт 8000.
+Описан отдельно: [docker.md](docker.md) (compose, профили, скрипт `deploy/deploy-docker.sh`, резервные копии, обновление, бот, переход с systemd). Образ содержит и страницу `/portal`. Не запускайте оба варианта одновременно: оба используют порт 8000.

@@ -58,7 +58,7 @@ class Settings:
     max_webhook_secret: str = ""
     max_bot_username: str = ""
     max_ca_bundle: str = ""
-    public_url: str = "https://m.ospab.org"
+    public_url: str = ""
     bot_reply_interval: int = 60
 
     @property
@@ -130,7 +130,6 @@ class Settings:
             public_url=(
                 os.getenv("PUBLIC_URL", "").strip().rstrip("/")
                 or os.getenv("MINIAPP_URL", "").strip().rstrip("/")
-                or "https://m.ospab.org"
             ),
             bot_reply_interval=_int_env("BOT_REPLY_INTERVAL", 60),
         )

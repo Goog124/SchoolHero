@@ -35,7 +35,11 @@ def bot(tmp_path, monkeypatch):
     monkeypatch.setattr(maxbot, "get_client", lambda settings: FakeClient())
     monkeypatch.setattr(maxbot, "RETRY_DELAYS", (0, 0))
     settings = make_settings(
-        tmp_path, app_mode="prod", bot_token=TOKEN, max_webhook_secret=SECRET
+        tmp_path,
+        app_mode="prod",
+        bot_token=TOKEN,
+        max_webhook_secret=SECRET,
+        public_url="https://app.example.org",
     )
     client = build_client(settings)
     yield client
@@ -157,4 +161,14 @@ def test_client_failure_falls_back_to_link(bot, monkeypatch):
     monkeypatch.setattr(maxbot, "get_client", lambda s: NoMe())
     bot.post("/api/max/webhook", json=started(user_id=7, ts=9), headers=HEADERS)
     btn = FakeClient.sent[0][2][0][0]
-    assert btn == {"type": "link", "text": maxbot.BUTTON_TEXT, "url": "https://m.ospab.org"}
+    assert btn == {"type": "link", "text": maxbot.BUTTON_TEXT, "url": "https://app.example.org"}
+
+
+def test_no_public_url_and_no_username_sends_text_without_keyboard(tmp_path, monkeypatch):
+    class NoMe(FakeClient):
+        def get_me(self):
+            raise maxbot.MaxApiError("GET /me: HTTP 500")
+
+    settings = make_settings(tmp_path, app_mode="prod", bot_token=TOKEN, max_webhook_secret=SECRET)
+    assert settings.public_url == ""
+    assert maxbot.build_buttons(settings, NoMe()) == []

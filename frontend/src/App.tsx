@@ -764,7 +764,13 @@ export default function App() {
 
   const studentTabs: TabItem[] = [
     { id: 'hero', label: 'Мой трек', icon: 'home' },
-    { id: 'challenges', label: 'Задания', icon: 'list' },
+    {
+      id: 'challenges',
+      label: 'Задания',
+      icon: 'list',
+      // Доступные задания и работы, возвращённые на доработку.
+      badge: state.challenges.filter((c) => c.status === 'available' || c.status === 'rejected').length,
+    },
     { id: 'leaderboard', label: 'Рейтинг', icon: 'trophy' },
     { id: 'wardrobe', label: 'Стиль', icon: 'shirt' },
     { id: 'profile', label: 'Профиль', icon: 'user' },

@@ -54,7 +54,8 @@
 }
 
 .ob-main {
-  flex: 1;
+  /* Не растягиваем: кнопки идут сразу под содержимым шага, а не прижаты к низу экрана. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -383,7 +384,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 8px;
+  /* Сразу под содержимым; если шаг длинный, панель остаётся видимой у нижнего края. */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 12px 0 calc(12px + var(--safe-bottom, 0px));
+  background: var(--bg-app);
 }
 
 .ob-actions__end {

@@ -33,7 +33,7 @@ type ClassChoice = {
   kind?: 'student' | 'teacher';
 };
 
-type AvatarTab = 'skin' | 'hair' | 'outfit' | 'accessory';
+type AvatarTab = 'skin' | 'hair' | 'outfit' | 'face';
 
 const TOTAL_STEPS = 3;
 const SCHOOLS_PAGE = 20;
@@ -45,7 +45,7 @@ const AVATAR_TABS: { id: AvatarTab; label: string }[] = [
   { id: 'skin', label: 'Кожа' },
   { id: 'hair', label: 'Волосы' },
   { id: 'outfit', label: 'Одежда' },
-  { id: 'accessory', label: 'Очки' },
+  { id: 'face', label: 'Очки' },
 ];
 
 function nameError(value: string, label: string, max: number): string | null {
@@ -119,7 +119,7 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   const hairs = pick('hair');
   const hairColors = pick('hair_color');
   const outfits = pick('outfit');
-  const glasses = pick('accessory', ['none', 'glasses']);
+  const glasses = pick('face', ['face_none', 'glasses', 'glasses_round']);
 
   const firstErr = nameError(firstName, 'имя', 24);
   const lastErr = nameError(lastName, 'фамилию', 32);
@@ -716,17 +716,17 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
                 </div>
               )}
 
-              {tab === 'accessory' && (
+              {tab === 'face' && (
                 <div className="ob-opts">
                   {glasses.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       className="ob-opt"
-                      aria-pressed={avatar.accessory === item.id}
-                      onClick={() => set({ accessory: item.id })}
+                      aria-pressed={avatar.face === item.id}
+                      onClick={() => set({ face: item.id })}
                     >
-                      <span>{item.id === 'none' ? 'Без очков' : item.name}</span>
+                      <span>{item.id === 'face_none' ? 'Без очков' : item.name}</span>
                     </button>
                   ))}
                 </div>

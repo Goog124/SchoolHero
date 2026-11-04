@@ -490,6 +490,9 @@ function Outfit({
   );
 }
 
+/** Старые предметы (id не менялись): рисуются из слотов hat и face. */
+const LEGACY_HATS = ['headphones', 'cap', 'crown', 'halo'];
+
 function Accessory({ id }: { id: string }) {
   if (id === 'glasses') {
     return (
@@ -610,12 +613,6 @@ export function PixelHero({
     : 'hair_short';
   const hat = avatar.hat && avatar.hat !== 'hat_none' ? avatar.hat : null;
   const face = avatar.face && avatar.face !== 'face_none' ? avatar.face : null;
-  // Старые «головные» аксессуары уступают место новым слотам hat и face.
-  const legacy =
-    (hat && ['cap', 'crown', 'halo'].includes(avatar.accessory)) ||
-    (face && avatar.accessory === 'glasses')
-      ? 'none'
-      : avatar.accessory;
   const crop = view ? HERO_VIEWS[view] : null;
   const vb = crop
     ? { x: crop.x0, y: crop.y0, w: crop.x1 - crop.x0, h: crop.y1 - crop.y0 }
@@ -717,10 +714,10 @@ export function PixelHero({
         ) : null}
 
         <FrontHair style={hairStyle} colors={hair} skin={skin.base} />
-        {face ? <FaceLayer id={face} /> : null}
-        <Accessory id={legacy} />
+        {face ? face === 'glasses' ? <Accessory id={face} /> : <FaceLayer id={face} /> : null}
+        <Accessory id={avatar.accessory} />
         <AccessoryFront id={avatar.accessory} />
-        {hat ? <HatLayer id={hat} /> : null}
+        {hat ? LEGACY_HATS.includes(hat) ? <Accessory id={hat} /> : <HatLayer id={hat} /> : null}
       </g>
     </svg>
   );

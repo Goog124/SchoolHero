@@ -138,7 +138,7 @@ users 1---N xp_events,  users 1---N activity_days
 ## Гардероб и образ героя
 
 - Каталог предметов - `COSMETICS` в `backend/game.py`; он же источник правил (уровень, цена, слот, редкость). `GET /api/state` отдаёт его в `cosmetics` вместе с флагами `owned`, `unlocked`, `equipped`.
-- Образ героя хранится в `users.avatar` как JSON по слотам: `skin`, `hair`, `hairColor`, `outfit`, `hat`, `face`, `accessory`, `frame`. `load_avatar` подставляет значения по умолчанию для отсутствующих или неподходящих по слоту ключей, поэтому старые записи работают без миграции. `validate_avatar_patch` проверяет слот, уровень и покупку.
+- Образ героя хранится в `users.avatar` как JSON по слотам: `skin`, `hair`, `hairColor`, `outfit`, `hat`, `face`, `accessory`, `frame`. `load_avatar` подставляет значения по умолчанию для отсутствующих или неподходящих по слоту ключей, поэтому старые записи работают без миграции. `validate_avatar_patch` проверяет слот предмета, уровень и покупку. Миграция «на лету»: если в старом аватаре `accessory` хранит `glasses` (теперь слот `face`) или `headphones`, `cap`, `crown`, `halo` (слот `hat`), `load_avatar` переносит значение в нужный слот (если он пуст) и сбрасывает `accessory` в `none`; id и покупки не меняются.
 - Герой и магазин доступны только ученикам (`_require_student_hero` в `service.py`).
 - Фронтенд рисует героя по id: `components/PixelHero.tsx` (тело, волосы, цвета) и `components/heroItems.tsx` (одежда, шапки, лицо, аксессуары) на сетке 32x42; рамки - `components/AvatarFrame.tsx` + `styles/frames.css`.
 - Экран «Стиль» (`screens/WardrobeScreen.tsx`) - «летающая камера»: CSS transform на обёртке, кадр вычисляется из геометрии сетки (`HERO_PARTS`) и размера сцены.

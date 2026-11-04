@@ -21,12 +21,12 @@ export type WardrobeZone =
 const ZONES: { id: WardrobeZone; label: string; avatarKey: keyof AvatarConfig }[] = [
   { id: 'hair', label: 'Причёска', avatarKey: 'hair' },
   { id: 'hair_color', label: 'Цвет волос', avatarKey: 'hairColor' },
+  { id: 'skin', label: 'Кожа', avatarKey: 'skin' },
   { id: 'outfit', label: 'Одежда', avatarKey: 'outfit' },
   { id: 'hat', label: 'Шапки', avatarKey: 'hat' },
   { id: 'face', label: 'Лицо', avatarKey: 'face' },
   { id: 'accessory', label: 'Аксессуары', avatarKey: 'accessory' },
-  { id: 'skin', label: 'Кожа', avatarKey: 'skin' },
-  { id: 'frame', label: 'Рамка', avatarKey: 'frame' },
+  { id: 'frame', label: 'Рамки', avatarKey: 'frame' },
 ];
 
 /* ---------- Камера ----------
@@ -147,7 +147,13 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
   const { viewer, cosmetics } = state;
 
   const zone = ZONES.find((z) => z.id === zoneId) ?? ZONES[0];
-  const items = useMemo(() => cosmetics.filter((c) => c.type === zone.id), [cosmetics, zone.id]);
+  const items = useMemo(() => {
+    const isNone = (c: Cosmetic) => c.id === 'none' || c.id.endsWith('_none');
+    // «Ничего» всегда первым, остальное в порядке каталога.
+    return cosmetics
+      .filter((c) => c.type === zone.id)
+      .sort((a, b) => Number(isNone(b)) - Number(isNone(a)));
+  }, [cosmetics, zone.id]);
   const equippedId =
     viewer.avatar[zone.avatarKey] ?? (zone.id === 'hat' ? 'hat_none' : zone.id === 'face' ? 'face_none' : '');
   const selected = items.find((c) => c.id === selectedId) ?? null;

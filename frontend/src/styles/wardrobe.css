@@ -170,23 +170,20 @@
 }
 
 .wd-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.wd-tabs::-webkit-scrollbar {
-  display: none;
 }
 
 .wd-tab {
-  flex: 0 0 auto;
+  min-width: 0;
   min-height: 44px;
-  padding: 0 14px;
+  padding: 4px 2px;
   font: inherit;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 16px;
+  text-align: center;
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid var(--line);

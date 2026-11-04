@@ -83,6 +83,38 @@ def test_validate_patch_checks_level_and_purchase():
     assert validate_avatar_patch({"hat": "hat_wizard"}, 3, ["hat_wizard"])
 
 
+def test_accessory_slot_has_only_neck_chest_back_items():
+    allowed = {"none", "scarf", "bow", "badge", "bowtie", "backpack", "tie", "necklace", "medal", "cape", "wings"}
+    assert {i.id for i in COSMETICS if i.type == "accessory"} == allowed
+    assert COSMETIC_BY_ID["glasses"].type == "face"
+    for legacy in ("headphones", "cap", "crown", "halo"):
+        assert COSMETIC_BY_ID[legacy].type == "hat"
+
+
+@pytest.mark.parametrize(
+    "legacy,slot",
+    [("glasses", "face"), ("headphones", "hat"), ("cap", "hat"), ("crown", "hat"), ("halo", "hat")],
+)
+def test_legacy_accessory_migrates_to_new_slot(legacy, slot):
+    avatar = load_avatar(json.dumps({"accessory": legacy, "frame": "frame_gold"}))
+    assert avatar[slot] == legacy
+    assert avatar["accessory"] == "none"
+    assert avatar["frame"] == "frame_gold"
+
+
+def test_legacy_accessory_does_not_override_filled_slot():
+    avatar = load_avatar(json.dumps({"accessory": "cap", "hat": "hat_wizard"}))
+    assert avatar["hat"] == "hat_wizard"
+    assert avatar["accessory"] == "none"
+
+
+def test_patch_with_legacy_item_requires_its_new_slot():
+    assert validate_avatar_patch({"hat": "headphones"}, 2, ["headphones"])
+    assert validate_avatar_patch({"face": "glasses"}, 1, [])
+    with pytest.raises(ValueError):
+        validate_avatar_patch({"accessory": "glasses"}, 5, [])
+
+
 def test_old_avatar_without_new_keys_gets_defaults():
     old = json.dumps(
         {
@@ -95,9 +127,9 @@ def test_old_avatar_without_new_keys_gets_defaults():
         }
     )
     avatar = load_avatar(old)
-    assert avatar["hat"] == "hat_none"
     assert avatar["face"] == "face_none"
-    assert avatar["accessory"] == "headphones"
+    assert avatar["hat"] == "headphones"  # перенесено из accessory
+    assert avatar["accessory"] == "none"
     assert avatar["frame"] == "frame_neon"
     assert load_avatar(None) == DEFAULT_AVATAR
     assert load_avatar("not json") == DEFAULT_AVATAR
@@ -145,7 +177,7 @@ def test_buy_and_equip_new_item(demo_client):
 def test_level_limit_for_new_item(demo_client):
     state = get_state(demo_client)
     level = state["viewer"]["level"]["level"]
-    locked = next(i for i in COSMETICS if i.type == "hat" and i.unlock_level > level)
+    locked = next(i for i in COSMETICS if i.type == "hat" and i.price > 0 and i.unlock_level > level)
     response = demo_client.post(
         "/api/avatar/equip", json={"key": "hat", "item_id": locked.id}, headers=DEMO_HEADERS
     )

@@ -262,15 +262,15 @@ def test_buy_and_equip_cosmetic(demo_client):
 
     equipped = demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "cap"},
+        json={"key": "hat", "item_id": "cap"},
         headers=DEMO_HEADERS,
     )
     assert equipped.status_code == 200, equipped.text
-    assert equipped.json()["state"]["viewer"]["avatar"]["accessory"] == "cap"
+    assert equipped.json()["state"]["viewer"]["avatar"]["hat"] == "cap"
 
     locked = demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "halo"},
+        json={"key": "hat", "item_id": "halo"},
         headers=DEMO_HEADERS,
     )
     assert locked.status_code == 400
@@ -380,7 +380,7 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     )
     demo_client.post(
         "/api/avatar/equip",
-        json={"key": "accessory", "item_id": "cap"},
+        json={"key": "hat", "item_id": "cap"},
         headers=DEMO_HEADERS,
     )
     challenge = challenge_by_title(
@@ -406,7 +406,7 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     assert viewer["streak"] == 6
     assert viewer["role"] == "student"
     assert viewer["onboarded"] is True
-    assert viewer["avatar"]["accessory"] == "headphones"
+    assert viewer["avatar"]["hat"] == "headphones"
     assert viewer["owned"] == ["hoodie_cyan"]
     assert viewer["stats"] == {
         "confirmed": 3,

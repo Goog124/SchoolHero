@@ -90,8 +90,8 @@ DEMO_AVATAR = {
     "hair": "hair_curls",
     "hairColor": "hair_brown",
     "outfit": "hoodie_violet",
-    "accessory": "headphones",
-    "hat": "hat_none",
+    "accessory": "none",
+    "hat": "headphones",
     "face": "face_none",
     "frame": "frame_neon",
 }
@@ -226,7 +226,7 @@ COSMETICS: list[Cosmetic] = [
     Cosmetic("none", "accessory", "Без аксессуара", unlock_level=1, swatch="#2a1b3d"),
     Cosmetic(
         "glasses",
-        "accessory",
+        "face",
         "Умные очки",
         unlock_level=1,
         swatch="#67e8f9",
@@ -234,7 +234,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "headphones",
-        "accessory",
+        "hat",
         "Наушники",
         unlock_level=2,
         swatch="#a855f7",
@@ -242,7 +242,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "cap",
-        "accessory",
+        "hat",
         "Кепка «Квант»",
         unlock_level=2,
         price=50,
@@ -251,7 +251,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "crown",
-        "accessory",
+        "hat",
         "Корона лидера",
         unlock_level=4,
         swatch="#fbbf24",
@@ -259,7 +259,7 @@ COSMETICS: list[Cosmetic] = [
     ),
     Cosmetic(
         "halo",
-        "accessory",
+        "hat",
         "Нимб легенды",
         unlock_level=5,
         swatch="#fde68a",
@@ -368,6 +368,15 @@ COSMETICS: list[Cosmetic] = [
 ]
 
 COSMETIC_BY_ID = {item.id: item for item in COSMETICS}
+
+# Предметы, которые в старых аватарах хранились в слоте accessory (id не менялись).
+LEGACY_ACCESSORY_SLOT = {
+    "glasses": "face",
+    "headphones": "hat",
+    "cap": "hat",
+    "crown": "hat",
+    "halo": "hat",
+}
 
 AVATAR_KEYS = {
     "skin": "skin",
@@ -587,6 +596,12 @@ def load_avatar(raw: str | None) -> dict[str, str]:
         item = COSMETIC_BY_ID.get(candidate) if isinstance(candidate, str) else None
         if item is not None and item.type == slot:
             avatar[key] = candidate
+    # Миграция «на лету»: раньше очки, наушники, кепка, корона и нимб лежали в
+    # accessory. Переносим их в face или hat, если тот слот ещё пуст.
+    legacy = value.get("accessory")
+    target = LEGACY_ACCESSORY_SLOT.get(legacy) if isinstance(legacy, str) else None
+    if target and avatar[target] == DEFAULT_AVATAR[target]:
+        avatar[target] = legacy
     return avatar
 
 

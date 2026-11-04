@@ -208,21 +208,21 @@ def _avatar_for(index: int, xp: int) -> dict[str, str]:
         5: ["suit_cosmic", "armor_silver"],
     }
     accessories_by_level = {
-        1: ["none", "glasses"],
-        2: ["headphones", "glasses", "none"],
-        3: ["headphones", "glasses"],
-        4: ["crown", "headphones"],
-        5: ["halo", "crown"],
+        1: ["none", "scarf", "badge"],
+        2: ["none", "tie", "bowtie"],
+        3: ["necklace", "none", "medal"],
+        4: ["medal", "cape", "none"],
+        5: ["wings", "cape", "none"],
     }
     frames = ["frame_wood", "frame_neon", "frame_gold", "frame_galaxy"]
     hats = {
         1: ["hat_none", "hat_cap", "hat_beanie"],
-        2: ["hat_none", "hat_cowboy", "hat_cat"],
-        3: ["hat_wizard", "hat_none", "hat_bunny"],
-        4: ["hat_laurel", "hat_pirate", "hat_none"],
-        5: ["hat_astro", "hat_none", "hat_laurel"],
+        2: ["headphones", "hat_cowboy", "cap"],
+        3: ["headphones", "hat_wizard", "hat_bunny"],
+        4: ["crown", "hat_laurel", "hat_pirate"],
+        5: ["halo", "hat_astro", "crown"],
     }
-    faces = ["face_none", "glasses_round", "face_none", "shades", "mustache"]
+    faces = ["face_none", "glasses", "glasses_round", "shades", "mustache"]
     return {
         "skin": skins[index % len(skins)],
         "hair": hairs[index % len(hairs)],

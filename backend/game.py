@@ -27,11 +27,33 @@ XP_VALUES = {
     "streak": 50,
 }
 
+
+SUBJECTS = [
+    "Алгебра",
+    "Геометрия",
+    "Информатика",
+    "Физика",
+    "Русский язык",
+    "Литература",
+    "История",
+    "Биология",
+    "Химия",
+    "Английский язык",
+    "Физкультура",
+    "Общешкольное",
+]
+
+PROOF_TYPES = {
+    "text": "Текстовый ответ",
+    "link": "Ссылка на материал",
+    "photo": "Фотография или скан",
+}
+
 CATEGORIES = {
     "homework": "Домашнее задание",
     "club": "Кружок или секция",
     "help": "Помощь однокласснику",
-    "weekly": "Недельный челлендж",
+    "weekly": "Задание недели",
     "olympiad": "Олимпиада или конкурс",
     "event": "Школьное событие",
     "streak": "Серия дней",
@@ -122,11 +144,11 @@ COSMETICS: list[Cosmetic] = [
     Cosmetic(
         "hoodie_cyan",
         "outfit",
-        "Худи «Кибер»",
+        "Спортивная толстовка",
         unlock_level=1,
         price=40,
         swatch="#22d3ee",
-        description="Неоновая молния и карман для наушников.",
+        description="Удобно для уроков и прогулок.",
     ),
     Cosmetic(
         "sweater_gold",
@@ -147,26 +169,26 @@ COSMETICS: list[Cosmetic] = [
     Cosmetic(
         "cloak_violet",
         "outfit",
-        "Мантия знатока",
+        "Клубный блейзер",
         unlock_level=3,
         swatch="#7c3aed",
-        description="Появляется, когда знания уже видно издалека.",
+        description="Для конференций, олимпиад и защиты проектов.",
     ),
     Cosmetic(
         "armor_silver",
         "outfit",
-        "Броня мастера",
+        "Фирменный жилет",
         unlock_level=4,
         swatch="#cbd5e1",
-        description="Прочная, как подготовка к контрольной.",
+        description="Удобная форма для лабораторий и Кванториума.",
     ),
     Cosmetic(
         "suit_cosmic",
         "outfit",
-        "Костюм легенды",
+        "Торжественный костюм",
         unlock_level=5,
         swatch="#f0abfc",
-        description="Звёздная ткань. Для легенд школы.",
+        description="Классический парадный стиль выпускника.",
     ),
     # Accessories
     Cosmetic("none", "accessory", "Без аксессуара", unlock_level=1, swatch="#2a1b3d"),

@@ -3,24 +3,42 @@ import { api } from './api';
 import { AppHeader } from './components/AppHeader';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
-import { Icon } from './components/Icon';
+import { DesktopSidebar } from './components/DesktopSidebar';
 import { LoadingScreen } from './components/LoadingScreen';
+import { SandboxBar } from './components/SandboxBar';
 import { Sheet } from './components/Sheet';
 import { TabBar, type TabItem } from './components/TabBar';
 import { Toast, type ToastData, type ToastTone } from './components/Toast';
+import { EmptyState } from './components/EmptyState';
 import {
   applyPlatformClass,
   applyViewport,
   errorHaptic,
-  shareText,
+  isMaxEnvironment,
   successHaptic,
   tapHaptic,
   waitForBridge,
 } from './max';
+import {
+  activeSandboxClientId,
+  addSandboxUser,
+  enableSandbox,
+  listSandboxUsers,
+  setSandboxDetail,
+  switchSandboxUser,
+  type SandboxUser,
+} from './sandbox';
 import { ChallengesScreen } from './screens/ChallengesScreen';
+import { DirectorScreen } from './screens/DirectorScreen';
 import { HeroScreen } from './screens/HeroScreen';
 import { LeaderboardScreen } from './screens/LeaderboardScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
+import {
+  AdminSchoolsScreen,
+  AudienceChoice,
+  SchoolRegisterScreen,
+  SchoolSetupScreen,
+} from './screens/SchoolSetupScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { TeacherChallengesScreen } from './screens/TeacherChallengesScreen';
 import { TeacherClassScreen } from './screens/TeacherClassScreen';
@@ -31,15 +49,14 @@ import type {
   GameState,
   LevelInfo,
   MutationResponse,
+  NewSchoolPayload,
   ReviewResult,
   SubmitResult,
   TabId,
 } from './types';
 
 type LevelUpData = {
-  name: string;
   level: LevelInfo;
-  xp: number;
   avatar: AvatarConfig;
 };
 
@@ -47,6 +64,7 @@ type Theme = 'light' | 'dark';
 
 const STUDENT_TABS: TabId[] = ['hero', 'challenges', 'leaderboard', 'wardrobe', 'profile'];
 const TEACHER_TABS: TabId[] = ['teacher-class', 'teacher-review', 'teacher-challenges', 'profile'];
+const DIRECTOR_TABS: TabId[] = ['director-overview', 'director-classes', 'director-setup', 'profile'];
 
 function tabFromPath(pathname: string): TabId | null {
   const route = pathname.replace(/\/+$/, '') || '/';
@@ -62,22 +80,33 @@ function tabFromPath(pathname: string): TabId | null {
     '/teacher/review': 'teacher-review',
     '/teacher/challenges': 'teacher-challenges',
     '/teacher/profile': 'profile',
+    '/director': 'director-overview',
+    '/director/overview': 'director-overview',
+    '/director/classes': 'director-classes',
+    '/director/setup': 'director-setup',
+    '/admin/schools': 'admin-schools',
+    '/director/profile': 'profile',
   };
   return routes[route] ?? null;
 }
 
-function pathForTab(tab: TabId, role: 'student' | 'teacher' = 'student'): string {
+function pathForTab(tab: TabId, role: 'student' | 'teacher' | 'director' = 'student'): string {
   const routes: Record<TabId, string> = {
     hero: '/student/overview',
     challenges: '/student/challenges',
     leaderboard: '/student/leaderboard',
     wardrobe: '/student/wardrobe',
-    profile: role === 'teacher' ? '/teacher/profile' : '/student/profile',
+    profile: role === 'director' ? '/director/profile' : role === 'teacher' ? '/teacher/profile' : '/student/profile',
     'teacher-class': '/teacher/class',
     'teacher-review': '/teacher/review',
     'teacher-challenges': '/teacher/challenges',
+    'director-overview': '/director/overview',
+    'director-classes': '/director/classes',
+    'director-setup': '/director/setup',
+    'admin-schools': '/admin/schools',
+    'director-reports': '/director/reports',
   };
-  return routes[tab];
+  return routes[tab] || '/';
 }
 
 export default function App() {
@@ -86,21 +115,26 @@ export default function App() {
       const saved = localStorage.getItem('school-hero:theme');
       if (saved === 'light' || saved === 'dark') return saved;
     } catch {
-      // Use the system preference when storage is unavailable.
+      // System default
     }
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
+
   const [state, setState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [bootError, setBootError] = useState('');
+  const [outsideMax, setOutsideMax] = useState(false);
   const [tab, setTab] = useState<TabId>(() => tabFromPath(window.location.pathname) ?? 'hero');
   const [toast, setToast] = useState<ToastData | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [challengeId, setChallengeId] = useState<number | null>(null);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
+  const [audience, setAudience] = useState<'student' | 'school' | null>(null);
+  const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
   const lastTeacherTab = useRef<TabId>('teacher-class');
+  const lastDirectorTab = useRef<TabId>('director-overview');
   const toastCounter = useRef(0);
 
   const showToast = useCallback(
@@ -117,17 +151,27 @@ export default function App() {
   const load = useCallback(async () => {
     setLoading(true);
     setBootError('');
+    setOutsideMax(false);
     try {
       await waitForBridge();
       applyPlatformClass();
       await applyViewport();
+      // В prod вход возможен только изнутри MAX: без подписи запросы не делаем.
+      const health = await api.health().catch(() => null);
+      if (health?.mode === 'sandbox') {
+        enableSandbox();
+        setSandbox({ users: listSandboxUsers(), active: activeSandboxClientId() ?? '' });
+      } else if (health?.mode === 'prod' && !isMaxEnvironment()) {
+        setOutsideMax(true);
+        return;
+      }
       const data = await api.getState();
       setState(data);
     } catch (error) {
       setBootError(
         error instanceof Error
           ? error.message
-          : 'Не получилось загрузить героя. Проверь соединение.',
+          : 'Не удалось загрузить приложение. Проверьте соединение.',
       );
     } finally {
       setLoading(false);
@@ -139,7 +183,7 @@ export default function App() {
     try {
       localStorage.setItem('school-hero:theme', theme);
     } catch {
-      // The current DOM theme remains usable in restricted webviews.
+      // Fallback
     }
   }, [theme]);
 
@@ -157,14 +201,55 @@ export default function App() {
 
   useEffect(() => {
     if (!state) return;
-    const isTeacher = state.viewer.role === 'teacher';
-    const allowed = isTeacher ? TEACHER_TABS : STUDENT_TABS;
+    const role = state.viewer.role;
+    const base = role === 'director' ? DIRECTOR_TABS : role === 'teacher' ? TEACHER_TABS : STUDENT_TABS;
+    const allowed: TabId[] = state.platform_admin ? [...base, 'admin-schools'] : base;
     if (!tabFromPath(window.location.pathname) || !allowed.includes(tab)) {
-      const next = isTeacher ? lastTeacherTab.current : lastStudentTab.current;
+      const next = role === 'director' ? lastDirectorTab.current : role === 'teacher' ? lastTeacherTab.current : lastStudentTab.current;
       setTab(next);
-      window.history.replaceState({}, '', pathForTab(next, isTeacher ? 'teacher' : 'student'));
+      window.history.replaceState({}, '', pathForTab(next, role));
     }
   }, [state, tab]);
+
+  // Подпись тестового пользователя в списке песочницы: имя и роль после регистрации.
+  useEffect(() => {
+    if (!state || state.mode !== 'sandbox') return;
+    const active = activeSandboxClientId();
+    if (!active) return;
+    const roleLabel = { student: 'ученик', teacher: 'педагог', director: 'директор' }[state.viewer.role];
+    const registered = state.viewer.onboarded || state.viewer.role !== 'student';
+    const detail = registered ? `${state.viewer.first_name}, ${roleLabel}` : '';
+    if (setSandboxDetail(active, detail)) {
+      setSandbox({ users: listSandboxUsers(), active });
+    }
+  }, [state]);
+
+  // Повышение ранга видит только сам ученик у себя.
+  useEffect(() => {
+    if (!state || state.viewer.role !== 'student' || !state.viewer.onboarded) return;
+    const key = `school-hero:level:${state.viewer.id}`;
+    const current = state.viewer.level.level;
+    let previous: number | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) {
+        const parsed = Number.parseInt(raw, 10);
+        previous = Number.isNaN(parsed) ? null : parsed;
+      }
+    } catch {
+      // Storage unavailable: nothing to compare with.
+    }
+    if (previous !== current) {
+      try {
+        localStorage.setItem(key, String(current));
+      } catch {
+        // Ignore.
+      }
+    }
+    if (previous !== null && current > previous) {
+      setLevelUp({ level: state.viewer.level, avatar: state.viewer.avatar });
+    }
+  }, [state]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -176,15 +261,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.title = state?.viewer.role === 'teacher' ? 'Кабинет педагога · Школьный герой' : 'Школьный герой';
+    const role = state?.viewer.role;
+    document.title =
+      role === 'director'
+        ? 'Администрация школы · Школьный герой'
+        : role === 'teacher'
+        ? 'Кабинет педагога · Школьный герой'
+        : 'Школьный герой';
   }, [state?.viewer.role]);
 
   const navigate = useCallback(
     (next: TabId) => {
-      if (state?.viewer.role === 'teacher') lastTeacherTab.current = next;
+      const role = state?.viewer.role ?? 'student';
+      if (role === 'director') lastDirectorTab.current = next;
+      else if (role === 'teacher') lastTeacherTab.current = next;
       else lastStudentTab.current = next;
+
       setTab(next);
-      window.history.pushState({}, '', pathForTab(next, state?.viewer.role ?? 'student'));
+      window.history.pushState({}, '', pathForTab(next, role));
       setChallengeId(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       tapHaptic();
@@ -203,7 +297,7 @@ export default function App() {
       return response;
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : 'Что-то пошло не так. Попробуй ещё раз.',
+        error instanceof Error ? error.message : 'Что-то пошло не так. Попробуйте ещё раз.',
         'error',
       );
       return null;
@@ -212,12 +306,12 @@ export default function App() {
     }
   }
 
-  const handleSubmit = async (id: number, proof: string): Promise<boolean> => {
-    const response = await mutate(`submit:${id}`, () => api.submit(id, proof));
+  const handleSubmit = async (id: number, proof: string, proofUrl?: string): Promise<boolean> => {
+    const response = await mutate(`submit:${id}`, () => api.submit(id, proof, proofUrl));
     if (!response) return false;
     const result = response.result as SubmitResult | undefined;
     showToast(
-      result ? `«${result.challenge_title}» отправлено педагогу` : 'Работа отправлена педагогу',
+      result ? `«${result.challenge_title}» отправлено педагогу` : 'Работа отправлена на проверку',
       'success',
       'send',
     );
@@ -227,19 +321,18 @@ export default function App() {
   const handleEquip = async (key: string, itemId: string): Promise<boolean> => {
     const response = await mutate(`equip:${itemId}`, () => api.equip(key, itemId));
     if (!response) return false;
-    showToast('Образ обновлён — герой примеряет обновку', 'success', 'shirt');
+    showToast('Образ сохранён', 'success', 'shirt');
     return true;
   };
 
   const handleBuy = async (itemId: string): Promise<boolean> => {
     const response = await mutate(`buy:${itemId}`, () => api.buy(itemId));
     if (!response) return false;
-    showToast('Покупка в коллекции. Теперь можно надеть!', 'success', 'gift');
+    showToast('Предмет куплен', 'success', 'gift');
     return true;
   };
 
   const handleApprove = async (completionId: number): Promise<boolean> => {
-    const pendingItem = state?.teacher?.pending.find((item) => item.id === completionId);
     const response = await mutate(`review:${completionId}`, () =>
       api.review(completionId, 'approve'),
     );
@@ -247,15 +340,23 @@ export default function App() {
     const result = response.result as ReviewResult | undefined;
     if (result) {
       showToast(`${result.student_name}: +${result.xp_awarded} XP`, 'success', 'spark');
-      if (result.level_up && result.student_level) {
-        setLevelUp({
-          name: result.student_name,
-          level: result.student_level,
-          xp: result.xp_awarded,
-          avatar: pendingItem?.avatar ?? response.state.viewer.avatar,
-        });
-      }
     }
+    return true;
+  };
+
+  const handleBatchApprove = async (completionIds: number[]): Promise<boolean> => {
+    const response = await mutate('batch-review', () => api.batchReview(completionIds, 'approve'));
+    if (!response) return false;
+    showToast(`Принято работ: ${completionIds.length}`, 'success', 'check');
+    return true;
+  };
+
+  const handleBatchReject = async (completionIds: number[], reason: string): Promise<boolean> => {
+    const response = await mutate('batch-review', () =>
+      api.batchReview(completionIds, 'reject', reason),
+    );
+    if (!response) return false;
+    showToast(`Возвращено на доработку: ${completionIds.length}`, 'info', 'edit');
     return true;
   };
 
@@ -264,7 +365,7 @@ export default function App() {
       api.review(completionId, 'reject', reason),
     );
     if (!response) return false;
-    showToast('Работа отклонена. Ученик увидит причину и сможет исправить.', 'info', 'edit');
+    showToast('Работа возвращена на доработку', 'info', 'edit');
     return true;
   };
 
@@ -275,35 +376,54 @@ export default function App() {
     xp: number;
     kind: string;
     deadline: string;
+    subject?: string;
+    proof_type?: 'text' | 'link' | 'photo';
   }): Promise<boolean> => {
     const response = await mutate('create', () => api.createChallenge(payload));
     if (!response) return false;
-    showToast(`Задание опубликовано для ${response.state.viewer.class_name}`, 'success', 'flag');
+    showToast('Задание опубликовано', 'success', 'flag');
+    return true;
+  };
+
+  const handleRewardStudent = async (
+    studentId: number,
+    amount = 50,
+    reason = 'Активность на уроке',
+  ): Promise<boolean> => {
+    const response = await mutate(`reward:${studentId}`, () =>
+      api.rewardStudent(studentId, amount, reason),
+    );
+    if (!response) return false;
+    showToast(`Начислено: +${amount} XP`, 'success', 'spark');
     return true;
   };
 
   const handleArchive = async (id: number): Promise<boolean> => {
     const response = await mutate(`archive:${id}`, () => api.archiveChallenge(id));
     if (!response) return false;
-    showToast('Задание отправлено в архив', 'info', 'archive');
+    showToast('Задание перемещено в архив', 'info', 'archive');
     return true;
   };
 
-  const handleRole = async (role: 'student' | 'teacher'): Promise<boolean> => {
+  const handleRole = async (role: 'student' | 'teacher' | 'director'): Promise<boolean> => {
     const response = await mutate('role', () => api.setRole(role));
     if (!response) return false;
-    const nextTab: TabId = role === 'teacher' ? 'teacher-class' : 'hero';
-    if (role === 'teacher') lastTeacherTab.current = nextTab;
+    const nextTab: TabId = role === 'director' ? 'director-overview' : role === 'teacher' ? 'teacher-class' : 'hero';
+    if (role === 'director') lastDirectorTab.current = nextTab;
+    else if (role === 'teacher') lastTeacherTab.current = nextTab;
     else lastStudentTab.current = nextTab;
+
     setTab(nextTab);
     window.history.pushState({}, '', pathForTab(nextTab, role));
     setChallengeId(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    showToast(
-      role === 'teacher' ? 'Кабинет педагога открыт' : 'Ты снова в образе ученика',
-      'success',
-      role === 'teacher' ? 'shield' : 'user',
-    );
+
+    const labels = {
+      director: 'Роль: директор',
+      teacher: 'Роль: педагог',
+      student: 'Роль: ученик',
+    };
+    showToast(labels[role], 'info', 'shield');
     return true;
   };
 
@@ -313,25 +433,28 @@ export default function App() {
     lastStudentTab.current = 'hero';
     setTab('hero');
     window.history.pushState({}, '', pathForTab('hero'));
-    showToast('Демо-профиль восстановлен: 420 XP и заявка на проверке', 'success', 'refresh');
+    showToast('Демо-данные сброшены', 'info', 'refresh');
     return true;
   };
 
   const handleOnboarding = async (
     firstName: string,
     avatar: Record<string, string>,
+    lastName = '',
+    classId?: number,
+    inviteCode?: string,
   ): Promise<boolean> => {
     setBusy('onboarding');
     try {
-      const response = await api.onboarding(firstName, avatar);
+      const response = await api.onboarding(firstName, avatar, lastName, classId, inviteCode);
       setState(response.state);
       setTab('hero');
       window.history.replaceState({}, '', pathForTab('hero'));
-      showToast(`Добро пожаловать в игру, ${firstName}!`, 'success', 'sparkles');
+      showToast('Профиль создан', 'success', 'check');
       return true;
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : 'Не получилось создать героя.',
+        error instanceof Error ? error.message : 'Не удалось создать профиль.',
         'error',
       );
       return false;
@@ -340,60 +463,207 @@ export default function App() {
     }
   };
 
-  const handleShare = async () => {
-    if (!state) return;
-    const { viewer } = state;
-    const text = `Я — ${viewer.name}, ${viewer.level.title} в «Школьном герое». ${viewer.xp} XP, ${viewer.streak} дней серии. А ты сможешь прокачать героя лучше?`;
-    const result = await shareText(text);
-    if (result === 'clipboard') {
-      showToast('Текст скопирован — отправь другу в MAX', 'info', 'share');
-    } else if (result === 'failed') {
-      showToast('Не удалось поделиться. Попробуй ещё раз.', 'error', 'alert');
-    } else if (result === 'max' || result === 'native') {
-      showToast('Открыто окно отправки', 'info', 'share');
+  const switchSandbox = (change: () => void) => {
+    change();
+    lastStudentTab.current = 'hero';
+    lastTeacherTab.current = 'teacher-class';
+    lastDirectorTab.current = 'director-overview';
+    setAudience(null);
+    setChallengeId(null);
+    setLevelUp(null);
+    setTab('hero');
+    window.history.replaceState({}, '', '/');
+    setSandbox({ users: listSandboxUsers(), active: activeSandboxClientId() ?? '' });
+    void load();
+  };
+
+  const goToRoleHome = (role: 'student' | 'teacher' | 'director', next?: TabId) => {
+    const target: TabId =
+      next ?? (role === 'director' ? 'director-overview' : role === 'teacher' ? 'teacher-class' : 'hero');
+    if (role === 'director') lastDirectorTab.current = target;
+    else if (role === 'teacher') lastTeacherTab.current = target;
+    else lastStudentTab.current = target;
+    setTab(target);
+    window.history.replaceState({}, '', pathForTab(target, role));
+    window.scrollTo({ top: 0 });
+  };
+
+  const handleCreateSchool = async (payload: NewSchoolPayload): Promise<boolean> => {
+    const response = await mutate('school-create', () => api.createSchool(payload));
+    if (!response) return false;
+    setAudience(null);
+    goToRoleHome('director', 'director-setup');
+    showToast('Школа создана', 'success', 'check');
+    return true;
+  };
+
+  /** Возвращает текст ошибки или null при успехе. */
+  const handleJoinTeacher = async (code: string): Promise<string | null> => {
+    setBusy('join');
+    try {
+      const response = await api.joinSchool(code);
+      setState(response.state);
+      setAudience(null);
+      goToRoleHome(response.state.viewer.role);
+      showToast('Вы подключены к классу', 'success', 'check');
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Не удалось проверить код';
+    } finally {
+      setBusy(null);
     }
+  };
+
+  const handleJoinClass = async (classId?: number, inviteCode?: string): Promise<boolean> => {
+    setBusy('join');
+    try {
+      const response = await api.joinSchool(inviteCode, classId);
+      setState(response.state);
+      setAudience(null);
+      goToRoleHome(response.state.viewer.role);
+      showToast('Класс выбран', 'success', 'check');
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Не удалось выбрать класс', 'error');
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleAddClass = async (schoolId: number, name: string, goal: number): Promise<boolean> => {
+    const response = await mutate('school-class', () => api.addClass(schoolId, name, goal));
+    if (!response) return false;
+    showToast(`Класс ${name} добавлен`, 'success', 'check');
+    return true;
+  };
+
+  const handleDeleteClass = async (classId: number): Promise<boolean> => {
+    const response = await mutate('school-class', () => api.deleteClass(classId));
+    if (!response) return false;
+    showToast('Класс удалён', 'info', 'archive');
+    return true;
+  };
+
+  const handleResetCode = async (classId: number, kind: 'student' | 'teacher'): Promise<boolean> => {
+    const response = await mutate('school-code', () => api.resetCode(classId, kind));
+    if (!response) return false;
+    showToast('Новый код выпущен', 'info', 'refresh');
+    return true;
+  };
+
+  const handleSelectSchool = async (schoolId: number): Promise<boolean> =>
+    Boolean(await mutate('school-select', () => api.selectSchool(schoolId)));
+
+  const handleSchoolStatus = async (
+    schoolId: number,
+    status: 'active' | 'rejected',
+  ): Promise<boolean> => {
+    const response = await mutate('school-status', () => api.setSchoolStatus(schoolId, status));
+    if (!response) return false;
+    showToast(status === 'active' ? 'Школа подтверждена' : 'Заявка отклонена', 'info', 'check');
+    return true;
   };
 
   if (loading) {
     return (
-      <div className="app app--loading">
-        <LoadingScreen label="Собираем твоего героя" />
+      <div className="app">
+        <div className="gate">
+          <LoadingScreen label="Загрузка…" />
+        </div>
+      </div>
+    );
+  }
+
+  if (outsideMax) {
+    return (
+      <div className="app">
+        <div className="gate">
+          <div className="gate__box">
+            <EmptyState
+              icon="max"
+              title="Откройте приложение внутри MAX"
+              text="Сервис работает только как мини-приложение в мессенджере MAX. Откройте его из чата или каталога приложений."
+            />
+          </div>
+        </div>
       </div>
     );
   }
 
   if (bootError || !state) {
     return (
-      <div className="app app--loading">
-        <LoadingScreen
-          error={bootError || 'Не удалось загрузить приложение.'}
-          onRetry={() => void load()}
-        />
-      </div>
-    );
-  }
-
-  if (!state.viewer.onboarded) {
-    return (
-      <div className="app app--onboarding">
-        <div className="shell shell--onboarding">
-          <OnboardingScreen state={state} onComplete={handleOnboarding} />
+      <div className="app">
+        <div className="gate">
+          <LoadingScreen
+            error={bootError || 'Не удалось загрузить приложение.'}
+            onRetry={() => void load()}
+          />
         </div>
       </div>
     );
   }
 
-  const isTeacher = state.viewer.role === 'teacher';
+  const sandboxBar =
+    sandbox && state.mode === 'sandbox' ? (
+      <SandboxBar
+        users={sandbox.users}
+        active={sandbox.active}
+        onSwitch={(id) => switchSandbox(() => switchSandboxUser(id))}
+        onNew={() => switchSandbox(() => addSandboxUser())}
+      />
+    ) : null;
+
+  // Ученик без профиля или без класса проходит регистрацию. В демо класс есть всегда.
+  const needsRegistration =
+    state.viewer.role === 'student' && (!state.viewer.onboarded || !state.viewer.class_id);
+  if (needsRegistration) {
+    const chosen = state.mode === 'demo' ? 'student' : audience;
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          {chosen === 'school' ? (
+            <SchoolRegisterScreen
+              busy={busy !== null}
+              onBack={() => setAudience(null)}
+              onCreate={handleCreateSchool}
+              onJoinTeacher={handleJoinTeacher}
+            />
+          ) : chosen === 'student' ? (
+            <OnboardingScreen
+              state={state}
+              onComplete={handleOnboarding}
+              joinOnly={state.viewer.onboarded}
+              onJoin={handleJoinClass}
+              onBack={state.mode === 'demo' ? undefined : () => setAudience(null)}
+            />
+          ) : (
+            <AudienceChoice
+              onStudent={() => setAudience('student')}
+              onSchool={() => setAudience('school')}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const role = state.viewer.role;
+  const isTeacher = role === 'teacher';
+  const isDirector = role === 'director';
   const teacher = state.teacher;
+  const director = state.director;
   const selectedChallenge = state.challenges.find((item) => item.id === challengeId) ?? null;
 
   const studentTabs: TabItem[] = [
-    { id: 'hero', label: 'Герой', icon: 'home' },
+    { id: 'hero', label: 'Мой трек', icon: 'home' },
     { id: 'challenges', label: 'Задания', icon: 'list' },
     { id: 'leaderboard', label: 'Рейтинг', icon: 'trophy' },
     { id: 'wardrobe', label: 'Стиль', icon: 'shirt' },
     { id: 'profile', label: 'Профиль', icon: 'user' },
   ];
+
   const teacherTabs: TabItem[] = [
     { id: 'teacher-class', label: 'Класс', icon: 'users' },
     {
@@ -406,28 +676,95 @@ export default function App() {
     { id: 'profile', label: 'Профиль', icon: 'user' },
   ];
 
+  const directorTabs: TabItem[] = [
+    { id: 'director-overview', label: 'Школа', icon: 'shield' },
+    { id: 'director-classes', label: 'Классы', icon: 'users' },
+    { id: 'director-setup', label: 'Коды', icon: 'settings' },
+    { id: 'profile', label: 'Профиль', icon: 'user' },
+  ];
+
+  const adminTab: TabItem = {
+    id: 'admin-schools',
+    label: 'Заявки',
+    icon: 'check',
+    badge: state.platform_admin?.pending.length ?? 0,
+  };
+
   const busyItem = busy?.startsWith('equip:')
     ? busy.slice(6)
     : busy?.startsWith('buy:')
-      ? busy.slice(4)
-      : null;
+    ? busy.slice(4)
+    : null;
+
   const reviewBusyId = busy?.startsWith('review:')
     ? Number.parseInt(busy.slice(7), 10)
     : null;
 
+  const roleTabs = isDirector ? directorTabs : isTeacher ? teacherTabs : studentTabs;
+  const currentTabs = state.platform_admin ? [...roleTabs, adminTab] : roleTabs;
+
+  const isDemo = state.mode === 'demo';
+  const roleOptions: { id: 'student' | 'teacher' | 'director'; label: string }[] = [
+    { id: 'student', label: 'Ученик' },
+    { id: 'teacher', label: 'Педагог' },
+    { id: 'director', label: 'Директор' },
+  ];
+
   return (
     <div className="app">
-      <div className="shell shell--dashboard">
-        <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} />
+      <DesktopSidebar
+        tabs={currentTabs}
+        active={tab}
+        onChange={navigate}
+        viewer={state.viewer}
+        theme={theme}
+        onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onProfile={() => navigate('profile')}
+      />
+
+      <div className="shell">
+        <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} demo={isDemo} />
+
+        <header className="desk-head">
+          <div className="desk-head__crumbs">
+            <span>
+              {isDirector ? 'Администрация' : isTeacher ? 'Педагог' : 'Ученик'}
+            </span>
+            <span aria-hidden="true">/</span>
+            <strong>{currentTabs.find((t) => t.id === tab)?.label || 'Обзор'}</strong>
+          </div>
+          <div className="desk-head__meta">
+            {isDemo ? <span className="badge-demo">Демо</span> : null}
+            {state.viewer.school_name ? <span>{state.viewer.school_name}</span> : null}
+          </div>
+        </header>
+
+        {sandboxBar}
+
+        {isDemo ? (
+          <div className="demo-bar" role="group" aria-label="Демо: выбор роли">
+            <span className="demo-bar__label">Демо</span>
+            <div className="demo-bar__roles">
+              {roleOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-pressed={role === option.id}
+                  onClick={() => void handleRole(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="demo-bar__reset" onClick={() => void handleReset()}>
+              Сбросить
+            </button>
+          </div>
+        ) : null}
 
         <main className="screen-wrap" key={tab}>
           {tab === 'hero' ? (
-            <HeroScreen
-              state={state}
-              onOpenChallenge={setChallengeId}
-              onNavigate={navigate}
-              onShare={() => void handleShare()}
-            />
+            <HeroScreen state={state} onOpenChallenge={setChallengeId} onNavigate={navigate} />
           ) : null}
 
           {tab === 'challenges' ? (
@@ -453,9 +790,6 @@ export default function App() {
           {tab === 'profile' ? (
             <ProfileScreen
               state={state}
-              onSwitchRole={handleRole}
-              onResetDemo={handleReset}
-              onShare={() => void handleShare()}
               onNavigate={navigate}
               theme={theme}
               onThemeChange={setTheme}
@@ -466,6 +800,7 @@ export default function App() {
             <TeacherClassScreen
               state={state}
               onReview={() => navigate('teacher-review')}
+              onRewardStudent={handleRewardStudent}
             />
           ) : null}
 
@@ -475,6 +810,8 @@ export default function App() {
               busyId={reviewBusyId}
               onApprove={handleApprove}
               onReject={handleReject}
+              onBatchApprove={handleBatchApprove}
+              onBatchReject={handleBatchReject}
             />
           ) : null}
 
@@ -487,13 +824,55 @@ export default function App() {
               busy={busy === 'create' || Boolean(busy?.startsWith('archive:'))}
             />
           ) : null}
+
+          {(tab === 'director-overview' || tab === 'director-classes') && isDirector && director ? (
+            <DirectorScreen state={state} director={director} />
+          ) : null}
+
+          {tab === 'director-setup' && isDirector && state.school_admin ? (
+            <SchoolSetupScreen
+              state={state}
+              admin={state.school_admin}
+              busy={busy !== null}
+              notify={showToast}
+              onAddClass={handleAddClass}
+              onDeleteClass={handleDeleteClass}
+              onResetCode={handleResetCode}
+              onSelectSchool={handleSelectSchool}
+              onCreateSchool={async (payload) => {
+                const response = await mutate('school-create', () => api.createSchool(payload));
+                if (response) showToast('Школа создана', 'success', 'check');
+                return Boolean(response);
+              }}
+            />
+          ) : null}
+
+          {tab === 'admin-schools' && state.platform_admin ? (
+            <AdminSchoolsScreen
+              data={state.platform_admin}
+              busy={busy !== null}
+              onSetStatus={handleSchoolStatus}
+            />
+          ) : null}
+
+          {isDirector && !director && (tab === 'director-overview' || tab === 'director-classes') ? (
+            <EmptyState
+              icon="shield"
+              title="Школа не подключена"
+              text="Аккаунт не привязан ни к одной школе. Зарегистрируйте школу или обратитесь к администратору платформы."
+            />
+          ) : null}
+
+          {isTeacher && !teacher && tab.startsWith('teacher-') ? (
+            <EmptyState
+              icon="users"
+              title="Класс не назначен"
+              text="Аккаунт педагога не привязан к классу. Введите код педагога, который выдал директор."
+            />
+          ) : null}
         </main>
 
-        <TabBar
-          tabs={isTeacher ? teacherTabs : studentTabs}
-          active={tab}
-          onChange={navigate}
-        />
+        <TabBar tabs={currentTabs} active={tab} onChange={navigate} />
       </div>
 
       <ChallengeSheet
@@ -503,42 +882,14 @@ export default function App() {
         busy={busy === `submit:${challengeId}`}
       />
 
-      <Sheet
-        open={Boolean(levelUp)}
-        onClose={() => setLevelUp(null)}
-        title="Новый уровень!"
-        className="levelup-sheet"
-      >
+      <Sheet open={Boolean(levelUp)} onClose={() => setLevelUp(null)} title="Новый ранг">
         {levelUp ? (
           <div className="levelup">
-            <div className="levelup__burst" aria-hidden="true">
-              <span>✦</span>
-              <span>✦</span>
-              <span>★</span>
-              <span>✦</span>
-              <span>✦</span>
-            </div>
-            <AvatarFrame
-              avatar={levelUp.avatar}
-              size={132}
-              level={levelUp.level.level}
-              animate
-            />
-            <h2>{levelUp.name}</h2>
-            <p className="levelup__sub">
-              Достиг уровня {levelUp.level.level} — <strong>«{levelUp.level.title}»</strong>
-            </p>
-            <div className="levelup__rewards">
-              <span>
-                <Icon name="spark" size={16} filled />+{levelUp.xp} XP
-              </span>
-              <span>
-                <Icon name="gift" size={16} />+25 искр
-              </span>
-            </div>
+            <AvatarFrame avatar={levelUp.avatar} size={96} level={levelUp.level.level} />
+            <h2 className="levelup__name">{levelUp.level.title}</h2>
+            <p className="levelup__text">Ваш ранг повысился до {levelUp.level.level}</p>
             <button type="button" className="btn btn--block" onClick={() => setLevelUp(null)}>
-              Забрать награду
-              <Icon name="check" size={17} />
+              Закрыть
             </button>
           </div>
         ) : null}

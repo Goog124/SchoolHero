@@ -128,7 +128,7 @@ def test_auth_date_is_required():
 
 
 def test_identity_from_signed_user(tmp_path):
-    settings = make_settings(tmp_path, bot_token=BOT_TOKEN)
+    settings = make_settings(tmp_path, app_mode="prod", bot_token=BOT_TOKEN)
 
     identity = identity_from_request(sign_init_data(MAX_USER), None, settings)
 
@@ -142,7 +142,7 @@ def test_identity_from_signed_user(tmp_path):
 
 def test_teacher_id_gets_teacher_hint(tmp_path):
     settings = make_settings(
-        tmp_path, bot_token=BOT_TOKEN, teacher_max_ids={"7001"}
+        tmp_path, app_mode="prod", bot_token=BOT_TOKEN, teacher_max_ids={"7001"}
     )
 
     identity = identity_from_request(sign_init_data(MAX_USER), None, settings)
@@ -151,7 +151,7 @@ def test_teacher_id_gets_teacher_hint(tmp_path):
 
 
 def test_signed_payload_without_user_is_rejected(tmp_path):
-    settings = make_settings(tmp_path, bot_token=BOT_TOKEN)
+    settings = make_settings(tmp_path, app_mode="prod", bot_token=BOT_TOKEN)
     init_data = sign_init_data({"first_name": "Без id"})
 
     with pytest.raises(AuthError, match="нет пользователя"):

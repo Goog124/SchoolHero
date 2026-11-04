@@ -12,6 +12,8 @@ services:
     environment:
       # Fail fast instead of accidentally exposing demo mode on a server.
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Set MAX_BOT_TOKEN in .env}
+      APP_MODE: prod
+      CATALOG_FILE: /data/catalog.json
       HOST: 0.0.0.0
       PORT: "8000"
       STATIC_DIR: /app/static

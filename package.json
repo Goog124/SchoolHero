@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev:frontend": "npm --prefix frontend run dev",
-    "dev:backend": "python app.py"
+    "dev:backend": "python app.py",
+    "sandbox": "python tools/run_sandbox.py"
   }
 }

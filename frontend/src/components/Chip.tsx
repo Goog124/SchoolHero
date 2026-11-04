@@ -18,7 +18,7 @@ export function Chip({
 }: ChipProps) {
   return (
     <span className={`chip chip--${tone} chip--${size} ${className}`.trim()}>
-      {icon ? <Icon name={icon} size={size === 'sm' ? 13 : 15} filled={icon === 'spark'} /> : null}
+      {icon ? <Icon name={icon} size={size === 'sm' ? 12 : 14} filled={icon === 'spark'} /> : null}
       <span>{children}</span>
     </span>
   );

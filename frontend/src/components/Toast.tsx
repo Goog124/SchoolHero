@@ -24,21 +24,21 @@ const TONE_ICON: Record<ToastTone, IconName> = {
 export function Toast({ toast, onClose }: ToastProps) {
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(onClose, 3600);
+    const timer = window.setTimeout(onClose, 4000);
     return () => window.clearTimeout(timer);
   }, [toast, onClose]);
 
   if (!toast) return null;
 
   return (
-    <div className="toast-layer" aria-live="polite">
+    <div className="toast-layer" aria-live={toast.tone === 'error' ? 'assertive' : 'polite'}>
       <div key={toast.id} className={`toast toast--${toast.tone}`} role="status">
         <span className="toast__icon">
-          <Icon name={toast.icon ?? TONE_ICON[toast.tone]} size={17} />
+          <Icon name={TONE_ICON[toast.tone]} size={18} />
         </span>
         <span className="toast__text">{toast.message}</span>
         <button type="button" className="toast__close" onClick={onClose} aria-label="Скрыть">
-          <Icon name="x" size={14} />
+          <Icon name="x" size={16} />
         </button>
       </div>
     </div>

@@ -35,7 +35,6 @@ from .game import (
     week_start_utc_sql,
 )
 from .security import DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
-from .seed import seed_demo_progress
 
 
 class GameError(Exception):
@@ -46,7 +45,7 @@ class GameError(Exception):
 
 
 def effective_role(user: sqlite3.Row, settings: Settings) -> str:
-    if settings.demo_mode and user["preview_role"] in {"student", "teacher"}:
+    if settings.demo_mode and user["preview_role"] in {"student", "teacher", "director"}:
         return str(user["preview_role"])
     return str(user["role"])
 
@@ -55,6 +54,66 @@ def full_name(user: sqlite3.Row) -> str:
     return " ".join(
         part for part in (user["first_name"], user["last_name"]) if part
     ).strip()
+
+
+ROLE_RANK = {"student": 0, "teacher": 1, "director": 2}
+
+
+def _staff_class_id(conn, identity: Identity, settings: Settings) -> int | None:
+    """Class a teacher manages: from the catalog, else the default class."""
+    if identity.max_user_id:
+        row = conn.execute(
+            "SELECT class_id FROM class_staff WHERE max_user_id = ?",
+            (identity.max_user_id,),
+        ).fetchone()
+        if row:
+            return int(row["class_id"])
+    return settings.default_class_id
+
+
+def director_school_ids(conn, viewer: sqlite3.Row, settings: Settings) -> list[int]:
+    """Schools whose data the viewer may see and manage as a director.
+
+    Only explicit assignments count (``school_staff``). The demo has no
+    registration, so its preview director sees the school of the demo class.
+    """
+    ids = [
+        int(r["school_id"])
+        for r in conn.execute(
+            "SELECT school_id FROM school_staff WHERE user_id = ? ORDER BY school_id",
+            (viewer["id"],),
+        ).fetchall()
+    ]
+    if not ids and settings.demo_mode and viewer["class_id"] is not None:
+        row = conn.execute(
+            "SELECT school_id FROM classes WHERE id = ?", (viewer["class_id"],)
+        ).fetchone()
+        if row:
+            ids = [int(row["school_id"])]
+    return ids
+
+
+def active_school_id(conn, viewer: sqlite3.Row, settings: Settings) -> int | None:
+    ids = director_school_ids(conn, viewer, settings)
+    if not ids:
+        return None
+    current = viewer["school_id"]
+    return int(current) if current in ids else ids[0]
+
+
+def can_manage_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int | None) -> bool:
+    """A teacher manages their own class, a director every class of their schools."""
+    if class_id is None:
+        return False
+    role = effective_role(viewer, settings)
+    if role == "teacher":
+        return viewer["class_id"] is not None and int(viewer["class_id"]) == int(class_id)
+    if role == "director":
+        row = conn.execute(
+            "SELECT school_id FROM classes WHERE id = ?", (class_id,)
+        ).fetchone()
+        return bool(row) and int(row["school_id"]) in director_school_ids(conn, viewer, settings)
+    return False
 
 
 def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row:
@@ -78,8 +137,24 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 updates["username"] = identity.username
             if identity.photo_url and identity.photo_url != row["photo_url"]:
                 updates["photo_url"] = identity.photo_url
-            if identity.role_hint == "teacher" and row["role"] != "teacher":
-                updates["role"] = "teacher"
+            # Env lists only ever raise a role: a director created through
+            # registration must not be demoted by TEACHER_MAX_IDS.
+            if ROLE_RANK.get(identity.role_hint, 0) > ROLE_RANK.get(row["role"], 0):
+                updates["role"] = identity.role_hint
+            if identity.role_hint == "teacher" and row["role"] != "director":
+                staff_class = _staff_class_id(conn, identity, settings)
+                in_catalog = bool(
+                    identity.max_user_id
+                    and conn.execute(
+                        "SELECT 1 FROM class_staff WHERE max_user_id = ?",
+                        (identity.max_user_id,),
+                    ).fetchone()
+                )
+                # A class taken with a teacher code is kept unless the catalog
+                # explicitly assigns this person.
+                if staff_class is not None and (in_catalog or row["class_id"] is None):
+                    if staff_class != row["class_id"]:
+                        updates["class_id"] = staff_class
             if updates:
                 assignments = ", ".join(f"{key} = ?" for key in updates)
                 conn.execute(
@@ -115,7 +190,9 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 identity.username,
                 identity.photo_url,
                 role,
-                settings.default_class_id,
+                _staff_class_id(conn, identity, settings)
+                if role == "teacher"
+                else settings.default_class_id,
                 40 if not demo else 0,
                 dump_avatar(DEFAULT_AVATAR if not demo else BASIC_AVATAR),
                 onboarded,
@@ -138,12 +215,30 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
         return row
 
     if demo:
+        from .demo_seed import seed_demo_progress
+
         seed_demo_progress(conn, user_id, settings.default_class_id)
     return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
 def ensure_user(conn, identity: Identity, settings: Settings) -> sqlite3.Row:
-    return _load_or_create(conn, identity, settings)
+    row = _load_or_create(conn, identity, settings)
+    if identity.kind == "max" and identity.role_hint == "director" and settings.default_class_id:
+        # DIRECTOR_MAX_IDS stays a fallback: such a director runs the school of
+        # the default class, like before registration existed.
+        school = conn.execute(
+            "SELECT school_id FROM classes WHERE id = ?", (settings.default_class_id,)
+        ).fetchone()
+        if school and not conn.execute(
+            "SELECT 1 FROM school_staff WHERE user_id = ? AND school_id = ?",
+            (row["id"], school["school_id"]),
+        ).fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO school_staff (user_id, school_id) VALUES (?, ?)",
+                (row["id"], school["school_id"]),
+            )
+            conn.commit()
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -151,39 +246,62 @@ def ensure_user(conn, identity: Identity, settings: Settings) -> sqlite3.Row:
 # ---------------------------------------------------------------------------
 
 
-def _weekly_map(conn) -> dict[int, int]:
+LEADERBOARD_CAP = 100
+
+
+def _weekly_map(conn, *, class_id: int | None = None) -> dict[int, int]:
+    """Weekly XP per user of one class (empty when there is no class)."""
+    if class_id is None:
+        return {}
     rows = conn.execute(
-        "SELECT user_id, SUM(amount) AS xp FROM xp_events "
-        "WHERE created_at >= ? GROUP BY user_id",
-        (week_start_utc_sql(),),
+        "SELECT e.user_id, SUM(e.amount) AS xp FROM xp_events e "
+        "JOIN users u ON u.id = e.user_id "
+        "WHERE u.class_id = ? AND e.created_at >= ? GROUP BY e.user_id",
+        (class_id, week_start_utc_sql()),
     ).fetchall()
     return {int(row["user_id"]): int(row["xp"] or 0) for row in rows}
 
 
-def _all_students(conn) -> list[sqlite3.Row]:
+def _class_students(conn, class_id: int | None) -> list[sqlite3.Row]:
+    if class_id is None:
+        return []
+    return conn.execute(
+        "SELECT * FROM users WHERE role = 'student' AND class_id = ? "
+        "ORDER BY xp DESC, id",
+        (class_id,),
+    ).fetchall()
+
+
+def _class_aggregates(conn, visible_school_id: int | None) -> list[sqlite3.Row]:
+    """XP, weekly XP and head count per class, computed by SQL aggregates.
+
+    Classes of schools that are not active (awaiting approval) are visible
+    only to their own school.
+    """
     return conn.execute(
         """
-        SELECT u.*, c.name AS class_name, c.school_id, c.weekly_goal,
-               s.name AS school_name, s.city
-        FROM users u
-        JOIN classes c ON c.id = u.class_id
-        JOIN schools s ON s.id = c.school_id
-        WHERE u.role = 'student'
-        ORDER BY u.xp DESC, u.id
-        """
-    ).fetchall()
-
-
-def _classes_with_schools(conn) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
         SELECT c.id, c.name, c.school_id, c.weekly_goal,
-               s.name AS school_name, s.city
-        FROM classes c JOIN schools s ON s.id = c.school_id
+               s.name AS school_name, s.city,
+               COALESCE(a.xp, 0) AS xp, COALESCE(a.members, 0) AS members,
+               COALESCE(w.weekly, 0) AS weekly
+        FROM classes c
+        JOIN schools s ON s.id = c.school_id
+        LEFT JOIN (
+            SELECT class_id, SUM(xp) AS xp, COUNT(*) AS members
+            FROM users WHERE role = 'student' AND class_id IS NOT NULL
+            GROUP BY class_id
+        ) a ON a.class_id = c.id
+        LEFT JOIN (
+            SELECT u.class_id, SUM(e.amount) AS weekly
+            FROM xp_events e JOIN users u ON u.id = e.user_id
+            WHERE u.role = 'student' AND u.class_id IS NOT NULL AND e.created_at >= ?
+            GROUP BY u.class_id
+        ) w ON w.class_id = c.id
+        WHERE s.status = 'active' OR s.id = ?
         ORDER BY c.id
-        """
+        """,
+        (week_start_utc_sql(), visible_school_id if visible_school_id is not None else -1),
     ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def _student_public(row: sqlite3.Row, week_xp: int, viewer_id: int) -> dict[str, Any]:
@@ -206,31 +324,27 @@ def _student_public(row: sqlite3.Row, week_xp: int, viewer_id: int) -> dict[str,
 def _build_leaderboards(
     conn,
     viewer: sqlite3.Row,
-    students: list[sqlite3.Row],
+    class_students: list[sqlite3.Row],
     week: dict[int, int],
-    viewer_school_id: int,
+    viewer_school_id: int | None,
 ) -> tuple[dict[str, Any], int, int, int]:
-    classes = _classes_with_schools(conn)
-    students_by_class: dict[int, list[sqlite3.Row]] = {}
-    for student in students:
-        students_by_class.setdefault(int(student["class_id"]), []).append(student)
+    viewer_class_id = viewer["class_id"]
+    classes = _class_aggregates(conn, viewer_school_id)
 
     class_entries: list[dict[str, Any]] = []
     for item in classes:
-        members = students_by_class.get(int(item["id"]), [])
-        total_xp = sum(int(member["xp"]) for member in members)
-        week_xp = sum(week.get(int(member["id"]), 0) for member in members)
         class_entries.append(
             {
                 "id": int(item["id"]),
                 "name": item["name"],
                 "school": item["school_name"],
                 "city": item["city"],
-                "xp": total_xp,
-                "weekly_xp": week_xp,
+                "xp": int(item["xp"]),
+                "weekly_xp": int(item["weekly"]),
                 "goal": int(item["weekly_goal"]),
-                "members": len(members),
-                "is_viewer_class": int(item["id"]) == int(viewer["class_id"]),
+                "members": int(item["members"]),
+                "is_viewer_class": viewer_class_id is not None
+                and int(item["id"]) == int(viewer_class_id),
             }
         )
     class_entries.sort(key=lambda entry: (-entry["xp"], entry["id"]))
@@ -253,16 +367,14 @@ def _build_leaderboards(
                 "weekly_xp": 0,
                 "classes": 0,
                 "members": 0,
-                "is_viewer_school": False,
+                "is_viewer_school": viewer_school_id is not None
+                and school_id == viewer_school_id,
             },
         )
-        members = students_by_class.get(int(item["id"]), [])
-        bucket["xp"] += sum(int(member["xp"]) for member in members)
-        bucket["weekly_xp"] += sum(week.get(int(member["id"]), 0) for member in members)
+        bucket["xp"] += int(item["xp"])
+        bucket["weekly_xp"] += int(item["weekly"])
         bucket["classes"] += 1
-        bucket["members"] += len(members)
-        if int(item["school_id"]) == viewer_school_id:
-            bucket["is_viewer_school"] = True
+        bucket["members"] += int(item["members"])
     school_entries = sorted(
         schools.values(), key=lambda entry: (-entry["xp"], entry["name"])
     )
@@ -272,46 +384,40 @@ def _build_leaderboards(
     for entry in school_entries:
         entry["progress"] = round(entry["xp"] / school_leader * 100, 1) if school_leader else 0
 
-    class_members = sorted(
-        students_by_class.get(int(viewer["class_id"]), []),
-        key=lambda member: (-int(member["xp"]), int(member["id"])),
-    )
     personal = []
-    for rank, member in enumerate(class_members, start=1):
+    for rank, member in enumerate(class_students, start=1):
         entry = _student_public(member, week.get(int(member["id"]), 0), int(viewer["id"]))
         entry["rank"] = rank
         personal.append(entry)
 
     viewer_class_rank = next(
-        (
-            entry["rank"]
-            for entry in class_entries
-            if int(entry["id"]) == int(viewer["class_id"])
-        ),
-        0,
+        (entry["rank"] for entry in class_entries if entry["is_viewer_class"]), 0
     )
     viewer_school_rank = next(
-        (
-            entry["rank"]
-            for entry in school_entries
-            if int(entry["id"]) == viewer_school_id
-        ),
-        0,
+        (entry["rank"] for entry in school_entries if entry["is_viewer_school"]), 0
     )
     viewer_personal_rank = next(
         (entry["rank"] for entry in personal if entry["is_viewer"]),
         len(personal) or 1,
     )
 
+    # Ranks above are global; only the response is capped, so the table stays
+    # small however many schools are registered.
     leaderboard = {
         "students": personal,
-        "classes": class_entries,
-        "schools": school_entries,
+        "classes": [
+            e for e in class_entries if e["rank"] <= LEADERBOARD_CAP or e["is_viewer_class"]
+        ],
+        "schools": [
+            e for e in school_entries if e["rank"] <= LEADERBOARD_CAP or e["is_viewer_school"]
+        ],
     }
     return leaderboard, viewer_class_rank, viewer_school_rank, viewer_personal_rank
 
 
 def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
+    if viewer["class_id"] is None:
+        return []
     rows = conn.execute(
         """
         SELECT c.*, u.first_name AS author_first, u.last_name AS author_last
@@ -330,20 +436,22 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
     }
     participant_rows = conn.execute(
         """
-        SELECT challenge_id, COUNT(*) AS n
-        FROM completions
-        WHERE status IN ('pending', 'approved')
-        GROUP BY challenge_id
-        """
+        SELECT cp.challenge_id, COUNT(*) AS n
+        FROM completions cp JOIN challenges ch ON ch.id = cp.challenge_id
+        WHERE ch.class_id = ? AND cp.status IN ('pending', 'approved')
+        GROUP BY cp.challenge_id
+        """,
+        (viewer["class_id"],),
     ).fetchall()
     participants = {int(row["challenge_id"]): int(row["n"]) for row in participant_rows}
     pending_rows = conn.execute(
         """
-        SELECT challenge_id, COUNT(*) AS n
-        FROM completions
-        WHERE status = 'pending'
-        GROUP BY challenge_id
-        """
+        SELECT cp.challenge_id, COUNT(*) AS n
+        FROM completions cp JOIN challenges ch ON ch.id = cp.challenge_id
+        WHERE ch.class_id = ? AND cp.status = 'pending'
+        GROUP BY cp.challenge_id
+        """,
+        (viewer["class_id"],),
     ).fetchall()
     pending = {int(row["challenge_id"]): int(row["n"]) for row in pending_rows}
 
@@ -369,6 +477,9 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
                 "deadline": row["deadline"],
                 "status": status,
                 "proof": completion["proof"] if completion else "",
+                "proof_url": completion["proof_url"] if (completion and "proof_url" in completion.keys()) else "",
+                "subject": row["subject"] if "subject" in row.keys() else "Общее",
+                "proof_type": row["proof_type"] if "proof_type" in row.keys() else "text",
                 "submitted_at": iso_utc(completion["created_at"]) if completion else None,
                 "reject_reason": completion["reject_reason"] if completion else "",
                 "participants": participants.get(int(row["id"]), 0),
@@ -448,12 +559,11 @@ def _teacher_data(
     leaderboard: dict[str, Any],
 ) -> dict[str, Any]:
     class_id = int(viewer["class_id"])
-    class_students = [s for s in students if int(s["class_id"]) == class_id]
-    class_students.sort(key=lambda row: -int(row["xp"]))
+    class_students = sorted(students, key=lambda row: -int(row["xp"]))
     pending_rows = conn.execute(
         """
-        SELECT cp.id, cp.proof, cp.created_at, cp.user_id,
-               c.title, c.category, c.xp, c.kind,
+        SELECT cp.id, cp.proof, cp.proof_url, cp.created_at, cp.user_id,
+               c.title, c.category, c.xp, c.kind, c.subject, c.proof_type,
                u.first_name, u.last_name, u.avatar, u.xp AS user_xp, u.id AS student_id
         FROM completions cp
         JOIN challenges c ON c.id = cp.challenge_id
@@ -482,6 +592,9 @@ def _teacher_data(
                 "kind": row["kind"],
                 "xp": int(row["xp"]),
                 "proof": row["proof"],
+                "proof_url": row["proof_url"] or "",
+                "subject": row["subject"] or "Общее",
+                "proof_type": row["proof_type"] or "text",
                 "created_at": iso_utc(row["created_at"]),
                 "is_self": int(row["student_id"]) == int(viewer["id"]),
             }
@@ -501,12 +614,30 @@ def _teacher_data(
         ).fetchall()
     }
 
+    # Fetch all completions for class students to populate history and attention indicators
+    all_completions = conn.execute(
+        """
+        SELECT cp.id, cp.user_id, cp.status, cp.proof, cp.proof_url, cp.created_at, cp.reject_reason,
+               c.title, c.category, c.subject, c.xp
+        FROM completions cp
+        JOIN challenges c ON c.id = cp.challenge_id
+        JOIN users u ON u.id = cp.user_id
+        WHERE u.class_id = ?
+        ORDER BY cp.created_at DESC
+        """,
+        (class_id,),
+    ).fetchall()
+    user_completions: dict[int, list[sqlite3.Row]] = {}
+    for comp in all_completions:
+        uid = int(comp["user_id"])
+        user_completions.setdefault(uid, []).append(comp)
+
     today = today_local()
     student_rows = []
     for rank, student in enumerate(class_students, start=1):
         last_active = student["last_active_date"]
-        at_risk = False
         last_label = "Нет активности"
+        delta = 999
         if last_active:
             try:
                 last_date = date.fromisoformat(last_active)
@@ -517,25 +648,75 @@ def _teacher_data(
                     last_label = "Вчера"
                 else:
                     last_label = f"{delta} дн. назад"
-                at_risk = delta >= 3
             except ValueError:
                 pass
+
+        uid = int(student["id"])
+        student_comps = user_completions.get(uid, [])
+        approved_comps = [c for c in student_comps if c["status"] == "approved"]
+        rejected_comps = [c for c in student_comps if c["status"] == "rejected"]
+
+        # Subject achievements
+        subj_map: dict[str, dict[str, int]] = {}
+        for c in approved_comps:
+            sname = c["subject"] or "Общее"
+            if sname not in subj_map:
+                subj_map[sname] = {"count": 0, "xp": 0}
+            subj_map[sname]["count"] += 1
+            subj_map[sname]["xp"] += int(c["xp"])
+        subject_stats = [
+            {"subject": sname, "count": data["count"], "xp": data["xp"]}
+            for sname, data in subj_map.items()
+        ]
+        subject_stats.sort(key=lambda s: -s["xp"])
+
+        recent_works = [
+            {
+                "id": int(c["id"]),
+                "title": c["title"],
+                "category": c["category"],
+                "subject": c["subject"] or "Общее",
+                "xp": int(c["xp"]),
+                "status": c["status"],
+                "date": iso_utc(c["created_at"]),
+                "proof": c["proof"] or "",
+                "proof_url": c["proof_url"] or "",
+                "reject_reason": c["reject_reason"] or "",
+            }
+            for c in student_comps[:8]
+        ]
+
+        risk_reasons: list[str] = []
+        if delta >= 3:
+            if delta >= 900:
+                risk_reasons.append("Нет активности в системе")
+            else:
+                risk_reasons.append(f"Без активности {delta} дн.")
+        if rejected_comps:
+            risk_reasons.append(f"Отклонено заданий: {len(rejected_comps)} (требуется помощь)")
+
+        at_risk = len(risk_reasons) > 0
         info = level_info(int(student["xp"]))
         student_rows.append(
             {
-                "id": int(student["id"]),
+                "id": uid,
                 "name": full_name(student),
                 "first_name": student["first_name"],
                 "avatar": load_avatar(student["avatar"]),
                 "xp": int(student["xp"]),
-                "weekly_xp": week.get(int(student["id"]), 0),
+                "weekly_xp": week.get(uid, 0),
                 "level": info["level"],
                 "level_title": info["title"],
                 "streak": int(student["streak"] or 0),
-                "pending_count": pending_counts.get(int(student["id"]), 0),
+                "pending_count": pending_counts.get(uid, 0),
+                "approved_count": len(approved_comps),
+                "rejected_count": len(rejected_comps),
+                "risk_reasons": risk_reasons,
+                "recent_works": recent_works,
+                "subject_stats": subject_stats,
                 "last_active": last_label,
                 "at_risk": at_risk,
-                "is_viewer": int(student["id"]) == int(viewer["id"]),
+                "is_viewer": uid == int(viewer["id"]),
                 "rank": rank,
             }
         )
@@ -604,7 +785,11 @@ def _teacher_data(
     for item in challenge_stats:
         item["approved_total"] = approved_map.get(item["id"], 0)
 
+    code_row = conn.execute("SELECT invite_code FROM classes WHERE id = ?", (class_id,)).fetchone()
+    teacher_invite_code = code_row["invite_code"] if code_row and code_row["invite_code"] else ""
+
     return {
+        "invite_code": teacher_invite_code,
         "pending": pending,
         "students": student_rows,
         "stats": {
@@ -622,22 +807,248 @@ def _teacher_data(
     }
 
 
+
+def batch_review_completions(
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    completion_ids: list[int],
+    action: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    if effective_role(viewer, settings) not in {"teacher", "director"}:
+        raise GameError("Массовая проверка доступна только педагогу или администрации", 403)
+    approved_count = 0
+    rejected_count = 0
+    results = []
+    for cid in completion_ids:
+        try:
+            res = review_completion(conn, viewer, settings, cid, action, reason)
+            results.append({"id": cid, "success": True, "result": res})
+            if action == "approve":
+                approved_count += 1
+            else:
+                rejected_count += 1
+        except Exception as e:
+            results.append({"id": cid, "success": False, "error": str(e)})
+    return {
+        "action": action,
+        "approved": approved_count,
+        "rejected": rejected_count,
+        "total": len(completion_ids),
+        "results": results,
+    }
+
+
+def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
+    """Figures for one school, computed with SQL aggregates scoped to it."""
+    class_rows = conn.execute(
+        """
+        SELECT c.id, c.name, c.weekly_goal, s.name AS school_name, s.city,
+               COUNT(u.id) AS members,
+               COALESCE(SUM(u.xp), 0) AS xp,
+               COALESCE(SUM(w.weekly), 0) AS weekly_xp,
+               COALESCE(SUM(CASE WHEN w.weekly > 0 THEN 1 ELSE 0 END), 0) AS active
+        FROM classes c
+        JOIN schools s ON s.id = c.school_id
+        LEFT JOIN users u ON u.class_id = c.id AND u.role = 'student'
+        LEFT JOIN (
+            SELECT e.user_id, SUM(e.amount) AS weekly
+            FROM xp_events e
+            JOIN users uu ON uu.id = e.user_id
+            JOIN classes cc ON cc.id = uu.class_id
+            WHERE cc.school_id = ? AND e.created_at >= ?
+            GROUP BY e.user_id
+        ) w ON w.user_id = u.id
+        WHERE c.school_id = ?
+        GROUP BY c.id
+        """,
+        (school_id, week_start_utc_sql(), school_id),
+    ).fetchall()
+
+    total_students = sum(int(r["members"]) for r in class_rows)
+    active_students_week = sum(int(r["active"]) for r in class_rows)
+    engagement_rate = round(active_students_week / total_students * 100, 1) if total_students else 0
+    total_school_xp = sum(int(r["xp"]) for r in class_rows)
+    total_weekly_xp = sum(int(r["weekly_xp"]) for r in class_rows)
+
+    # Grades aggregation (parallel 5..11)
+    grades_map: dict[str, dict[str, Any]] = {}
+    for c in class_rows:
+        name = c["name"].strip()
+        # Extract leading digit(s) e.g. "8А" -> "8"
+        grade_num = "".join(ch for ch in name if ch.isdigit()) or "Другие"
+        grade_label = f"{grade_num} классы" if grade_num != "Другие" else "Спецгруппы"
+        bucket = grades_map.setdefault(
+            grade_num,
+            {
+                "grade": grade_num,
+                "label": grade_label,
+                "classes_count": 0,
+                "students_count": 0,
+                "total_xp": 0,
+                "weekly_xp": 0,
+                "active_students": 0,
+            },
+        )
+        bucket["classes_count"] += 1
+        bucket["students_count"] += int(c["members"])
+        bucket["total_xp"] += int(c["xp"])
+        bucket["weekly_xp"] += int(c["weekly_xp"])
+        bucket["active_students"] += int(c["active"])
+
+    # Ensure all standard school grades (5..11) exist in the breakdown
+    for g_num in ["5", "6", "7", "8", "9", "10", "11"]:
+        if g_num not in grades_map:
+            grades_map[g_num] = {
+                "grade": g_num,
+                "label": f"{g_num} классы",
+                "classes_count": 0,
+                "students_count": 0,
+                "total_xp": 0,
+                "weekly_xp": 0,
+                "active_students": 0,
+            }
+
+    grades = sorted(grades_map.values(), key=lambda g: int(g["grade"]) if g["grade"].isdigit() else 99)
+    for g in grades:
+        g["engagement"] = round(g["active_students"] / g["students_count"] * 100, 1) if g["students_count"] else 0
+        g["avg_student_xp"] = round(g["weekly_xp"] / g["students_count"]) if g["students_count"] else 0
+
+    # Determine leading parallel
+    active_grades = [g for g in grades if g["students_count"] > 0]
+    leading_parallel = max(
+        active_grades,
+        key=lambda g: (g["engagement"], g["total_xp"]),
+        default=None,
+    )
+    leading_grade_label = leading_parallel["label"] if leading_parallel else "8 классы"
+
+    # Approved tasks of this school grouped by category. The directions follow
+    # the school's educational (upbringing) programme sections; "completed_fop_tasks"
+    # is the total of approved tasks and "social_activity_index" is derived from
+    # the volunteering direction (count + xp // 10).
+    cat_counts = conn.execute(
+        """
+        SELECT c.category, COUNT(cp.id) AS total_approved, SUM(c.xp) as sum_xp
+        FROM completions cp
+        JOIN challenges c ON c.id = cp.challenge_id
+        JOIN users u ON u.id = cp.user_id
+        WHERE cp.status = 'approved' AND u.class_id IN (SELECT id FROM classes WHERE school_id = ?)
+        GROUP BY c.category
+        """,
+        (school_id,),
+    ).fetchall()
+
+    directions = {
+        "study": {"label": "Учебно-исследовательское", "count": 0, "xp": 0},
+        "olympiads": {"label": "Олимпиадное движение", "count": 0, "xp": 0},
+        "patriotic": {"label": "Гражданско-патриотическое", "count": 0, "xp": 0},
+        "sport_creative": {"label": "ЗОЖ, спорт и творчество", "count": 0, "xp": 0},
+        "volunteering": {"label": "Волонтёрство и соцпроекты", "count": 0, "xp": 0},
+    }
+    completed_fop_tasks = 0
+    for row in cat_counts:
+        cat = row["category"]
+        cnt = int(row["total_approved"])
+        xp = int(row["sum_xp"] or 0)
+        completed_fop_tasks += cnt
+        if cat in {"homework", "weekly"}:
+            directions["study"]["count"] += cnt
+            directions["study"]["xp"] += xp
+        elif cat == "olympiad":
+            directions["olympiads"]["count"] += cnt
+            directions["olympiads"]["xp"] += xp
+        elif cat == "event":
+            directions["patriotic"]["count"] += cnt
+            directions["patriotic"]["xp"] += xp
+        elif cat == "club":
+            directions["sport_creative"]["count"] += cnt
+            directions["sport_creative"]["xp"] += xp
+        else:  # help, streak
+            directions["volunteering"]["count"] += cnt
+            directions["volunteering"]["xp"] += xp
+
+    social_activity_index = directions["volunteering"]["count"] + (directions["volunteering"]["xp"] // 10)
+
+    # Per-class table: same shape as the leaderboard ClassEntry; classes without
+    # students get zeros. Ordered by weekly XP, then total XP.
+    viewer_class = viewer["class_id"]
+    ranked_classes = [
+        {
+            "id": int(c["id"]),
+            "name": c["name"],
+            "school": c["school_name"],
+            "city": c["city"],
+            "xp": int(c["xp"]),
+            "weekly_xp": int(c["weekly_xp"]),
+            "goal": int(c["weekly_goal"] or 0),
+            "members": int(c["members"]),
+            "is_viewer_class": viewer_class is not None and int(c["id"]) == int(viewer_class),
+        }
+        for c in class_rows
+    ]
+    ranked_classes.sort(key=lambda c: (-c["weekly_xp"], -c["xp"], c["id"]))
+    for rank, entry in enumerate(ranked_classes, start=1):
+        entry["rank"] = rank
+        entry["progress"] = (
+            round(min(100.0, max(0, entry["weekly_xp"]) / entry["goal"] * 100), 1)
+            if entry["goal"] > 0
+            else 0
+        )
+
+    return {
+        "kpi": {
+            "total_students": total_students,
+            "total_classes": len(class_rows),
+            "active_students_week": active_students_week,
+            "engagement_rate": engagement_rate,
+            "total_school_xp": total_school_xp,
+            "total_weekly_xp": total_weekly_xp,
+            "completed_fop_tasks": completed_fop_tasks,
+            "social_activity_index": social_activity_index,
+            "leading_grade": leading_grade_label,
+        },
+        "grades": grades,
+        "directions": directions,
+        "classes": ranked_classes,
+        "report_generated_at": iso_utc(utc_sql()),
+    }
+
+
 def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]:
+    from .registration import is_platform_admin, platform_admin_data, school_admin_data
+
     viewer = conn.execute("SELECT * FROM users WHERE id = ?", (viewer["id"],)).fetchone()
     role = effective_role(viewer, settings)
-    week = _weekly_map(conn)
-    students = _all_students(conn)
-    class_row = conn.execute(
-        """
-        SELECT c.name, c.weekly_goal, s.name AS school_name, s.city, s.id AS school_id
-        FROM classes c JOIN schools s ON s.id = c.school_id WHERE c.id = ?
-        """,
-        (viewer["class_id"],),
-    ).fetchone()
+    class_id = int(viewer["class_id"]) if viewer["class_id"] is not None else None
+
+    class_row = None
+    if class_id is not None:
+        class_row = conn.execute(
+            """
+            SELECT c.name, c.weekly_goal, c.invite_code, c.teacher_code,
+                   s.name AS school_name, s.city, s.id AS school_id, s.status AS school_status
+            FROM classes c JOIN schools s ON s.id = c.school_id WHERE c.id = ?
+            """,
+            (class_id,),
+        ).fetchone()
+
+    admin_school_id = active_school_id(conn, viewer, settings) if role == "director" else None
+    view_school_id = int(class_row["school_id"]) if class_row else admin_school_id
+    school_row = class_row
+    if school_row is None and view_school_id is not None:
+        school_row = conn.execute(
+            "SELECT name AS school_name, city, status AS school_status FROM schools WHERE id = ?",
+            (view_school_id,),
+        ).fetchone()
+
+    week = _weekly_map(conn, class_id=class_id)
+    class_students = _class_students(conn, class_id)
     leaderboard, class_rank, school_rank, personal_rank = _build_leaderboards(
-        conn, viewer, students, week, int(class_row["school_id"])
+        conn, viewer, class_students, week, view_school_id
     )
-    achievements = achievements_for(conn, viewer, class_rank)
+    achievements = achievements_for(conn, viewer, class_rank or None)
     challenges = _challenge_list(conn, viewer)
     feed = _feed(conn, viewer)
     viewer_week_xp = week.get(int(viewer["id"]), 0)
@@ -651,16 +1062,22 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
     class_entry = next(
         (entry for entry in leaderboard["classes"] if entry["is_viewer_class"]), None
     )
-    class_students = leaderboard["students"]
     top_weekly = max(
-        (item for item in class_students if item["weekly_xp"] > 0),
+        (item for item in leaderboard["students"] if item["weekly_xp"] > 0),
         key=lambda item: item["weekly_xp"],
         default=None,
     )
     teacher = None
-    if role == "teacher":
-        teacher = _teacher_data(conn, viewer, students, week, challenges, leaderboard)
+    director = None
+    school_admin = None
+    if role == "teacher" and class_row is not None:
+        teacher = _teacher_data(conn, viewer, class_students, week, challenges, leaderboard)
+    elif role == "director":
+        if admin_school_id is not None:
+            director = _director_data(conn, viewer, admin_school_id)
+        school_admin = school_admin_data(conn, viewer, settings, admin_school_id)
 
+    weekly_goal = int(class_row["weekly_goal"]) if class_row else 0
     viewer_public = {
         "id": int(viewer["id"]),
         "name": full_name(viewer),
@@ -670,10 +1087,14 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "role": role,
         "is_teacher_preview": settings.demo_mode
         and viewer["preview_role"] == "teacher",
-        "class_id": int(viewer["class_id"]),
-        "class_name": class_row["name"],
-        "school_name": class_row["school_name"],
-        "city": class_row["city"],
+        "class_id": class_id,
+        "class_name": class_row["name"] if class_row else "",
+        "school_id": view_school_id,
+        "school_name": school_row["school_name"] if school_row else "",
+        "school_status": school_row["school_status"] if school_row else "",
+        "city": school_row["city"] if school_row else "",
+        "invite_code": (class_row["invite_code"] or "") if class_row else "",
+        "is_platform_admin": is_platform_admin(viewer, settings),
         "xp": int(viewer["xp"]),
         "level": level,
         "sparks": int(viewer["sparks"]),
@@ -694,23 +1115,19 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "next_level": level["level"] + 1 if level["level"] < 5 else None,
     }
 
+    class_weekly = class_entry["weekly_xp"] if class_entry else 0
     return {
-        "mode": "demo" if settings.demo_mode else "max",
-        "verified": not settings.demo_mode,
+        "mode": settings.app_mode,
+        "verified": not (settings.demo_mode or settings.sandbox_mode),
         "today": today_local().isoformat(),
         "viewer": viewer_public,
         "class_sprint": {
-            "name": class_row["name"],
-            "school": class_row["school_name"],
-            "xp": class_entry["weekly_xp"] if class_entry else 0,
-            "goal": int(class_row["weekly_goal"]),
+            "name": class_row["name"] if class_row else "",
+            "school": class_row["school_name"] if class_row else "",
+            "xp": class_weekly,
+            "goal": weekly_goal,
             "percent": (
-                round(
-                    min(100.0, (class_entry["weekly_xp"] if class_entry else 0) / int(class_row["weekly_goal"]) * 100),
-                    1,
-                )
-                if int(class_row["weekly_goal"])
-                else 0
+                round(min(100.0, class_weekly / weekly_goal * 100), 1) if weekly_goal else 0
             ),
             "rank": class_rank,
             "members": len(class_students),
@@ -731,7 +1148,11 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "achievements": achievements,
         "cosmetics": cosmetics,
         "teacher": teacher,
+        "director": director,
+        "school_admin": school_admin,
+        "platform_admin": platform_admin_data(conn, viewer, settings),
         "demo_teacher_available": settings.demo_mode,
+        "demo_director_available": settings.demo_mode,
     }
 
 
@@ -740,12 +1161,217 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
+
+
+# Cyrillic letters that look like Latin ones: codes are typed on RU keyboards.
+_CODE_LOOKALIKES = str.maketrans(
+    {
+        "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H",
+        "Р": "P", "С": "C", "Т": "T", "Х": "X", "О": "O",
+    }
+)
+
+
+def normalize_invite_code(code: str) -> str:
+    return "".join(code.strip().upper().split()).translate(_CODE_LOOKALIKES)
+
+
+def lookup_class_by_code(conn, code: str) -> dict[str, Any] | None:
+    """Find an active class by student code, else by teacher code.
+
+    ``kind`` tells which one matched. Classes of schools that are not yet
+    approved are not reachable by code.
+    """
+    normalized = normalize_invite_code(code)
+    if not normalized:
+        return None
+    no_dash = normalized.replace("-", "")
+    row = None
+    kind = "student"
+    for kind, column in (("student", "invite_code"), ("teacher", "teacher_code")):
+        row = conn.execute(
+            f"""
+            SELECT c.*, s.name AS school_name, s.city
+            FROM classes c
+            JOIN schools s ON s.id = c.school_id
+            WHERE s.status = 'active'
+              AND (UPPER(c.{column}) = ?
+                   OR UPPER(REPLACE(c.{column}, '-', '')) = ?)
+            LIMIT 1
+            """,
+            (normalized, no_dash),
+        ).fetchone()
+        if row:
+            break
+    if not row:
+        return None
+
+    teacher_name = ""
+    if kind == "student":
+        teacher = conn.execute(
+            "SELECT first_name, last_name FROM users "
+            "WHERE class_id = ? AND role = 'teacher' ORDER BY id LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        teacher_name = (
+            f"{teacher['first_name']} {teacher['last_name']}".strip() if teacher else ""
+        )
+    return {
+        "valid": True,
+        "kind": kind,
+        "class_id": int(row["id"]),
+        "class_name": row["name"],
+        "school_name": row["school_name"],
+        "city": row["city"],
+        "teacher_name": teacher_name,
+        "invite_code": (row["invite_code"] if kind == "student" else row["teacher_code"]) or "",
+    }
+
+
+def _natural_key(name: str) -> tuple[int, str]:
+    digits = "".join(ch for ch in name if ch.isdigit())
+    return (int(digits) if digits else 999, name)
+
+
+def get_school_catalog(
+    conn,
+    city: str = "",
+    query: str = "",
+    limit: int = 500,
+    only_cities: bool = False,
+) -> dict[str, Any]:
+    """Public list of active schools. Invite codes are never included.
+
+    ``city``/``query`` narrow the list on the server so it stays small however
+    many schools exist; ``only_cities`` skips schools and classes entirely.
+    """
+    cities = [
+        row["city"]
+        for row in conn.execute(
+            "SELECT DISTINCT city FROM schools WHERE status = 'active' ORDER BY city"
+        )
+    ]
+    if only_cities:
+        return {"cities": cities, "schools": [], "classes": []}
+    limit = max(1, min(int(limit), 500))
+    schools_rows = conn.execute(
+        "SELECT id, name, city FROM schools WHERE status = 'active' "
+        "AND (? = '' OR city = ?) ORDER BY city, name, id",
+        (city, city),
+    ).fetchall()
+    needle = query.strip().casefold()
+    if needle:
+        schools_rows = [s for s in schools_rows if needle in s["name"].casefold()]
+    schools_rows = schools_rows[:limit]
+    schools = [
+        {"id": int(s["id"]), "name": s["name"], "city": s["city"]} for s in schools_rows
+    ]
+    classes: list[dict[str, Any]] = []
+    if schools:
+        marks = ",".join("?" for _ in schools)
+        classes_rows = conn.execute(
+            f"SELECT id, school_id, name FROM classes WHERE school_id IN ({marks})",
+            [s["id"] for s in schools],
+        ).fetchall()
+        classes = sorted(
+            (
+                {"id": int(c["id"]), "school_id": int(c["school_id"]), "name": c["name"]}
+                for c in classes_rows
+            ),
+            key=lambda c: (c["school_id"], _natural_key(c["name"])),
+        )
+    return {"cities": cities, "schools": schools, "classes": classes}
+
+
+def _class_for_join(conn, class_id: int) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT c.id FROM classes c JOIN schools s ON s.id = c.school_id "
+        "WHERE c.id = ? AND s.status = 'active'",
+        (class_id,),
+    ).fetchone()
+    if row is None:
+        raise GameError("Класс не найден", 404)
+    return row
+
+
+def _resolve_code(conn, viewer: sqlite3.Row, settings: Settings, code: str) -> dict[str, Any]:
+    from .registration import guard_code_attempts, register_code_failure
+
+    guard_code_attempts(settings, int(viewer["id"]))
+    info = lookup_class_by_code(conn, code)
+    if not info:
+        register_code_failure(settings, int(viewer["id"]))
+        raise GameError("Класс с указанным кодом приглашения не найден", 404)
+    return info
+
+
+def _become_teacher(conn, viewer: sqlite3.Row, class_id: int) -> None:
+    if viewer["role"] == "director":
+        raise GameError("Директор уже управляет всеми классами своей школы", 400)
+    conn.execute(
+        "UPDATE users SET role = 'teacher', class_id = ?, onboarded = 1 WHERE id = ?",
+        (class_id, viewer["id"]),
+    )
+
+
+def join_school_class(
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    class_id: int | None = None,
+    invite_code: str = "",
+) -> dict[str, Any]:
+    if invite_code:
+        info = _resolve_code(conn, viewer, settings, invite_code)
+        target_class_id = int(info["class_id"])
+        if info["kind"] == "teacher":
+            _become_teacher(conn, viewer, target_class_id)
+            return {"class_id": target_class_id, "state": build_state(conn, viewer, settings)}
+    elif class_id:
+        target_class_id = int(_class_for_join(conn, int(class_id))["id"])
+    else:
+        raise GameError("Укажите код приглашения или идентификатор класса", 400)
+
+    if viewer["role"] != "student":
+        raise GameError("Вступить в класс по коду ученика может только ученик", 403)
+    conn.execute(
+        "UPDATE users SET class_id = ? WHERE id = ?",
+        (target_class_id, viewer["id"]),
+    )
+    return {
+        "class_id": target_class_id,
+        "state": build_state(conn, viewer, settings),
+    }
+
+
 def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
     entered_name = " ".join(str(payload.get("first_name", "")).split())
     if not 2 <= len(entered_name) <= 24:
         raise GameError("Имя должно быть от 2 до 24 символов")
-    # The game shows a first name only; drop an accidentally typed surname.
-    first_name = entered_name.split(" ")[0]
+    parts = entered_name.split()
+    first_name = parts[0]
+    raw_last_name = str(payload.get("last_name", "")).strip()
+    if raw_last_name:
+        last_name = raw_last_name[:32]
+    elif len(parts) > 1:
+        last_name = " ".join(parts[1:])[:32]
+    else:
+        last_name = viewer["last_name"]
+
+    target_class_id = viewer["class_id"]
+    new_role = viewer["role"]
+    if payload.get("class_id"):
+        target_class_id = int(_class_for_join(conn, int(payload["class_id"]))["id"])
+    elif payload.get("invite_code"):
+        info = _resolve_code(conn, viewer, settings, str(payload["invite_code"]))
+        target_class_id = int(info["class_id"])
+        if info["kind"] == "teacher":
+            if viewer["role"] == "director":
+                raise GameError("Директор уже управляет всеми классами своей школы", 400)
+            new_role = "teacher"
+    if viewer["role"] != "student" and new_role == viewer["role"]:
+        target_class_id = viewer["class_id"]
+
     avatar = dict(load_avatar(viewer["avatar"]))
     patch = payload.get("avatar") or {}
     if not isinstance(patch, dict):
@@ -760,8 +1386,9 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
         raise GameError(str(exc)) from exc
     avatar.update(allowed)
     conn.execute(
-        "UPDATE users SET first_name = ?, avatar = ?, onboarded = 1 WHERE id = ?",
-        (first_name, dump_avatar(avatar), viewer["id"]),
+        "UPDATE users SET first_name = ?, last_name = ?, class_id = ?, role = ?, avatar = ?, "
+        "onboarded = 1 WHERE id = ?",
+        (first_name, last_name, target_class_id, new_role, dump_avatar(avatar), viewer["id"]),
     )
 
 
@@ -808,9 +1435,12 @@ def submit_challenge(
     settings: Settings,
     challenge_id: int,
     proof: str,
+    proof_url: str = "",
 ) -> dict[str, Any]:
     if effective_role(viewer, settings) == "teacher":
         raise GameError("В режиме педагога нельзя отправлять задания", 403)
+    if viewer["class_id"] is None:
+        raise GameError("Сначала выберите класс")
     challenge = conn.execute(
         "SELECT * FROM challenges WHERE id = ? AND active = 1", (challenge_id,)
     ).fetchone()
@@ -829,21 +1459,22 @@ def submit_challenge(
             "Задание уже на проверке" if existing["status"] == "pending" else "Задание уже выполнено"
         )
     proof = str(proof or "").strip()[:300]
+    proof_url = str(proof_url or "").strip()[:500]
     if existing:
         conn.execute(
             """
             UPDATE completions
-            SET status = 'pending', proof = ?, created_at = ?, reviewed_at = NULL,
+            SET status = 'pending', proof = ?, proof_url = ?, created_at = ?, reviewed_at = NULL,
                 reviewed_by = NULL, reject_reason = ''
             WHERE id = ?
             """,
-            (proof, utc_sql(), existing["id"]),
+            (proof, proof_url, utc_sql(), existing["id"]),
         )
     else:
         conn.execute(
-            "INSERT INTO completions (user_id, challenge_id, status, proof, created_at) "
-            "VALUES (?, ?, 'pending', ?, ?)",
-            (viewer["id"], challenge_id, proof, utc_sql()),
+            "INSERT INTO completions (user_id, challenge_id, status, proof, proof_url, created_at) "
+            "VALUES (?, ?, 'pending', ?, ?, ?)",
+            (viewer["id"], challenge_id, proof, proof_url, utc_sql()),
         )
     mark_active(conn, int(viewer["id"]))
     return {"status": "pending", "challenge_title": challenge["title"]}
@@ -857,8 +1488,8 @@ def review_completion(
     action: str,
     reason: str,
 ) -> dict[str, Any]:
-    if effective_role(viewer, settings) != "teacher":
-        raise GameError("Подтверждать достижения может только педагог", 403)
+    if effective_role(viewer, settings) not in {"teacher", "director"}:
+        raise GameError("Подтверждать достижения может только педагог или администратор", 403)
     row = conn.execute(
         """
         SELECT cp.*, c.title, c.xp, c.category, c.class_id,
@@ -872,7 +1503,7 @@ def review_completion(
     ).fetchone()
     if row is None:
         raise GameError("Заявка не найдена", 404)
-    if int(row["class_id"]) != int(viewer["class_id"]):
+    if not can_manage_class(conn, viewer, settings, int(row["class_id"])):
         raise GameError("Заявка из другого класса", 403)
     if row["status"] != "pending":
         raise GameError("Эта заявка уже проверена")
@@ -922,13 +1553,23 @@ def create_challenge(
     settings: Settings,
     payload: dict[str, Any],
 ) -> None:
-    if effective_role(viewer, settings) != "teacher":
-        raise GameError("Создавать челленджи может только педагог", 403)
+    if effective_role(viewer, settings) not in {"teacher", "director"}:
+        raise GameError("Создавать задания может только педагог или администратор", 403)
+    target_class = payload.get("class_id") or viewer["class_id"]
+    if target_class is None:
+        raise GameError("Выберите класс для задания")
+    if not can_manage_class(conn, viewer, settings, int(target_class)):
+        raise GameError("Нельзя создавать задания для чужого класса", 403)
+    target_class = int(target_class)
     title = str(payload.get("title", "")).strip()
     description = str(payload.get("description", "")).strip()
     category = str(payload.get("category", ""))
     kind = str(payload.get("kind", ""))
     xp = int(payload.get("xp", 0))
+    subject = str(payload.get("subject", "Общее")).strip() or "Общее"
+    proof_type = str(payload.get("proof_type", "text")).strip()
+    if proof_type not in {"text", "link", "photo"}:
+        proof_type = "text"
     if not 3 <= len(title) <= 80:
         raise GameError("Название должно быть от 3 до 80 символов")
     if len(description) > 320:
@@ -937,8 +1578,9 @@ def create_challenge(
         raise GameError("Неизвестная категория")
     if kind not in KINDS:
         raise GameError("Неизвестный тип задания")
-    if xp not in {20, 30, 40, 50, 100}:
-        raise GameError("Опыт должен быть 20, 30, 40, 50 или 100")
+    ALLOWED_XP = {20, 30, 40, 50, 100, 150, 200, 250, 300}
+    if xp not in ALLOWED_XP:
+        raise GameError("Опыт должен быть 20, 30, 40, 50, 100, 150, 200, 250 или 300")
     deadline_raw = str(payload.get("deadline", "")).strip()
     if deadline_raw:
         try:
@@ -953,25 +1595,50 @@ def create_challenge(
     conn.execute(
         """
         INSERT INTO challenges
-            (class_id, title, description, category, xp, kind, deadline,
+            (class_id, title, description, category, xp, kind, deadline, subject, proof_type,
              created_by, active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         """,
-        (viewer["class_id"], title, description, category, xp, kind, deadline, viewer["id"]),
+        (target_class, title, description, category, xp, kind, deadline, subject, proof_type, viewer["id"]),
     )
+
+
+def award_student_by_teacher(
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    student_id: int,
+    amount: int = 50,
+    reason: str = "Активность на уроке",
+) -> None:
+    if effective_role(viewer, settings) not in {"teacher", "director"}:
+        raise GameError("Поощрять учеников может только педагог или администратор", 403)
+    student = conn.execute(
+        "SELECT * FROM users WHERE id = ? AND role = 'student'", (student_id,)
+    ).fetchone()
+    if student is None:
+        raise GameError("Ученик не найден", 404)
+    if not can_manage_class(conn, viewer, settings, student["class_id"]):
+        raise GameError("Ученик из другого класса", 403)
+    if not (10 <= amount <= 300):
+        raise GameError("Количество баллов должно быть от 10 до 300")
+    clean_reason = reason.strip() or "Активность на уроке"
+    award_xp(conn, student_id, amount, clean_reason, "homework")
+    conn.execute("UPDATE users SET sparks = sparks + 5 WHERE id = ?", (student_id,))
+    mark_active(conn, student_id)
 
 
 def archive_challenge(
     conn, viewer: sqlite3.Row, settings: Settings, challenge_id: int
 ) -> None:
-    if effective_role(viewer, settings) != "teacher":
+    if effective_role(viewer, settings) not in {"teacher", "director"}:
         raise GameError("Это действие доступно педагогу", 403)
     row = conn.execute(
         "SELECT class_id FROM challenges WHERE id = ?", (challenge_id,)
     ).fetchone()
     if row is None:
         raise GameError("Задание не найдено", 404)
-    if int(row["class_id"]) != int(viewer["class_id"]):
+    if not can_manage_class(conn, viewer, settings, int(row["class_id"])):
         raise GameError("Задание из другого класса", 403)
     conn.execute("UPDATE challenges SET active = 0 WHERE id = ?", (challenge_id,))
 
@@ -979,7 +1646,7 @@ def archive_challenge(
 def switch_role(conn, viewer: sqlite3.Row, settings: Settings, role: str) -> None:
     if not settings.demo_mode:
         raise GameError("Переключение роли доступно только в демо-режиме", 403)
-    if role not in {"student", "teacher"}:
+    if role not in {"student", "teacher", "director"}:
         raise GameError("Неизвестная роль")
     conn.execute(
         "UPDATE users SET preview_role = ? WHERE id = ?", (role, viewer["id"])
@@ -1007,6 +1674,8 @@ def reset_demo(conn, viewer: sqlite3.Row, settings: Settings) -> None:
             viewer["id"],
         ),
     )
+    from .demo_seed import seed_demo_progress
+
     seed_demo_progress(conn, int(viewer["id"]), int(viewer["class_id"]))
 
 

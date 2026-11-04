@@ -1,4 +1,6 @@
-"""Demo content for the School Hero prototype.
+"""DEMO MODE ONLY (APP_MODE=demo). Never imported in production runs.
+
+Demo content for School Hero.
 
 The seed describes a plausible 8А class from Novgorod: classmates, a teacher,
 weekly activity and three submissions waiting for review. It is intentionally
@@ -9,6 +11,7 @@ from __future__ import annotations
 
 import random
 from datetime import timedelta
+from .db import school_key
 
 from .game import (
     DEFAULT_AVATAR,
@@ -35,14 +38,14 @@ SCHOOLS = [
 
 CLASSES = [
     # key, school index, name, weekly goal
-    ("kvant-8a", 0, "8А", 1600),
-    ("kvant-8b", 0, "8Б", 1500),
-    ("kvant-9a", 0, "9А", 1800),
-    ("gym4-8v", 1, "8В", 1500),
-    ("gym4-10a", 1, "10А", 1700),
-    ("school36-9b", 2, "9Б", 1500),
-    ("licey-11a", 3, "11А", 1800),
-    ("gym2-7b", 4, "7Б", 1400),
+    ("kvant-8a", 0, "8А", 1600, "KVANT-8A"),
+    ("kvant-8b", 0, "8Б", 1500, "KVANT-8B"),
+    ("kvant-9a", 0, "9А", 1800, "KVANT-9A"),
+    ("gym4-8v", 1, "8В", 1500, "GYM4-8V"),
+    ("gym4-10a", 1, "10А", 1700, "GYM4-10A"),
+    ("school36-9b", 2, "9Б", 1500, "SCH36-9B"),
+    ("licey-11a", 3, "11А", 1800, "LIC2-11A"),
+    ("gym2-7b", 4, "7Б", 1400, "GYM2-7B"),
 ]
 
 # name, last name, class key, xp, streak, last_active_days_ago
@@ -105,67 +108,83 @@ STUDENTS = [
 CURRENT_CHALLENGES = [
     {
         "title": "Домашнее задание по алгебре",
-        "description": "Сдай домашку до 23:59. Педагог подтвердит выполнение в один тап.",
+        "description": "Сдай решение домашней работы вовремя. Педагог подтвердит выполнение в 1 клик.",
         "category": "homework",
         "xp": 20,
         "kind": "daily",
         "deadline": deadline_today(),
+        "subject": "Алгебра",
+        "proof_type": "photo",
     },
     {
         "title": "Помоги однокласснику с задачей",
-        "description": "Объясни тему другу или разберите задачу вместе. Напиши, кому помог.",
+        "description": "Объясни сложную тему другу или разберите пример вместе. Напиши, кому помог.",
         "category": "help",
         "xp": 40,
         "kind": "daily",
         "deadline": deadline_today(),
+        "subject": "Взаимопомощь",
+        "proof_type": "text",
     },
     {
         "title": "Кружок или секция",
-        "description": "Сходи на занятие после уроков: робототехника, спорт, музыка — что угодно.",
+        "description": "Занятие после уроков: робототехника, спорт, квант-лаборатория или медиацентр.",
         "category": "club",
         "xp": 30,
         "kind": "daily",
         "deadline": deadline_today(),
+        "subject": "Кванториум",
+        "proof_type": "link",
     },
     {
         "title": "Неделя без пропусков",
-        "description": "Отмечайся каждый день и не пропускай школьные задания. Серия важнее скорости.",
+        "description": "Посещай все занятия по расписанию и отмечайся вовремя. Командная цель класса.",
         "category": "streak",
         "xp": 50,
         "kind": "weekly",
         "deadline": deadline_week(),
+        "subject": "Дисциплина",
+        "proof_type": "text",
     },
     {
         "title": "Олимпиада по информатике",
-        "description": "Школьный этап уже начался. Прикрепи результат или напиши, где участвовал.",
+        "description": "Школьный этап ВсОШ. Прикрепи ссылку на результат из личного кабинета.",
         "category": "olympiad",
         "xp": 100,
         "kind": "weekly",
         "deadline": deadline_week(),
+        "subject": "Информатика",
+        "proof_type": "link",
     },
     {
         "title": "Доклад по истории",
-        "description": "Подготовь короткий доклад о Новгородской республике к пятнице.",
+        "description": "Подготовь короткий доклад о Новгородской республике к пятничному уроку.",
         "category": "weekly",
         "xp": 50,
         "kind": "weekly",
         "deadline": deadline_in(2),
+        "subject": "История",
+        "proof_type": "link",
     },
     {
-        "title": "Школьный хакатон «Идея»",
-        "description": "Собери команду и придумай проект для школы. Участие — уже опыт.",
+        "title": "Школьный хакатон «Идея Фикс»",
+        "description": "Собери команду и представь проект для школьного сообщества Сферума.",
         "category": "event",
         "xp": 30,
         "kind": "event",
         "deadline": deadline_in(5),
+        "subject": "Проекты",
+        "proof_type": "link",
     },
     {
         "title": "Помощь в школьном событии",
-        "description": "Помоги организовать перемену, ярмарку или концерт. Расскажи, что сделал.",
+        "description": "Помоги организовать мероприятие, классный час или выставку работ.",
         "category": "help",
         "xp": 40,
         "kind": "weekly",
         "deadline": deadline_week(),
+        "subject": "Волонтёрство",
+        "proof_type": "photo",
     },
 ]
 
@@ -211,7 +230,7 @@ def _event_reasons() -> list[tuple[str, int, str]]:
         ("Домашнее задание по алгебре", 20, "homework"),
         ("Кружок по робототехнике", 30, "club"),
         ("Помощь однокласснику", 40, "help"),
-        ("Недельный челлендж", 50, "weekly"),
+        ("Задание недели", 50, "weekly"),
         ("Олимпиада по информатике", 100, "olympiad"),
         ("Школьное событие", 30, "event"),
     ]
@@ -252,7 +271,7 @@ def _seed_events(conn, user_id: int, xp: int, rng: random.Random) -> None:
         created_events += 1
 
 
-def seed_database(conn) -> None:
+def seed_demo_database(conn) -> None:
     exists = conn.execute("SELECT COUNT(*) AS n FROM schools").fetchone()["n"]
     if exists:
         return
@@ -260,15 +279,16 @@ def seed_database(conn) -> None:
     school_ids: list[int] = []
     for name, city in SCHOOLS:
         cursor = conn.execute(
-            "INSERT INTO schools (name, city) VALUES (?, ?)", (name, city)
+            "INSERT INTO schools (name, city, norm_key) VALUES (?, ?, ?)",
+            (name, city, school_key(name, city)),
         )
         school_ids.append(int(cursor.lastrowid))
 
     class_ids: dict[str, int] = {}
-    for key, school_index, name, goal in CLASSES:
+    for key, school_index, name, goal, invite_code in CLASSES:
         cursor = conn.execute(
-            "INSERT INTO classes (school_id, name, weekly_goal) VALUES (?, ?, ?)",
-            (school_ids[school_index], name, goal),
+            "INSERT INTO classes (school_id, name, weekly_goal, invite_code) VALUES (?, ?, ?, ?)",
+            (school_ids[school_index], name, goal, invite_code),
         )
         class_ids[key] = int(cursor.lastrowid)
 
@@ -312,14 +332,26 @@ def seed_database(conn) -> None:
     )
     teacher_id = int(teacher_cursor.lastrowid)
 
+    director_cursor = conn.execute(
+        """
+        INSERT INTO users
+            (first_name, last_name, username, role, class_id, xp, sparks,
+             streak, last_active_date, avatar, owned, onboarded)
+        VALUES ('Елена', 'Васильева', 'director_vasilieva', 'director', ?, 0, 0,
+                0, NULL, ?, '[]', 1)
+        """,
+        (class_ids["kvant-8a"], dump_avatar(DEFAULT_AVATAR)),
+    )
+    director_id = int(director_cursor.lastrowid)
+
     current_ids: dict[str, int] = {}
     for item in CURRENT_CHALLENGES:
         cursor = conn.execute(
             """
             INSERT INTO challenges
                 (class_id, title, description, category, xp, kind, deadline,
-                 created_by, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                 subject, proof_type, created_by, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """,
             (
                 class_ids["kvant-8a"],
@@ -329,6 +361,8 @@ def seed_database(conn) -> None:
                 item["xp"],
                 item["kind"],
                 item["deadline"],
+                item.get("subject", "Общее"),
+                item.get("proof_type", "text"),
                 teacher_id,
             ),
         )
@@ -376,29 +410,32 @@ def seed_database(conn) -> None:
         (
             "Маргарита Пантелеева",
             "Олимпиада по информатике",
-            "Призёр школьного этапа, диплом №42. Решение задачи про графы.",
+            "Призёр школьного этапа ВсОШ. Сертификат загружен в Сферум.",
+            "https://olympiads.sferum.ru/results/novgorod/42",
             2,
         ),
         (
             "Пётр Рассадников",
             "Помоги однокласснику с задачей",
             "Разобрали геометрию с Демидом, он сдал самостоятельную на 4.",
+            "",
             5,
         ),
         (
             "Ева Никитина",
             "Кружок или секция",
-            "Записалась в школьный театр, первое занятие прошло сегодня.",
+            "Записалась в робототехническую секцию Кванториума, занятие 1.",
+            "https://kvantorium53.ru/robotics/group-8a",
             26,
         ),
     ]
-    for name, title, proof, hours_ago in pending:
+    for name, title, proof, proof_url, hours_ago in pending:
         moment = now_local() - timedelta(hours=hours_ago)
         conn.execute(
             "INSERT INTO completions "
-            "(user_id, challenge_id, status, proof, created_at) "
-            "VALUES (?, ?, 'pending', ?, ?)",
-            (user_ids[name], current_ids[title], proof, utc_sql(moment)),
+            "(user_id, challenge_id, status, proof, proof_url, created_at) "
+            "VALUES (?, ?, 'pending', ?, ?, ?)",
+            (user_ids[name], current_ids[title], proof, proof_url, utc_sql(moment)),
         )
 
     # Archived history for the demo viewer is inserted per viewer by

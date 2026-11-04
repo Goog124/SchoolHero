@@ -47,6 +47,8 @@ export type IconName =
   | 'play'
   | 'archive'
   | 'search'
+  | 'bell'
+  | 'filter'
   | 'max';
 
 type IconProps = SVGProps<SVGSVGElement> & {
@@ -386,6 +388,19 @@ export function Icon({ name, size = 20, filled = false, ...props }: IconProps) {
         <svg {...common}>
           <circle cx="10.8" cy="10.8" r="6.6" />
           <path d="m15.6 15.6 4.9 4.9" />
+        </svg>
+      );
+    case 'bell':
+      return (
+        <svg {...common}>
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      );
+    case 'filter':
+      return (
+        <svg {...common}>
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
       );
     case 'max':

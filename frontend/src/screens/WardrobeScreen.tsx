@@ -1,251 +1,320 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, KeyboardEvent } from 'react';
 import { AvatarFrame } from '../components/AvatarFrame';
-import { Chip } from '../components/Chip';
-import { Icon } from '../components/Icon';
+import { HERO_GRID, HERO_PARTS, PixelHero } from '../components/PixelHero';
 import { ScreenTitle } from '../components/ScreenTitle';
-import { Segmented, type SegmentOption } from '../components/Segmented';
-import { Sheet } from '../components/Sheet';
-import { Starfield } from '../components/Starfield';
-import { formatNumber } from '../game';
+import { formatSparks } from '../game';
+import { tapHaptic } from '../max';
 import type { AvatarConfig, Cosmetic, GameState } from '../types';
+import '../styles/wardrobe.css';
 
-type WardrobeTab = 'skin' | 'hair' | 'hair_color' | 'outfit' | 'accessory' | 'frame';
+export type WardrobeZone = 'hair' | 'hair_color' | 'outfit' | 'accessory' | 'skin' | 'frame';
 
-const TABS: SegmentOption<WardrobeTab>[] = [
-  { id: 'skin', label: 'Кожа' },
-  { id: 'hair', label: 'Причёска' },
-  { id: 'hair_color', label: 'Цвет' },
-  { id: 'outfit', label: 'Одежда' },
-  { id: 'accessory', label: 'Аксессуар' },
-  { id: 'frame', label: 'Рама' },
+const ZONES: { id: WardrobeZone; label: string; avatarKey: keyof AvatarConfig }[] = [
+  { id: 'hair', label: 'Причёска', avatarKey: 'hair' },
+  { id: 'hair_color', label: 'Цвет волос', avatarKey: 'hairColor' },
+  { id: 'outfit', label: 'Одежда', avatarKey: 'outfit' },
+  { id: 'accessory', label: 'Аксессуары', avatarKey: 'accessory' },
+  { id: 'skin', label: 'Кожа', avatarKey: 'skin' },
+  { id: 'frame', label: 'Рамка', avatarKey: 'frame' },
 ];
 
-const AVATAR_KEY: Record<WardrobeTab, keyof AvatarConfig> = {
-  skin: 'skin',
-  hair: 'hair',
-  hair_color: 'hairColor',
-  outfit: 'outfit',
-  accessory: 'accessory',
-  frame: 'frame',
-};
+/* ---------- Камера ----------
+ * Мир камеры = квадрат AvatarFrame со стороной S = min(ширина, высота сцены).
+ * Внутри рамки (border 1 + padding 3 + inset 3 = 4px с каждой стороны, см. app.css
+ * .avatar-frame) область I = S - 8; герой занимает 72% ширины I, центрирован по
+ * горизонтали и прижат к низу с отступом 5% I. Размер клетки сетки героя
+ * u = 0.72·I / HERO_GRID.w, левый верх героя = (4 + 0.14·I, 4 + 0.005·I).
+ * Прямоугольник интереса (в клетках) переводим в пиксели мира, масштаб k подбираем
+ * так, чтобы он вписался в сцену с запасом PAD, и сдвигаем его центр в центр сцены.
+ */
+type Rect = { x0: number; y0: number; x1: number; y1: number };
+type Box = { w: number; h: number };
 
-const TYPE_LABEL: Record<WardrobeTab, string> = {
-  skin: 'Оттенок кожи',
-  hair: 'Причёска',
-  hair_color: 'Цвет волос',
-  outfit: 'Одежда',
-  accessory: 'Аксессуар',
-  frame: 'Рама героя',
-};
+const CAMERA_PAD = 0.92;
+const MAX_SCALE = 4;
+
+function cameraTransform(rect: Rect | 'portrait', box: Box): { world: CSSProperties; side: number } {
+  const S = Math.max(1, Math.min(box.w, box.h));
+  const left = (box.w - S) / 2;
+  const top = (box.h - S) / 2;
+  let px0 = 0;
+  let py0 = 0;
+  let px1 = S;
+  let py1 = S;
+  let pad = 1;
+  if (rect !== 'portrait') {
+    const I = S - 8;
+    const u = (0.72 * I) / HERO_GRID.w;
+    const ox = 4 + 0.14 * I;
+    const oy = 4 + 0.005 * I;
+    px0 = ox + rect.x0 * u;
+    px1 = ox + rect.x1 * u;
+    py0 = oy + rect.y0 * u;
+    py1 = oy + rect.y1 * u;
+    pad = CAMERA_PAD;
+  }
+  const k = Math.min(
+    MAX_SCALE,
+    Math.max(1, pad * Math.min(box.w / (px1 - px0), box.h / (py1 - py0))),
+  );
+  const cx = (px0 + px1) / 2;
+  const cy = (py0 + py1) / 2;
+  const tx = box.w / 2 - left - k * cx;
+  const ty = box.h / 2 - top - k * cy;
+  return {
+    side: S,
+    world: {
+      left,
+      top,
+      width: S,
+      height: S,
+      transform: `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${k.toFixed(4)})`,
+    },
+  };
+}
+
+function rectFor(zone: WardrobeZone, accessoryId: string): Rect | 'portrait' {
+  switch (zone) {
+    case 'hair':
+    case 'hair_color':
+      return HERO_PARTS.head;
+    case 'outfit':
+      return HERO_PARTS.torso;
+    case 'skin':
+      return HERO_PARTS.face;
+    case 'accessory':
+      return accessoryId === 'scarf' ? HERO_PARTS.neck : HERO_PARTS.head;
+    default:
+      return 'portrait';
+  }
+}
 
 type WardrobeScreenProps = {
   state: GameState;
   onEquip: (key: string, itemId: string) => Promise<boolean>;
   onBuy: (itemId: string) => Promise<boolean>;
   busyItem: string | null;
+  onShare?: () => void;
 };
 
 export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScreenProps) {
-  const [tab, setTab] = useState<WardrobeTab>('outfit');
+  const [zoneId, setZoneId] = useState<WardrobeZone>('hair');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hop, setHop] = useState(0);
+  const [box, setBox] = useState<Box | null>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const { viewer, cosmetics } = state;
-  const avatarKey = AVATAR_KEY[tab];
 
-  const items = useMemo(
-    () => cosmetics.filter((item) => item.type === tab),
-    [cosmetics, tab],
-  );
-  const selected = selectedId
-    ? (cosmetics.find((item) => item.id === selectedId) ?? null)
-    : null;
-
-  const currentId = viewer.avatar[avatarKey];
-  const selectedPreview = selected
-    ? { ...viewer.avatar, [avatarKey]: selected.id }
+  const zone = ZONES.find((z) => z.id === zoneId) ?? ZONES[0];
+  const items = useMemo(() => cosmetics.filter((c) => c.type === zone.id), [cosmetics, zone.id]);
+  const equippedId = viewer.avatar[zone.avatarKey];
+  const selected = items.find((c) => c.id === selectedId) ?? null;
+  const preview: AvatarConfig = selected
+    ? { ...viewer.avatar, [zone.avatarKey]: selected.id }
     : viewer.avatar;
-  const unlockedCount = items.filter((item) => item.unlocked).length;
 
-  const handleEquip = async (item: Cosmetic) => {
-    const ok = await onEquip(avatarKey, item.id);
-    if (ok) setSelectedId(null);
-  };
+  useLayoutEffect(() => {
+    const el = sceneRef.current;
+    if (!el) return undefined;
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-  const handleBuy = async (item: Cosmetic) => {
-    await onBuy(item.id);
-  };
+  const camera = box ? cameraTransform(rectFor(zone.id, preview.accessory), box) : null;
 
   const canBuy = (item: Cosmetic) =>
-    !item.owned && item.price > 0 && viewer.level.level >= item.unlock_level;
+    !item.unlocked && !item.owned && item.price > 0 && viewer.level.level >= item.unlock_level;
+
+  const changeZone = (id: WardrobeZone) => {
+    tapHaptic();
+    setZoneId(id);
+    setSelectedId(null);
+  };
+
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const idx = ZONES.findIndex((z) => z.id === zone.id);
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (idx + 1) % ZONES.length;
+    else if (e.key === 'ArrowLeft') next = (idx - 1 + ZONES.length) % ZONES.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = ZONES.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    const target = ZONES[next];
+    changeZone(target.id);
+    tabRefs.current[target.id]?.focus();
+  };
+
+  const equip = async (item: Cosmetic) => {
+    tapHaptic();
+    if (await onEquip(zone.avatarKey, item.id)) setSelectedId(null);
+  };
+
+  const buy = async (item: Cosmetic) => {
+    tapHaptic();
+    if (await onBuy(item.id)) {
+      await onEquip(zone.avatarKey, item.id);
+      setSelectedId(null);
+    }
+  };
+
+  const statusOf = (item: Cosmetic): { text: string; on: boolean } => {
+    if (item.id === equippedId) return { text: 'Надето', on: true };
+    if (item.unlocked) return { text: 'Доступно', on: false };
+    if (viewer.level.level < item.unlock_level) {
+      return { text: `С ${item.unlock_level} уровня`, on: false };
+    }
+    if (item.price > 0) return { text: formatSparks(item.price), on: false };
+    return { text: 'Недоступно', on: false };
+  };
+
+  const isColorZone = zone.id === 'hair_color' || zone.id === 'skin';
+  const trying = selected && selected.id !== equippedId ? selected : null;
 
   return (
-    <div className="screen">
-      <ScreenTitle
-        eyebrow="Гардероб героя"
-        title="Стиль"
-        subtitle="Новые образы открываются с уровнями. Искры трать на то, что нравится."
-        action={
-          <span className="sparks-balance">
-            <Icon name="spark" size={15} filled />
-            {formatNumber(viewer.sparks)}
-          </span>
-        }
-      />
+    <div className="screen wd">
+      <ScreenTitle title="Стиль" />
 
-      <section className="wardrobe-preview">
-        <Starfield />
-        <div className="wardrobe-preview__figure">
-          <span className="wardrobe-preview__glow" aria-hidden="true" />
-          <AvatarFrame avatar={viewer.avatar} size={158} level={viewer.level.level} animate />
-        </div>
-        <div className="wardrobe-preview__info">
-          <span className="panel-eyebrow">Сейчас на герое</span>
-          <h2>{viewer.name}</h2>
-          <p>
-            Уровень {viewer.level.level} · {viewer.level.title}
-          </p>
-          <div className="wardrobe-preview__chips">
-            <Chip icon="spark" tone="gold" size="sm">
-              {formatNumber(viewer.sparks)} искр
-            </Chip>
-            <Chip icon="shirt" tone="violet" size="sm">
-              {unlockedCount} из {items.length} в разделе
-            </Chip>
-          </div>
-        </div>
-      </section>
-
-      <Segmented
-        options={TABS}
-        value={tab}
-        onChange={(next) => {
-          setTab(next);
-          setSelectedId(null);
-        }}
-        ariaLabel="Разделы гардероба"
-        scrollable
-      />
-
-      <div className="cosmetic-grid">
-        {items.map((item) => {
-          const equipped = item.id === currentId;
-          const locked = !item.unlocked && !equipped;
-          const preview = { ...viewer.avatar, [avatarKey]: item.id };
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`cosmetic-tile ${equipped ? 'is-equipped' : ''} ${
-                locked ? 'is-locked' : ''
-              }`.trim()}
-              onClick={() => setSelectedId(item.id)}
-            >
-              <span className="cosmetic-tile__preview">
-                <AvatarFrame avatar={preview} size={68} decorative />
-                {equipped ? (
-                  <span className="cosmetic-tile__check">
-                    <Icon name="check" size={12} />
-                  </span>
-                ) : null}
-                {locked && item.unlock_level > viewer.level.level ? (
-                  <span className="cosmetic-tile__lock">
-                    <Icon name="lock" size={11} /> {item.unlock_level}
-                  </span>
-                ) : null}
-              </span>
-              <span className="cosmetic-tile__name">{item.name}</span>
-              <span className="cosmetic-tile__price">
-                {equipped
-                  ? 'Надето'
-                  : canBuy(item)
-                    ? `${item.price} искр`
-                    : locked && item.unlock_level > viewer.level.level
-                      ? `с ${item.unlock_level} ур.`
-                      : item.price > 0
-                        ? 'Куплено'
-                        : 'Открыто'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="wardrobe-tip">
-        <span className="wardrobe-tip__icon">
-          <Icon name="info" size={17} />
-        </span>
-        <p>
-          За каждый новый уровень — <strong>25 искр</strong>, за подтверждённое задание —{' '}
-          <strong>+5 искр</strong>. Коллекция не сгорает.
-        </p>
-      </div>
-
-      <Sheet
-        open={Boolean(selected)}
-        onClose={() => setSelectedId(null)}
-        title={selected?.name}
-        subtitle={selected ? TYPE_LABEL[selected.type as WardrobeTab] : ''}
-        footer={
-          selected ? (
-            selected.id === currentId ? (
-              <button type="button" className="btn btn--block" disabled>
-                <Icon name="check" size={17} /> Уже надето
-              </button>
-            ) : canBuy(selected) ? (
-              <button
-                type="button"
-                className="btn btn--block"
-                disabled={busyItem === selected.id}
-                onClick={() => handleBuy(selected)}
-              >
-                {busyItem === selected.id ? 'Покупаем…' : `Купить за ${selected.price} искр`}
-                {busyItem !== selected.id ? <Icon name="spark" size={16} filled /> : null}
-              </button>
-            ) : !selected.unlocked ? (
-              <button type="button" className="btn btn--block" disabled>
-                <Icon name="lock" size={16} /> Откроется на {selected.unlock_level} уровне
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn--block"
-                disabled={busyItem === selected.id}
-                onClick={() => handleEquip(selected)}
-              >
-                {busyItem === selected.id ? 'Надеваем…' : 'Надеть'}
-                {busyItem !== selected.id ? <Icon name="shirt" size={17} /> : null}
-              </button>
-            )
-          ) : undefined
-        }
-      >
-        {selected ? (
-          <div className="wardrobe-sheet">
-            <div className="wardrobe-sheet__art">
-              <Starfield />
-              <AvatarFrame avatar={selectedPreview} size={132} animate />
+      <div className="wd-layout">
+        <section className="wd-stage" aria-label="Предпросмотр героя">
+          <div
+            ref={sceneRef}
+            className="wd-scene"
+            role="img"
+            aria-label={`Герой, камера: ${zone.label}`}
+          >
+            <div className="wd-world" style={camera ? camera.world : undefined}>
+              <div className="wd-hop" key={hop}>
+                <AvatarFrame
+                  avatar={preview}
+                  size={camera ? camera.side : 240}
+                  level={zone.id === 'frame' ? viewer.level.level : undefined}
+                  decorative
+                />
+              </div>
             </div>
-            <p className="wardrobe-sheet__desc">
-              {selected.description ||
-                (selected.price === 0
-                  ? 'Часть стартовой коллекции героя. Можно надеть в любой момент.'
-                  : 'Стильный предмет для твоего героя.')}
+            <div className="wd-balance">
+              <span>Искры</span>
+              <strong>{formatSparks(viewer.sparks)}</strong>
+            </div>
+          </div>
+
+          <div className="wd-tryon" data-active={trying ? 'true' : 'false'}>
+            <p className="wd-tryon__text" role="status" aria-live="polite">
+              {trying ? (
+                <>
+                  Примерка: <strong>{trying.name}</strong>
+                </>
+              ) : (
+                'Выберите предмет, чтобы примерить'
+              )}
             </p>
-            <div className="wardrobe-sheet__facts">
-              <Chip icon="spark" tone="gold" size="sm">
-                {selected.price > 0 ? `${selected.price} искр` : 'Бесплатно'}
-              </Chip>
-              <Chip icon="lock" tone="violet" size="sm">
-                с {selected.unlock_level} уровня
-              </Chip>
-              {selected.owned ? (
-                <Chip icon="check" tone="lime" size="sm">
-                  в коллекции
-                </Chip>
-              ) : null}
-            </div>
+            {trying && (
+              <div className="wd-tryon__actions">
+                <button type="button" className="wd-btn" onClick={() => setSelectedId(null)}>
+                  Отмена
+                </button>
+                {trying.unlocked ? (
+                  <button
+                    type="button"
+                    className="wd-btn wd-btn--primary"
+                    onClick={() => void equip(trying)}
+                    disabled={busyItem === trying.id}
+                  >
+                    {busyItem === trying.id ? 'Сохраняем…' : 'Надеть'}
+                  </button>
+                ) : canBuy(trying) ? (
+                  <button
+                    type="button"
+                    className="wd-btn wd-btn--primary"
+                    onClick={() => void buy(trying)}
+                    disabled={busyItem === trying.id || viewer.sparks < trying.price}
+                  >
+                    {viewer.sparks < trying.price
+                      ? `Не хватает искр (${trying.price})`
+                      : `Купить за ${trying.price}`}
+                  </button>
+                ) : null}
+              </div>
+            )}
           </div>
-        ) : null}
-      </Sheet>
+        </section>
+
+        <section className="wd-catalog" aria-label="Каталог">
+          <div
+            className="wd-tabs"
+            role="tablist"
+            aria-label="Что менять"
+            aria-orientation="horizontal"
+            onKeyDown={onTabKey}
+          >
+            {ZONES.map((z) => (
+              <button
+                key={z.id}
+                ref={(el) => {
+                  tabRefs.current[z.id] = el;
+                }}
+                id={`wd-tab-${z.id}`}
+                type="button"
+                role="tab"
+                aria-selected={zone.id === z.id}
+                aria-controls="wd-panel"
+                tabIndex={zone.id === z.id ? 0 : -1}
+                className="wd-tab"
+                onClick={() => changeZone(z.id)}
+              >
+                {z.label}
+              </button>
+            ))}
+          </div>
+
+          <div id="wd-panel" role="tabpanel" aria-labelledby={`wd-tab-${zone.id}`}>
+            {items.length === 0 ? (
+              <p className="wd-empty">В этой категории пока нет предметов.</p>
+            ) : (
+              <div className="wd-items">
+                {items.map((item) => {
+                  const status = statusOf(item);
+                  const thumbAvatar = { ...viewer.avatar, [zone.avatarKey]: item.id };
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="wd-item"
+                      aria-pressed={item.id === (selected?.id ?? equippedId)}
+                      onClick={() => {
+                        tapHaptic();
+                        setSelectedId(item.id === equippedId ? null : item.id);
+                        setHop((n) => n + 1);
+                      }}
+                    >
+                      <span className="wd-item__thumb">
+                        {isColorZone ? (
+                          <span className="wd-swatch" style={{ backgroundColor: item.swatch }} />
+                        ) : zone.id === 'frame' ? (
+                          <AvatarFrame avatar={thumbAvatar} size={56} decorative />
+                        ) : (
+                          <PixelHero avatar={thumbAvatar} size={44} decorative />
+                        )}
+                      </span>
+                      <span className="wd-item__name">{item.name}</span>
+                      <span className={`wd-item__state${status.on ? ' wd-item__state--on' : ''}`}>
+                        {status.text}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

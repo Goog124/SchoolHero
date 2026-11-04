@@ -1,0 +1,391 @@
+/* Профиль и «Стиль» (гардероб). Префикс pf- */
+
+.pf {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+}
+
+.pf-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.pf-h {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.pf-muted {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+/* Шапка профиля */
+.pf-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pf-head__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pf-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+.pf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pf-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.pf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pf-btn--primary {
+  color: var(--accent-contrast);
+  background: var(--sferum-blue);
+  border-color: var(--sferum-blue);
+}
+
+.pf-btn--primary:hover:not(:disabled) {
+  background: var(--sferum-hover);
+}
+
+.pf-btn:focus-visible,
+.pf-chip:focus-visible,
+.pf-item:focus-visible,
+.pf-swatch:focus-visible,
+.pf-act:focus-visible {
+  outline: 2px solid var(--sferum-blue);
+  outline-offset: 2px;
+}
+
+/* Прогресс */
+.pf-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.pf-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--sferum-blue);
+}
+
+.pf-level {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-level__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Показатели */
+.pf-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.pf-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.pf-stat dt {
+  order: 2;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.pf-stat dd {
+  order: 1;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+/* Достижения */
+.pf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pf-ach {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.pf-ach--done {
+  border-color: var(--sferum-blue);
+  background: var(--sferum-soft);
+}
+
+.pf-ach__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pf-ach__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.pf-ach__count {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pf-empty {
+  padding: 16px;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+}
+
+/* ========== Стиль (гардероб) ========== */
+
+.pf-style {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.pf-style > * { min-width: 0; }
+
+.pf-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.pf-stage__hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  min-height: 240px;
+  padding: 16px;
+  background: var(--bg-subtle);
+  border-radius: 12px;
+}
+
+.pf-balance {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.pf-tryon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--sferum-blue);
+  border-radius: 8px;
+  background: var(--sferum-soft);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.pf-chips {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pf-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.pf-chip {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pf-chip[aria-selected='true'] {
+  color: var(--accent-contrast);
+  background: var(--sferum-blue);
+  border-color: var(--sferum-blue);
+}
+
+.pf-items {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.pf-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pf-item[aria-pressed='true'] {
+  border-color: var(--sferum-blue);
+  box-shadow: inset 0 0 0 1px var(--sferum-blue);
+}
+
+.pf-item__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 72px;
+  background: var(--bg-subtle);
+  border-radius: 8px;
+}
+
+.pf-swatch {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.pf-item__name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.pf-item__state {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.pf-item__state--on {
+  color: var(--sferum-blue);
+  font-weight: 600;
+}
+
+@media (min-width: 640px) {
+  .pf-stats {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .pf-items {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .pf-style {
+    grid-template-columns: minmax(280px, 2fr) 3fr;
+  }
+
+  .pf-stage {
+    position: sticky;
+    top: 16px;
+  }
+
+  .pf-items {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

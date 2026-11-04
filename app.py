@@ -7,6 +7,7 @@ Run ``python app.py`` after building the frontend (``npm run build`` in
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,7 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from backend.api import router as api_router
 from backend.config import Settings
 from backend.db import connect, init_db
-from backend.seed import seed_database
+from backend.catalog import import_catalog
+from backend.demo_seed import seed_demo_database
 from backend.service import GameError
 
 try:
@@ -33,10 +35,31 @@ settings = Settings.from_env()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings.validate()
+    if settings.sandbox_mode and not settings.sandbox_keep_data:
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(settings.db_path) + suffix).unlink(missing_ok=True)
     init_db(settings.db_path)
     conn = connect(settings.db_path)
     try:
-        seed_database(conn)
+        if settings.demo_mode:
+            seed_demo_database(conn)
+        elif settings.sandbox_mode:
+            pass  # empty by design: no demo data, no catalog
+        else:
+            # catalog.json is an optional initial fill; without it production
+            # starts empty and schools register themselves.
+            import_catalog(conn, settings.catalog_file)
+            if settings.default_class_id is not None and not conn.execute(
+                "SELECT 1 FROM classes WHERE id = ?", (settings.default_class_id,)
+            ).fetchone():
+                # Production may start empty: users pick a class during
+                # registration, so a missing default class is not an error.
+                logging.getLogger("uvicorn.error").warning(
+                    "DEFAULT_CLASS_ID=%s не найден, класс по умолчанию отключён",
+                    settings.default_class_id,
+                )
+                object.__setattr__(settings, "default_class_id", None)
     finally:
         conn.close()
     yield
@@ -84,6 +107,25 @@ def _static_file(path: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+@app.get("/portal", include_in_schema=False)
+@app.get("/landing", include_in_schema=False)
+@app.get("/about", include_in_schema=False)
+def portal():
+    portal_file = Path(__file__).resolve().parent / "landing" / "index.html"
+    if portal_file.is_file():
+        return FileResponse(portal_file)
+    raise HTTPException(status_code=404, detail="Portal landing page is not found")
+
+
+@app.get("/landing/{file_name:path}", include_in_schema=False)
+def landing_static(file_name: str):
+    landing_dir = (Path(__file__).resolve().parent / "landing").resolve()
+    candidate = (landing_dir / file_name).resolve()
+    if candidate.is_relative_to(landing_dir) and candidate.is_file():
+        return FileResponse(candidate)
+    raise HTTPException(status_code=404, detail="Landing asset not found")
+
+
 @app.get("/", include_in_schema=False)
 def index():
     if not settings.serve_frontend:
@@ -93,6 +135,7 @@ def index():
             "api": "/api",
             "docs": "/docs",
             "frontend": "http://127.0.0.1:5173",
+            "portal": "/portal",
         }
     built = _static_file("index.html")
     if built:

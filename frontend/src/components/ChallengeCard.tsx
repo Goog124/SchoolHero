@@ -1,4 +1,5 @@
-import { CATEGORY_META, STATUS_META, formatDeadline, formatNumber } from '../game';
+import '../styles/student.css';
+import { STATUS_META, formatDeadline, formatNumber } from '../game';
 import type { Challenge } from '../types';
 import { Icon } from './Icon';
 
@@ -9,40 +10,39 @@ type ChallengeCardProps = {
 };
 
 export function ChallengeCard({ challenge, onOpen, compact = false }: ChallengeCardProps) {
-  const meta = CATEGORY_META[challenge.category];
-  const status = STATUS_META[challenge.status];
+  const status = STATUS_META[challenge.status]?.short ?? '';
+  const tag = [challenge.subject || challenge.category_label, challenge.kind_label]
+    .filter(Boolean)
+    .join(' · ');
+  const deadline = formatDeadline(challenge.deadline);
+
   return (
     <button
       type="button"
-      className={`challenge-card challenge-card--${challenge.status} ${
-        compact ? 'challenge-card--compact' : ''
-      }`.trim()}
+      className="st-card-task"
       onClick={() => onOpen(challenge.id)}
+      aria-label={`${challenge.title}. ${status}. Открыть`}
     >
-      <span className={`category-mark tone-${meta.tone}`}>
-        <Icon name={meta.icon} size={18} />
+      <span className="st-card-task__top">
+        <span className="st-card-task__tag">{tag}</span>
+        <span className="st-xp">+{formatNumber(challenge.xp)} XP</span>
       </span>
-      <span className="challenge-card__main">
-        <span className="challenge-card__top">
-          <span className="challenge-card__title">{challenge.title}</span>
-          <span className="xp-pill">
-            <Icon name="spark" size={12} filled />+{challenge.xp}
-          </span>
+      <span className="st-card-task__title" style={{ display: 'block' }}>
+        {challenge.title}
+      </span>
+      {!compact && challenge.description ? (
+        <span className="st-card-task__desc">{challenge.description}</span>
+      ) : null}
+      <span className="st-card-task__foot">
+        <span className="st-meta">
+          {deadline ? (
+            <>
+              <Icon name="clock" size={14} />
+              {deadline}
+            </>
+          ) : null}
         </span>
-        {!compact ? <span className="challenge-card__desc">{challenge.description}</span> : null}
-        <span className="challenge-card__meta">
-          <span className="challenge-card__deadline">
-            <Icon name="clock" size={12} />
-            {formatDeadline(challenge.deadline)}
-          </span>
-          <span className="challenge-card__participants">
-            <Icon name="users" size={12} />
-            {formatNumber(challenge.participants)}
-          </span>
-          <span className={`status-pill status-pill--${challenge.status}`}>
-            {status.short}
-          </span>
-        </span>
+        <span className={`st-pill st-pill--${challenge.status}`}>{status}</span>
       </span>
     </button>
   );

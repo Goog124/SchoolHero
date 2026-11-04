@@ -30,14 +30,14 @@ class AuthError(Exception):
 
 @dataclass(frozen=True)
 class Identity:
-    kind: str  # "max" | "demo"
+    kind: str  # "max" | "demo" | "sandbox"
     max_user_id: str | None
     client_id: str | None
     first_name: str
     last_name: str
     username: str
     photo_url: str
-    role_hint: str  # "student" | "teacher"
+    role_hint: str  # "student" | "teacher" | "director"
 
 
 def validate_init_data(init_data: str, bot_token: str, max_age: int) -> dict[str, str]:
@@ -88,7 +88,25 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int) -> dict[str
 def identity_from_request(
     init_data: str | None, client_id: str | None, settings: Settings
 ) -> Identity:
-    if settings.bot_token:
+    if settings.sandbox_mode:
+        # Local testing only (config refuses non-loopback hosts). Every
+        # client id is its own user, with no signature to check.
+        if not client_id or not CLIENT_ID_RE.fullmatch(client_id):
+            raise AuthError("Нет корректного идентификатора пользователя песочницы")
+        return Identity(
+            kind="sandbox",
+            max_user_id=None,
+            client_id=client_id,
+            first_name="Герой",
+            last_name="",
+            username="",
+            photo_url="",
+            role_hint="student",
+        )
+
+    if not settings.demo_mode:
+        if not settings.bot_token:
+            raise AuthError("Сервер не настроен: нет токена бота")
         values = validate_init_data(
             init_data or "", settings.bot_token, settings.init_data_max_age
         )
@@ -108,7 +126,11 @@ def identity_from_request(
             username=str(user.get("username") or "")[:64],
             photo_url=str(user.get("photo_url") or "")[:512],
             role_hint=(
-                "teacher" if max_user_id in settings.teacher_max_ids else "student"
+                "director"
+                if max_user_id in settings.director_max_ids
+                else "teacher"
+                if max_user_id in settings.teacher_max_ids
+                else "student"
             ),
         )
 

@@ -10,7 +10,7 @@ type EmptyStateProps = {
 };
 
 export function EmptyState({
-  icon = 'sparkles',
+  icon = 'info',
   title,
   text,
   action,
@@ -18,8 +18,8 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className={`empty ${compact ? 'empty--compact' : ''}`.trim()}>
-      <span className="empty__icon">
-        <Icon name={icon} size={26} />
+      <span className="empty__icon" aria-hidden="true">
+        <Icon name={icon} size={compact ? 20 : 24} />
       </span>
       <h3>{title}</h3>
       {text ? <p>{text}</p> : null}

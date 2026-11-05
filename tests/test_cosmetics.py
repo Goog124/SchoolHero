@@ -201,7 +201,7 @@ def test_state_exposes_new_slots_and_rarity(demo_client):
 def _drawing_sources() -> str:
     parts = [
         (COMPONENTS / name).read_text(encoding="utf-8")
-        for name in ("PixelHero.tsx", "heroItems.tsx", "AvatarFrame.tsx")
+        for name in ("PixelHero.tsx", "heroItems.tsx", "heroHair.tsx", "AvatarFrame.tsx")
     ]
     parts.append(FRAMES_CSS.read_text(encoding="utf-8"))
     return "\n".join(parts)
@@ -225,3 +225,39 @@ def test_every_frame_has_its_own_style():
         assert f".avatar-frame--{frame_id} " in css, frame_id
     tiles = re.findall(r"\.avatar-frame--frame_\w+ \{[^}]*?--f-tile: (url\([^\n]*\));", css)
     assert len(set(tiles)) == len(frames)
+
+
+RARITY_RANK = {name: index for index, name in enumerate(RARITIES)}
+
+
+def _expected_key(item: dict) -> tuple:
+    return (
+        item["id"] not in NOTHING,
+        item["unlock_level"],
+        item["price"],
+        RARITY_RANK[item["rarity"]],
+        item["name"].casefold().replace("ё", "е"),
+    )
+
+
+def test_state_cosmetics_are_sorted_per_slot(demo_client):
+    cosmetics = get_state(demo_client)["cosmetics"]
+    by_slot: dict[str, list[dict]] = {}
+    for item in cosmetics:
+        by_slot.setdefault(item["type"], []).append(item)
+    for slot, items in by_slot.items():
+        keys = [_expected_key(i) for i in items]
+        assert keys == sorted(keys), slot
+        if slot in {"hat", "face", "accessory"}:
+            assert items[0]["id"] in NOTHING, slot
+
+
+def test_order_does_not_change_after_buy_and_equip(demo_client):
+    before = [i["id"] for i in get_state(demo_client)["cosmetics"]]
+    demo_client.post("/api/shop/buy", json={"item_id": "hat_party"}, headers=DEMO_HEADERS)
+    demo_client.post(
+        "/api/avatar/equip", json={"key": "hat", "item_id": "hat_party"}, headers=DEMO_HEADERS
+    )
+    after_state = get_state(demo_client)
+    assert after_state["viewer"]["avatar"]["hat"] == "hat_party"
+    assert [i["id"] for i in after_state["cosmetics"]] == before

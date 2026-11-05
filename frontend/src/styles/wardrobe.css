@@ -76,6 +76,22 @@
   border-radius: 8px;
 }
 
+.wd-note {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
 .wd-balance strong {
   color: var(--text-primary);
 }

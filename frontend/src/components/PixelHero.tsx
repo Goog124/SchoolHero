@@ -1,13 +1,16 @@
+import { useId } from 'react';
 import type { AvatarConfig } from '../types';
 import {
   AccessoryFront,
   BackItems,
   FaceLayer,
+  HAT_HAIR_CLIP,
   HatLayer,
   NewOutfit,
   R,
   isNewOutfit,
 } from './heroItems';
+import { BackHair, FrontHair, HAIR_STYLES } from './heroHair';
 
 type Palette = {
   base: string;
@@ -87,246 +90,6 @@ type PixelHeroProps = {
   /** Кадр: целиком (по умолчанию) или часть героя для миниатюр предметов. */
   view?: keyof typeof HERO_VIEWS;
 };
-
-function BackHair({ style, colors }: { style: string; colors: { base: string; dark: string; light: string } }) {
-  if (style === 'hair_bob') {
-    return (
-      <g>
-        <R x={6} y={7} w={4} h={14} fill={OUTLINE} />
-        <R x={22} y={7} w={4} h={14} fill={OUTLINE} />
-        <R x={7} y={8} w={2} h={12} fill={colors.base} />
-        <R x={23} y={8} w={2} h={12} fill={colors.base} />
-        <R x={7} y={15} w={2} h={4} fill={colors.dark} />
-        <R x={23} y={15} w={2} h={4} fill={colors.dark} />
-      </g>
-    );
-  }
-  if (style === 'hair_pony') {
-    return (
-      <g>
-        <R x={23} y={4} w={5} h={3} fill={OUTLINE} />
-        <R x={25} y={6} w={4} h={10} fill={OUTLINE} />
-        <R x={24} y={15} w={4} h={3} fill={OUTLINE} />
-        <R x={24} y={5} w={3} h={2} fill={colors.base} />
-        <R x={26} y={7} w={2} h={8} fill={colors.base} />
-        <R x={25} y={15} w={2} h={2} fill={colors.dark} />
-        <R x={27} y={8} w={1} h={5} fill={colors.light} />
-      </g>
-    );
-  }
-  if (style === 'hair_long') {
-    return (
-      <g>
-        <R x={6} y={7} w={4} h={19} fill={OUTLINE} />
-        <R x={22} y={7} w={4} h={19} fill={OUTLINE} />
-        <R x={7} y={8} w={2} h={17} fill={colors.base} />
-        <R x={23} y={8} w={2} h={17} fill={colors.base} />
-        <R x={7} y={18} w={2} h={6} fill={colors.dark} />
-        <R x={23} y={18} w={2} h={6} fill={colors.dark} />
-      </g>
-    );
-  }
-  if (style === 'hair_afro') {
-    return (
-      <g>
-        <R x={10} y={0} w={12} h={1} fill={OUTLINE} />
-        <R x={7} y={1} w={18} h={1} fill={OUTLINE} />
-        <R x={5} y={2} w={22} h={2} fill={OUTLINE} />
-        <R x={4} y={4} w={24} h={9} fill={OUTLINE} />
-        <R x={5} y={13} w={22} h={2} fill={OUTLINE} />
-        <R x={11} y={1} w={10} h={1} fill={colors.base} />
-        <R x={8} y={2} w={16} h={1} fill={colors.base} />
-        <R x={6} y={3} w={20} h={2} fill={colors.base} />
-        <R x={5} y={5} w={22} h={8} fill={colors.base} />
-        <R x={6} y={13} w={20} h={1} fill={colors.dark} />
-        <R x={7} y={6} w={1} h={1} fill={colors.dark} />
-        <R x={24} y={8} w={1} h={1} fill={colors.dark} />
-        <R x={6} y={10} w={1} h={1} fill={colors.dark} />
-        <R x={25} y={11} w={1} h={1} fill={colors.dark} />
-        <R x={9} y={2} w={3} h={1} fill={colors.light} opacity={0.5} />
-      </g>
-    );
-  }
-  if (style === 'hair_curls') {
-    return (
-      <g>
-        <R x={6} y={7} w={4} h={5} fill={OUTLINE} />
-        <R x={22} y={7} w={4} h={5} fill={OUTLINE} />
-        <R x={7} y={8} w={2} h={3} fill={colors.base} />
-        <R x={23} y={8} w={2} h={3} fill={colors.base} />
-        <R x={7} y={10} w={2} h={2} fill={colors.dark} />
-        <R x={23} y={10} w={2} h={2} fill={colors.dark} />
-      </g>
-    );
-  }
-  return null;
-}
-
-function FrontHair({
-  style,
-  colors,
-  skin,
-}: {
-  style: string;
-  colors: { base: string; dark: string; light: string };
-  skin: string;
-}) {
-  if (style === 'hair_bald') {
-    return (
-      <g>
-        <R x={10} y={4} w={12} h={1} fill={skin} />
-        <R x={12} y={5} w={3} h={1} fill="#ffffff" opacity={0.22} />
-      </g>
-    );
-  }
-  if (style === 'hair_mohawk') {
-    return (
-      <g>
-        <R x={10} y={4} w={12} h={1} fill={skin} />
-        <R x={10} y={5} w={4} h={2} fill={colors.dark} opacity={0.3} />
-        <R x={18} y={5} w={4} h={2} fill={colors.dark} opacity={0.3} />
-        <R x={13} y={0} w={6} h={1} fill={OUTLINE} />
-        <R x={13} y={1} w={1} h={7} fill={OUTLINE} />
-        <R x={18} y={1} w={1} h={7} fill={OUTLINE} />
-        <R x={14} y={1} w={4} h={7} fill={colors.base} />
-        <R x={17} y={3} w={1} h={5} fill={colors.dark} />
-        <R x={14} y={1} w={1} h={4} fill={colors.light} opacity={0.7} />
-      </g>
-    );
-  }
-  if (style === 'hair_long' || style === 'hair_braids') {
-    return (
-      <g>
-        <ShortFront colors={colors} />
-        {style === 'hair_long' ? (
-          <g>
-            <R x={7} y={17} w={4} h={10} fill={OUTLINE} />
-            <R x={21} y={17} w={4} h={10} fill={OUTLINE} />
-            <R x={8} y={17} w={2} h={9} fill={colors.base} />
-            <R x={22} y={17} w={2} h={9} fill={colors.base} />
-            <R x={8} y={22} w={2} h={4} fill={colors.dark} />
-            <R x={22} y={22} w={2} h={4} fill={colors.dark} />
-          </g>
-        ) : (
-          <g>
-            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-              <g key={i}>
-                <R x={6} y={12 + i * 2} w={3} h={2} fill={OUTLINE} />
-                <R x={23} y={12 + i * 2} w={3} h={2} fill={OUTLINE} />
-                <R x={7} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.dark : colors.base} />
-                <R x={24} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.dark : colors.base} />
-                <R x={8} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.base : colors.dark} />
-                <R x={23} y={12 + i * 2} w={1} h={2} fill={i % 2 ? colors.base : colors.dark} />
-              </g>
-            ))}
-            <R x={6} y={28} w={3} h={1} fill="#f472b6" />
-            <R x={23} y={28} w={3} h={1} fill="#f472b6" />
-          </g>
-        )}
-      </g>
-    );
-  }
-  if (style === 'hair_buzz') {
-    return (
-      <g>
-        <R x={11} y={3} w={10} h={1} fill={colors.dark} />
-        <R x={10} y={4} w={12} h={2} fill={colors.base} />
-        <R x={9} y={6} w={2} h={3} fill={colors.base} />
-        <R x={21} y={6} w={2} h={3} fill={colors.base} />
-        <R x={12} y={4} w={6} h={1} fill={colors.light} opacity={0.45} />
-      </g>
-    );
-  }
-  if (style === 'hair_curls') {
-    return (
-      <g>
-        <R x={11} y={1} w={3} h={2} fill={OUTLINE} />
-        <R x={14} y={0} w={4} h={2} fill={OUTLINE} />
-        <R x={18} y={1} w={3} h={2} fill={OUTLINE} />
-        <R x={9} y={3} w={14} h={2} fill={OUTLINE} />
-        <R x={8} y={5} w={2} h={4} fill={colors.dark} />
-        <R x={22} y={5} w={2} h={4} fill={colors.dark} />
-        <R x={11} y={1} w={3} h={1} fill={colors.base} />
-        <R x={14} y={0} w={4} h={1} fill={colors.base} />
-        <R x={18} y={1} w={3} h={1} fill={colors.base} />
-        <R x={10} y={3} w={12} h={2} fill={colors.base} />
-        <R x={9} y={5} w={2} h={3} fill={colors.base} />
-        <R x={21} y={5} w={2} h={3} fill={colors.base} />
-        <R x={8} y={9} w={2} h={2} fill={colors.base} />
-        <R x={22} y={9} w={2} h={2} fill={colors.base} />
-        <R x={8} y={10} w={1} h={1} fill={colors.dark} />
-        <R x={23} y={10} w={1} h={1} fill={colors.dark} />
-        <R x={11} y={5} w={3} h={2} fill={colors.base} />
-        <R x={18} y={5} w={3} h={2} fill={colors.base} />
-        <R x={11} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={15} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={19} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={12} y={2} w={6} h={1} fill={colors.light} opacity={0.55} />
-      </g>
-    );
-  }
-  if (style === 'hair_bob') {
-    return (
-      <g>
-        <R x={10} y={3} w={12} h={1} fill={colors.dark} />
-        <R x={9} y={4} w={14} h={2} fill={colors.base} />
-        <R x={8} y={6} w={3} h={13} fill={colors.dark} />
-        <R x={21} y={6} w={3} h={13} fill={colors.dark} />
-        <R x={9} y={6} w={2} h={12} fill={colors.base} />
-        <R x={21} y={6} w={2} h={12} fill={colors.base} />
-        <R x={10} y={6} w={4} h={2} fill={colors.base} />
-        <R x={18} y={6} w={4} h={2} fill={colors.base} />
-        <R x={11} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={15} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={19} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={10} y={4} w={4} h={1} fill={colors.light} opacity={0.5} />
-        <R x={8} y={15} w={2} h={3} fill={colors.dark} />
-        <R x={22} y={15} w={2} h={3} fill={colors.dark} />
-      </g>
-    );
-  }
-  if (style === 'hair_pony') {
-    return (
-      <g>
-        <R x={10} y={3} w={12} h={1} fill={colors.dark} />
-        <R x={9} y={4} w={14} h={2} fill={colors.base} />
-        <R x={8} y={6} w={2} h={5} fill={colors.dark} />
-        <R x={22} y={6} w={2} h={5} fill={colors.dark} />
-        <R x={9} y={6} w={1} h={4} fill={colors.base} />
-        <R x={22} y={6} w={1} h={4} fill={colors.base} />
-        <R x={10} y={6} w={5} h={2} fill={colors.base} />
-        <R x={17} y={6} w={5} h={2} fill={colors.base} />
-        <R x={11} y={7} w={3} h={1} fill={colors.dark} />
-        <R x={16} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={19} y={7} w={2} h={1} fill={colors.dark} />
-        <R x={22} y={7} w={2} h={2} fill={colors.base} />
-        <R x={22} y={8} w={2} h={1} fill="#f6c453" />
-        <R x={11} y={4} w={4} h={1} fill={colors.light} opacity={0.6} />
-      </g>
-    );
-  }
-  // short (и афро: объём сзади)
-  return <ShortFront colors={colors} />;
-}
-
-function ShortFront({ colors }: { colors: { base: string; dark: string; light: string } }) {
-  return (
-    <g>
-      <R x={10} y={3} w={12} h={1} fill={colors.dark} />
-      <R x={9} y={4} w={14} h={2} fill={colors.base} />
-      <R x={8} y={6} w={2} h={5} fill={colors.dark} />
-      <R x={22} y={6} w={2} h={5} fill={colors.dark} />
-      <R x={9} y={6} w={1} h={4} fill={colors.base} />
-      <R x={22} y={6} w={1} h={4} fill={colors.base} />
-      <R x={10} y={6} w={4} h={2} fill={colors.base} />
-      <R x={18} y={6} w={4} h={2} fill={colors.base} />
-      <R x={11} y={7} w={2} h={1} fill={colors.dark} />
-      <R x={15} y={7} w={2} h={1} fill={colors.dark} />
-      <R x={19} y={7} w={2} h={1} fill={colors.dark} />
-      <R x={11} y={4} w={4} h={1} fill={colors.light} opacity={0.55} />
-    </g>
-  );
-}
 
 function Outfit({
   id,
@@ -597,22 +360,15 @@ export function PixelHero({
   const hair = HAIR[avatar.hairColor] ?? HAIR.hair_dark;
   const outfitId =
     OUTFIT[avatar.outfit] || isNewOutfit(avatar.outfit) ? avatar.outfit : 'hoodie_violet';
-  const hairStyle = [
-    'hair_short',
-    'hair_curls',
-    'hair_bob',
-    'hair_pony',
-    'hair_buzz',
-    'hair_long',
-    'hair_bald',
-    'hair_afro',
-    'hair_braids',
-    'hair_mohawk',
-  ].includes(avatar.hair)
+  const hairStyle = (HAIR_STYLES as readonly string[]).includes(avatar.hair)
     ? avatar.hair
     : 'hair_short';
   const hat = avatar.hat && avatar.hat !== 'hat_none' ? avatar.hat : null;
   const face = avatar.face && avatar.face !== 'face_none' ? avatar.face : null;
+  // Головной убор срезает верх причёски, чтобы волосы не торчали сквозь него.
+  const clipId = `hc${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const hairClip = hat ? HAT_HAIR_CLIP[hat] : undefined;
+  const clipRef = hairClip ? `url(#${clipId})` : undefined;
   const crop = view ? HERO_VIEWS[view] : null;
   const vb = crop
     ? { x: crop.x0, y: crop.y0, w: crop.x1 - crop.x0, h: crop.y1 - crop.y0 }
@@ -645,7 +401,21 @@ export function PixelHero({
       ) : null}
       <g className={animate ? 'pixel-hero-bob' : undefined}>
         <BackItems outfit={outfitId} accessory={avatar.accessory} />
-        <BackHair style={hairStyle} colors={hair} />
+        {hairClip ? (
+          <defs>
+            <clipPath id={clipId}>
+              <rect
+                x={hairClip[0]}
+                y={hairClip[1]}
+                width={hairClip[2] - hairClip[0]}
+                height={hairClip[3] - hairClip[1]}
+              />
+            </clipPath>
+          </defs>
+        ) : null}
+        <g clipPath={clipRef}>
+          <BackHair style={hairStyle} colors={hair} />
+        </g>
 
         {/* silhouette */}
         <g fill={OUTLINE}>
@@ -713,7 +483,9 @@ export function PixelHero({
           </g>
         ) : null}
 
-        <FrontHair style={hairStyle} colors={hair} skin={skin.base} />
+        <g clipPath={clipRef}>
+          <FrontHair style={hairStyle} colors={hair} skin={skin.base} />
+        </g>
         {face ? face === 'glasses' ? <Accessory id={face} /> : <FaceLayer id={face} /> : null}
         <Accessory id={avatar.accessory} />
         <AccessoryFront id={avatar.accessory} />

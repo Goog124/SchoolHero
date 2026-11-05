@@ -369,6 +369,29 @@ COSMETICS: list[Cosmetic] = [
 
 COSMETIC_BY_ID = {item.id: item for item in COSMETICS}
 
+NOTHING_IDS = {"none", "hat_none", "face_none"}
+
+
+def cosmetic_sort_key(item: Cosmetic) -> tuple:
+    """Единый порядок предметов в гардеробе и онбординге (источник истины).
+
+    «Ничего» первым; затем уровень открытия по возрастанию; внутри уровня
+    бесплатные, затем по цене; затем редкость (обычное -> легендарное); затем
+    название по алфавиту (ё как е). Статус владения не влияет, поэтому порядок
+    не меняется после покупки или надевания.
+    """
+    return (
+        item.id not in NOTHING_IDS,
+        item.unlock_level,
+        item.price,
+        RARITIES.index(item.rarity_id),
+        item.name.casefold().replace("ё", "е"),
+        item.id,
+    )
+
+
+SORTED_COSMETICS = sorted(COSMETICS, key=cosmetic_sort_key)
+
 # Предметы, которые в старых аватарах хранились в слоте accessory (id не менялись).
 LEGACY_ACCESSORY_SLOT = {
     "glasses": "face",

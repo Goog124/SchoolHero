@@ -11,7 +11,7 @@ from .config import Settings
 from .game import (
     BASIC_AVATAR,
     CATEGORIES,
-    COSMETICS,
+    SORTED_COSMETICS,
     COSMETIC_BY_ID,
     DEFAULT_AVATAR,
     KINDS,
@@ -1066,7 +1066,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
     avatar = load_avatar(viewer["avatar"])
     owned = load_owned(viewer["owned"])
     cosmetics = [
-        cosmetic_state(item, level["level"], owned, avatar) for item in COSMETICS
+        cosmetic_state(item, level["level"], owned, avatar) for item in SORTED_COSMETICS
     ]
     class_entry = next(
         (entry for entry in leaderboard["classes"] if entry["is_viewer_class"]), None

@@ -161,12 +161,12 @@ npm run build          # tsc --noEmit && vite build, вывод в ../static (em
    - лицо: `FACE` (список спрайтов с абсолютными координатами) или ветка в `FaceLayer`;
    - аксессуар: `ACCESSORY_FRONT` (поверх тела) и/или `BackItems` (за телом: плащ, крылья, сумка);
    - одежда: цвета в `OUTFIT` (`PixelHero.tsx`) для худи и брони, новые виды - ветка в `NewOutfit` (`heroItems.tsx`);
-   - причёска / цвет волос: `PixelHero.tsx` (`FrontHair`, `BackHair`, `HAIR`);
+   - причёска: `components/heroHair.tsx` (`FRONT` - половинки спрайтов, задний слой `BackHair`, список `HAIR_STYLES`); цвет волос: `HAIR` в `PixelHero.tsx`. Головной убор срезает верх причёски по `HAT_HAIR_CLIP` (`heroItems.tsx`);
    - рамка: правило `.avatar-frame--<id>` в `styles/frames.css` (цвета `--f-base`, `--f-out`, `--f-in` и SVG-плитка 8x8 в `--f-tile`).
 3. Слои снизу вверх: задние предметы, задние волосы, тело, одежда, шея и голова, передние волосы, лицо, аксессуар, головной убор. Шляпа перекрывает причёску. Старые предметы `glasses` (слот `face`) и `headphones`, `cap`, `crown`, `halo` (слот `hat`) рисуются из своих слотов, поэтому новая шапка заменяет старый убор.
-4. Гардероб сам берёт список из `state.cosmetics`. Камера и миниатюра выбирают кадр по слоту (функция `viewFor` в `WardrobeScreen.tsx`, части героя в `HERO_PARTS`).
+4. Гардероб сам берёт список из `state.cosmetics` в том порядке, в каком его отдаёт сервер: `cosmetic_sort_key` в `backend/game.py` («ничего» первым, затем уровень, цена, редкость, название). Клиент не пересортировывает, порядок не зависит от владения. Камера и миниатюра выбирают кадр по слоту (функция `viewFor` в `WardrobeScreen.tsx`, части героя в `HERO_PARTS`).
 5. Новый слот: ключ в `AVATAR_KEYS` и значение по умолчанию в `DEFAULT_AVATAR` (старые аватары в БД без ключа получают его при загрузке, миграция не нужна), тип в `COSMETIC_TYPES`, `CosmeticType` и `AvatarConfig` в `types.ts`, вкладка в `ZONES` гардероба.
-6. Проверка: `tests/test_cosmetics.py` падает, если у id из каталога нет рисунка (ищет id в `PixelHero.tsx`, `heroItems.tsx`, `AvatarFrame.tsx`, `frames.css`), если у рамки нет своего стиля, или если поля предмета некорректны.
+6. Проверка: `tests/test_cosmetics.py` падает, если у id из каталога нет рисунка (ищет id в `PixelHero.tsx`, `heroItems.tsx`, `heroHair.tsx`, `AvatarFrame.tsx`, `frames.css`), а также проверяет порядок `state.cosmetics`, если у рамки нет своего стиля, или если поля предмета некорректны.
 
 ### Эндпоинт
 

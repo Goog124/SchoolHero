@@ -12,3 +12,4 @@ static/
 catalog.json
 data/catalog.json
 data/sandbox_boot_id
+dist/

@@ -135,13 +135,13 @@ def test_removed_student_cannot_return_to_the_same_class(client, school):
         headers=hdr(PUPIL),
     )
     assert onboarding_code.status_code == 403
-    check = client.get(f"/api/school/check-code?code={school['8А']['invite_code']}", headers=hdr(PUPIL)).json()
+    check = client.post("/api/school/check-code", json={"code": school['8А']['invite_code']}, headers=hdr(PUPIL)).json()
     assert check["valid"] is False and message in check["detail"]
     assert state(client, PUPIL)["viewer"]["class_id"] is None
     # the class is still listed for him; others can still pick it
     listed = client.get("/api/school/catalog?city=Тула", headers=hdr(PUPIL)).json()
     assert cid in [c["id"] for c in listed["classes"]]
-    other = client.get(f"/api/school/check-code?code={school['8А']['invite_code']}", headers=hdr(PUPIL2)).json()
+    other = client.post("/api/school/check-code", json={"code": school['8А']['invite_code']}, headers=hdr(PUPIL2)).json()
     assert other["valid"] is True
 
 

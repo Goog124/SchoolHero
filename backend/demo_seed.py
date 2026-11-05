@@ -281,6 +281,34 @@ def _seed_events(conn, user_id: int, xp: int, rng: random.Random) -> None:
         created_events += 1
 
 
+def _balance_events(conn, user_id: int | None = None) -> None:
+    """Attribute seeded events to the student's class and add one old event
+    for XP earned before the seeded week, so class ratings (sum of events
+    earned in the class) match the heroes' XP."""
+    where = "AND u.id = ?" if user_id is not None else ""
+    params = (user_id,) if user_id is not None else ()
+    conn.execute(
+        "UPDATE xp_events SET class_id = (SELECT class_id FROM users WHERE users.id = xp_events.user_id) "
+        "WHERE class_id IS NULL" + (" AND user_id = ?" if user_id is not None else ""),
+        params,
+    )
+    rows = conn.execute(
+        "SELECT u.id, u.xp, u.class_id, COALESCE(SUM(e.amount), 0) AS earned "
+        "FROM users u LEFT JOIN xp_events e ON e.user_id = u.id "
+        "WHERE u.role = 'student' AND u.class_id IS NOT NULL " + where + " GROUP BY u.id",
+        params,
+    ).fetchall()
+    moment = utc_sql(now_local() - timedelta(days=30))
+    for row in rows:
+        rest = int(row["xp"]) - int(row["earned"])
+        if rest > 0:
+            conn.execute(
+                "INSERT INTO xp_events (user_id, amount, reason, category, created_at, class_id) "
+                "VALUES (?, ?, 'Опыт прошлых недель', NULL, ?, ?)",
+                (row["id"], rest, moment, row["class_id"]),
+            )
+
+
 def seed_demo_database(conn) -> None:
     exists = conn.execute("SELECT COUNT(*) AS n FROM schools").fetchone()["n"]
     if exists:
@@ -450,6 +478,7 @@ def seed_demo_database(conn) -> None:
 
     # Archived history for the demo viewer is inserted per viewer by
     # seed_demo_progress(); the challenge ids are looked up by title.
+    _balance_events(conn)
     conn.commit()
 
 
@@ -550,4 +579,5 @@ def seed_demo_progress(conn, user_id: int, class_id: int) -> None:
             user_id,
         ),
     )
+    _balance_events(conn, user_id)
     conn.commit()

@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 from .config import Settings
-from .db import school_key
+from .db import immediate, school_key
 from .game import utc_sql
 from .ratelimit import limiter
 from .service import GameError, director_school_ids
@@ -191,8 +191,20 @@ def create_school(
     return school_id
 
 
-def _require_director_of(conn, viewer: sqlite3.Row, settings: Settings, school_id: int) -> sqlite3.Row:
-    """The school row, only if the viewer is a real director of it."""
+REJECTED_SCHOOL_MESSAGE = (
+    "Школа отклонена администратором платформы. Управление классами и кодами "
+    "недоступно, пока администратор не восстановит школу."
+)
+
+
+def _require_director_of(
+    conn, viewer: sqlite3.Row, settings: Settings, school_id: int, *, manage: bool = True
+) -> sqlite3.Row:
+    """The school row, only if the viewer is a real director of it.
+
+    ``manage`` (default) also refuses a school rejected by the platform:
+    its director may still look at it but not change classes or codes.
+    """
     school = conn.execute("SELECT * FROM schools WHERE id = ?", (school_id,)).fetchone()
     if (
         school is None
@@ -201,6 +213,8 @@ def _require_director_of(conn, viewer: sqlite3.Row, settings: Settings, school_i
         or settings.demo_mode
     ):
         raise GameError("Школа не найдена", 404)
+    if manage and school["status"] == "rejected":
+        raise GameError(REJECTED_SCHOOL_MESSAGE, 403)
     return school
 
 
@@ -260,16 +274,27 @@ def update_class(
 
 
 def delete_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int) -> None:
+    """Delete an empty class.
+
+    A class with members, tasks (and so submissions) or earned XP keeps its
+    history and cannot be deleted (400). Exclusions and catalog teacher
+    assignments only make sense for this class and are deleted with it.
+    """
     _require_class_of_director(conn, viewer, settings, class_id)
-    busy = conn.execute(
-        "SELECT (SELECT COUNT(*) FROM users WHERE class_id = ?) + "
-        "(SELECT COUNT(*) FROM challenges WHERE class_id = ?) AS n",
-        (class_id, class_id),
-    ).fetchone()["n"]
-    if busy:
-        raise GameError("В классе уже есть ученики или задания, удалить его нельзя")
-    conn.execute("DELETE FROM class_staff WHERE class_id = ?", (class_id,))
-    conn.execute("DELETE FROM classes WHERE id = ?", (class_id,))
+    with immediate(conn):
+        busy = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM users WHERE class_id = ?) AS members, "
+            "(SELECT COUNT(*) FROM challenges WHERE class_id = ?) AS tasks, "
+            "(SELECT COUNT(*) FROM xp_events WHERE class_id = ?) AS events",
+            (class_id, class_id, class_id),
+        ).fetchone()
+        if busy["members"]:
+            raise GameError("В классе есть ученики или педагоги, удалить его нельзя")
+        if busy["tasks"] or busy["events"]:
+            raise GameError("У класса есть задания или история опыта, удалить его нельзя")
+        conn.execute("DELETE FROM class_exclusions WHERE class_id = ?", (class_id,))
+        conn.execute("DELETE FROM class_staff WHERE class_id = ?", (class_id,))
+        conn.execute("DELETE FROM classes WHERE id = ?", (class_id,))
 
 
 def reset_code(
@@ -286,7 +311,7 @@ def reset_code(
 
 
 def select_school(conn, viewer: sqlite3.Row, settings: Settings, school_id: int) -> None:
-    _require_director_of(conn, viewer, settings, school_id)
+    _require_director_of(conn, viewer, settings, school_id, manage=False)
     conn.execute("UPDATE users SET school_id = ? WHERE id = ?", (school_id, viewer["id"]))
 
 

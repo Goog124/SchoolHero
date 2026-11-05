@@ -124,7 +124,11 @@ export const api = {
   },
 
   checkInviteCode(code: string): Promise<SchoolClassInfo> {
-    return request<SchoolClassInfo>(`/api/school/check-code?code=${encodeURIComponent(code)}`);
+    // POST: the code stays out of URLs and access logs.
+    return request<SchoolClassInfo>('/api/school/check-code', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
   },
 
   getSchoolCatalog(

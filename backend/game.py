@@ -451,7 +451,7 @@ ACHIEVEMENTS = [
     {
         "id": "team",
         "title": "Командный дух",
-        "description": "Войди с классом в топ-3 города",
+        "description": "Войди с классом в топ-3 общего рейтинга классов",
         "icon": "users",
         "target": 3,
     },
@@ -675,8 +675,29 @@ def validate_avatar_patch(
 # ---------------------------------------------------------------------------
 
 
+def current_streak(streak: int | None, last_active_date: str | None) -> int:
+    """Streak as of today: a stored streak is broken once a whole day is missed.
+
+    The stored value only changes when the student acts, so it is
+    recomputed on every read from ``last_active_date``.
+    """
+    if not streak or not last_active_date:
+        return 0
+    try:
+        last = date.fromisoformat(str(last_active_date))
+    except ValueError:
+        return 0
+    if (today_local() - last).days > 1:
+        return 0
+    return int(streak)
+
+
 def mark_active(conn, user_id: int) -> int:
-    """Mark today as an active day and update the streak. Returns new streak."""
+    """Mark today as an active day of the student and update the streak.
+
+    Called only for the student's own actions (sending work), never when a
+    teacher approves work or awards XP. Returns the new streak.
+    """
     today = today_local()
     today_iso = today.isoformat()
     row = conn.execute(
@@ -687,7 +708,7 @@ def mark_active(conn, user_id: int) -> int:
     last_active = row["last_active_date"]
     streak = int(row["streak"] or 0)
     if last_active == today_iso:
-        pass
+        streak = max(1, streak)
     elif last_active == (today - timedelta(days=1)).isoformat():
         streak += 1
     else:
@@ -704,6 +725,9 @@ def mark_active(conn, user_id: int) -> int:
     return streak
 
 
+_CURRENT_CLASS = object()
+
+
 def award_xp(
     conn,
     user_id: int,
@@ -711,18 +735,36 @@ def award_xp(
     reason: str,
     category: str | None = None,
     created_at: str | None = None,
+    *,
+    class_id: Any = _CURRENT_CLASS,
+    source: str | None = None,
+    awarded_by: int | None = None,
 ) -> dict[str, Any]:
-    """Add XP and an event. Returns level-up details for the recipient."""
-    row = conn.execute("SELECT xp FROM users WHERE id = ?", (user_id,)).fetchone()
+    """Add XP and an event. Returns level-up details for the recipient.
+
+    The increment is a single ``xp = xp + ?`` statement and the level bonus
+    is computed from the value it produced, so concurrent awards never lose
+    an update. ``class_id`` is the class the XP counts for (default: the
+    student's current class).
+    """
+    amount = int(amount)
+    rows = conn.execute(
+        "UPDATE users SET xp = xp + ? WHERE id = ? RETURNING xp, class_id",
+        (amount, user_id),
+    ).fetchall()
+    row = rows[0] if rows else None
     if row is None:
         raise ValueError("Ученик не найден")
-    old_xp = int(row["xp"])
-    new_xp = old_xp + int(amount)
-    conn.execute("UPDATE users SET xp = ? WHERE id = ?", (new_xp, user_id))
+    new_xp = int(row["xp"])
+    old_xp = new_xp - amount
+    event_class = row["class_id"] if class_id is _CURRENT_CLASS else class_id
     conn.execute(
-        "INSERT INTO xp_events (user_id, amount, reason, category, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user_id, int(amount), reason, category, created_at or utc_sql()),
+        "INSERT INTO xp_events (user_id, amount, reason, category, created_at, "
+        "class_id, source, awarded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id, amount, reason, category, created_at or utc_sql(),
+            event_class, source, awarded_by,
+        ),
     )
     levels = xp_between_levels(old_xp, new_xp)
     bonus = earned_sparks_for_levels(levels)
@@ -785,7 +827,7 @@ def achievements_for(conn, user, class_rank: int | None) -> list[dict[str, Any]]
     counts = {row["category"]: int(row["n"]) for row in approved}
     total = sum(counts.values())
     level = level_info(int(user["xp"]))["level"]
-    streak = int(user["streak"] or 0)
+    streak = current_streak(user["streak"], user["last_active_date"])
 
     progress = {
         "first_step": total,

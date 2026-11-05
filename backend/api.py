@@ -5,9 +5,9 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Annotated, Any, Iterator
+from typing import Annotated, Any, Iterator, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from .config import Settings
@@ -40,23 +40,38 @@ from .service import (
 )
 
 
+# SQLite integers are 64-bit: bigger ids would overflow (500) instead of 404.
+MAX_ID = 2**62
+IdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
+Id = Annotated[int, Field(ge=1, le=MAX_ID)]
+# 0 / null mean "not chosen" for optional class ids (kept for old clients).
+OptionalClassId = Annotated[int | None, Field(ge=0, le=MAX_ID)]
+
+
 class RoleBody(BaseModel):
     role: str
 
 
 class SubmitBody(BaseModel):
-    proof: str = Field(default="", max_length=300)
-    proof_url: str = Field(default="", max_length=500)
+    # Exact rules (3-1000 chars after trim, http(s) link up to 500) are checked
+    # in service.submit_challenge with readable 400 messages; these are caps.
+    proof: str = Field(default="", max_length=4000)
+    proof_url: str = Field(default="", max_length=2000)
+
 
 class BatchReviewBody(BaseModel):
-    completion_ids: list[int] = Field(min_length=1, max_length=100)
-    action: str
+    completion_ids: list[Id] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject"]
     reason: str = Field(default="", max_length=200)
 
 
 class ReviewBody(BaseModel):
-    action: str
+    action: Literal["approve", "reject"]
     reason: str = Field(default="", max_length=200)
+
+
+class CheckCodeBody(BaseModel):
+    code: str = Field(default="", max_length=32)
 
 
 class ChallengeBody(BaseModel):
@@ -68,13 +83,13 @@ class ChallengeBody(BaseModel):
     deadline: str = ""
     subject: str = Field(default="Общее", max_length=60)
     proof_type: str = Field(default="text", max_length=20)
-    class_id: int | None = None
+    class_id: OptionalClassId = None
 
 
 class RewardStudentBody(BaseModel):
-    student_id: int
+    student_id: Id
     amount: int = Field(default=50, ge=10, le=300)
-    reason: str = Field(default="Активность на уроке", max_length=120)
+    reason: str = Field(min_length=3, max_length=120)
 
 
 class EquipBody(BaseModel):
@@ -88,7 +103,7 @@ class BuyBody(BaseModel):
 
 class JoinSchoolBody(BaseModel):
     invite_code: str = Field(default="", max_length=32)
-    class_id: int | None = None
+    class_id: OptionalClassId = None
 
 
 class NewClassBody(BaseModel):
@@ -129,7 +144,7 @@ class OnboardingBody(BaseModel):
     last_name: str = Field(default="", max_length=32)
     avatar: dict[str, str] = Field(default_factory=dict)
     invite_code: str = Field(default="", max_length=32)
-    class_id: int | None = None
+    class_id: OptionalClassId = None
 
 
 @dataclass
@@ -147,7 +162,10 @@ def _context(
     client_id: str | None,
 ) -> Iterator[Context]:
     settings: Settings = request.app.state.settings
-    conn = connect(settings.db_path)
+    # One connection per request. FastAPI may open it in one worker thread
+    # and run the endpoint in another, so the thread check is off; the
+    # connection is never shared between requests or used concurrently.
+    conn = connect(settings.db_path, check_same_thread=False)
     try:
         try:
             identity = identity_from_request(init_data, client_id, settings)
@@ -189,12 +207,13 @@ def state(ctx: Context = Depends(get_context)) -> dict[str, Any]:
     return build_state(ctx.conn, ctx.user, ctx.settings)
 
 
-@router.get("/school/check-code")
+@router.post("/school/check-code")
 def school_check_code(
-    code: str = "", ctx: Context = Depends(get_context)
+    payload: CheckCodeBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
+    # POST body, not a query string: invite codes must not land in access logs.
     registration.guard_code_attempts(ctx.settings, int(ctx.user["id"]))
-    info = lookup_class_by_code(ctx.conn, code)
+    info = lookup_class_by_code(ctx.conn, payload.code)
     if info and info["kind"] == "student" and is_excluded(
         ctx.conn, int(ctx.user["id"]), int(info["class_id"])
     ):
@@ -212,9 +231,9 @@ def school_check_code(
 def school_catalog(
     city: str = "",
     q: str = "",
-    limit: int = 500,
+    limit: Annotated[int, Query(ge=-1_000_000, le=1_000_000)] = 500,
     only_cities: bool = False,
-    offset: int = 0,
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
     return get_school_catalog(
@@ -224,7 +243,7 @@ def school_catalog(
 
 @router.get("/school/cities")
 def school_cities(
-    q: str = "", limit: int = 10, ctx: Context = Depends(get_context)
+    q: str = "", limit: Annotated[int, Query(ge=-1000, le=1000)] = 10, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     return search_cities(ctx.conn, q, limit)
 
@@ -257,7 +276,7 @@ def school_create(
 
 @router.post("/school/{school_id}/classes")
 def school_add_class(
-    school_id: int, payload: NewClassBody, ctx: Context = Depends(get_context)
+    school_id: IdPath, payload: NewClassBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.add_class(
         ctx.conn, ctx.user, ctx.settings, school_id, payload.name, payload.weekly_goal
@@ -267,7 +286,7 @@ def school_add_class(
 
 
 @router.post("/school/{school_id}/select")
-def school_select(school_id: int, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+def school_select(school_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     registration.select_school(ctx.conn, ctx.user, ctx.settings, school_id)
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
@@ -275,7 +294,7 @@ def school_select(school_id: int, ctx: Context = Depends(get_context)) -> dict[s
 
 @router.patch("/school/classes/{class_id}")
 def school_update_class(
-    class_id: int, payload: UpdateClassBody, ctx: Context = Depends(get_context)
+    class_id: IdPath, payload: UpdateClassBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.update_class(
         ctx.conn, ctx.user, ctx.settings, class_id, payload.name, payload.weekly_goal
@@ -285,7 +304,7 @@ def school_update_class(
 
 
 @router.delete("/school/classes/{class_id}")
-def school_delete_class(class_id: int, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+def school_delete_class(class_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     registration.delete_class(ctx.conn, ctx.user, ctx.settings, class_id)
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
@@ -293,7 +312,7 @@ def school_delete_class(class_id: int, ctx: Context = Depends(get_context)) -> d
 
 @router.post("/school/classes/{class_id}/codes")
 def school_reset_code(
-    class_id: int, payload: CodeResetBody, ctx: Context = Depends(get_context)
+    class_id: IdPath, payload: CodeResetBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.reset_code(ctx.conn, ctx.user, ctx.settings, class_id, payload.kind)
     ctx.conn.commit()
@@ -302,7 +321,7 @@ def school_reset_code(
 
 @router.post("/admin/schools/{school_id}/status")
 def admin_school_status(
-    school_id: int, payload: SchoolStatusBody, ctx: Context = Depends(get_context)
+    school_id: IdPath, payload: SchoolStatusBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     registration.set_school_status(ctx.conn, ctx.user, ctx.settings, school_id, payload.status)
     ctx.conn.commit()
@@ -352,7 +371,7 @@ def buy(payload: BuyBody, ctx: Context = Depends(get_context)) -> dict[str, Any]
 
 @router.post("/challenges/{challenge_id}/submit")
 def submit(
-    challenge_id: int,
+    challenge_id: IdPath,
     payload: SubmitBody,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
@@ -387,7 +406,7 @@ def create(
 
 @router.post("/challenges/{challenge_id}/archive")
 def archive(
-    challenge_id: int, ctx: Context = Depends(get_context)
+    challenge_id: IdPath, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     archive_challenge(ctx.conn, ctx.user, ctx.settings, challenge_id)
     ctx.conn.commit()
@@ -416,7 +435,7 @@ def batch_review(
 
 @router.post("/reviews/{completion_id}")
 def review(
-    completion_id: int,
+    completion_id: IdPath,
     payload: ReviewBody,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
@@ -437,7 +456,7 @@ def review(
 
 @router.post("/teacher/students/{student_id}/remove")
 def teacher_remove_student(
-    student_id: int,
+    student_id: IdPath,
     payload: RemoveStudentBody,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
@@ -448,7 +467,7 @@ def teacher_remove_student(
 
 @router.post("/teacher/students/{student_id}/restore")
 def teacher_restore_student(
-    student_id: int, ctx: Context = Depends(get_context)
+    student_id: IdPath, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     restore_student(ctx.conn, ctx.user, ctx.settings, student_id)
     ctx.conn.commit()

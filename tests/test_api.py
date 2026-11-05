@@ -149,7 +149,7 @@ def test_reject_returns_submission_to_student(demo_client):
     )
     demo_client.post(
         f"/api/challenges/{challenge['id']}/submit",
-        json={"proof": "Ходил на робототехнику."},
+        json={"proof": "Ходил на робототехнику.", "proof_url": "https://example.org/proof"},
         headers=DEMO_HEADERS,
     )
     teacher = switch_role(demo_client, "teacher")
@@ -182,7 +182,7 @@ def test_reject_returns_submission_to_student(demo_client):
 
     resubmitted = demo_client.post(
         f"/api/challenges/{challenge['id']}/submit",
-        json={"proof": "Фото прикрепил в чате класса."},
+        json={"proof": "Фото прикрепил в чате класса.", "proof_url": "https://example.org/proof"},
         headers=DEMO_HEADERS,
     )
     assert resubmitted.status_code == 200
@@ -388,7 +388,7 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     )
     demo_client.post(
         f"/api/challenges/{challenge['id']}/submit",
-        json={"proof": "Записался в театр."},
+        json={"proof": "Записался в театр.", "proof_url": "https://example.org/proof"},
         headers=DEMO_HEADERS,
     )
     switch_role(demo_client, "teacher")
@@ -556,7 +556,7 @@ def test_teacher_reward_student(demo_client):
 
 def test_school_check_code_and_catalog(demo_client):
     # Test valid code KVANT-8A
-    resp = demo_client.get("/api/school/check-code?code=KVANT-8A", headers=DEMO_HEADERS)
+    resp = demo_client.post("/api/school/check-code", json={"code": "KVANT-8A"}, headers=DEMO_HEADERS)
     assert resp.status_code == 200
     data = resp.json()
     assert data["valid"] is True
@@ -565,7 +565,7 @@ def test_school_check_code_and_catalog(demo_client):
     assert data["teacher_name"] == "Константин Зверев"
 
     # Test invalid code
-    bad_resp = demo_client.get("/api/school/check-code?code=NONEXISTENT", headers=DEMO_HEADERS)
+    bad_resp = demo_client.post("/api/school/check-code", json={"code": "NONEXISTENT"}, headers=DEMO_HEADERS)
     assert bad_resp.status_code == 200
     assert bad_resp.json()["valid"] is False
 

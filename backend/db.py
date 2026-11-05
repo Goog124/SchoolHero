@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 SCHEMA = """
@@ -98,7 +100,13 @@ CREATE TABLE IF NOT EXISTS xp_events (
     amount INTEGER NOT NULL,
     reason TEXT NOT NULL,
     category TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- class the XP was earned in: class ratings count only their own events,
+    -- so a student who changes class does not carry XP into the new rating
+    class_id INTEGER REFERENCES classes(id),
+    -- 'challenge' (approved work) or 'manual' (teacher reward); NULL for legacy
+    source TEXT,
+    awarded_by INTEGER REFERENCES users(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_xp_events_user ON xp_events(user_id, created_at DESC);
@@ -155,9 +163,16 @@ def backfill_school_keys(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    """Open a connection.
+
+    ``check_same_thread=False`` is for the per-request connection of the API:
+    FastAPI runs a sync dependency and the sync endpoint in (possibly)
+    different worker threads. The connection is still used by one request
+    only and never by two threads at the same time.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=15)
+    conn = sqlite3.connect(db_path, timeout=15, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 15000")
@@ -168,6 +183,28 @@ def connect(db_path: Path) -> sqlite3.Connection:
         deterministic=True,
     )
     return conn
+
+
+@contextmanager
+def immediate(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """Run a multi-step change as one ``BEGIN IMMEDIATE`` transaction.
+
+    The write lock is taken before the first read, so check-then-write
+    sequences (balance, status, limits) cannot interleave with another
+    request. Commits on success, rolls back on any exception. Nested use
+    joins the outer transaction.
+    """
+    if conn.in_transaction:
+        yield conn
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -223,6 +260,20 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     if "proof_type" not in challenge_cols:
         conn.execute("ALTER TABLE challenges ADD COLUMN proof_type TEXT NOT NULL DEFAULT 'text'")
 
+    event_cols = _columns(conn, "xp_events")
+    if "class_id" not in event_cols:
+        conn.execute("ALTER TABLE xp_events ADD COLUMN class_id INTEGER REFERENCES classes(id)")
+        # Legacy events: attributed to the student's current class, once.
+        conn.execute(
+            "UPDATE xp_events SET class_id = "
+            "(SELECT class_id FROM users WHERE users.id = xp_events.user_id) "
+            "WHERE class_id IS NULL"
+        )
+    if "source" not in event_cols:
+        conn.execute("ALTER TABLE xp_events ADD COLUMN source TEXT")
+    if "awarded_by" not in event_cols:
+        conn.execute("ALTER TABLE xp_events ADD COLUMN awarded_by INTEGER REFERENCES users(id)")
+
     if "proof_url" not in _columns(conn, "completions"):
         conn.execute("ALTER TABLE completions ADD COLUMN proof_url TEXT NOT NULL DEFAULT ''")
 
@@ -263,6 +314,8 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_classes_school ON classes(school_id)",
         "CREATE INDEX IF NOT EXISTS idx_xp_events_created ON xp_events(created_at, user_id)",
         "CREATE INDEX IF NOT EXISTS idx_completions_user ON completions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_xp_events_class ON xp_events(class_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_xp_events_manual ON xp_events(source, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_completions_challenge ON completions(challenge_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_schools_status_city ON schools(status, city)",
         "CREATE INDEX IF NOT EXISTS idx_schools_created_by ON schools(created_by)",

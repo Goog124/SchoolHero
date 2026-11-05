@@ -28,21 +28,17 @@ parse_args "$@"
 [ "$(id -u)" -eq 0 ] || { echo "Запустите от root (sudo)"; exit 1; }
 
 # --- .env ---------------------------------------------------------------
-if [ -f "$APP_DIR/.env" ]; then ENV_SRC="$APP_DIR/.env"; else ENV_SRC="$SRC/.env"; fi
-[ -f "$ENV_SRC" ] || { echo "Нет .env (положите его в $SRC)"; exit 1; }
-echo "Использую .env: $ENV_SRC"
-TOKEN="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MAX_BOT_TOKEN=' "$ENV_SRC" | head -1 | cut -d= -f2- | tr -d '[:space:]"'"'" || true)"
-[ -n "$TOKEN" ] || { echo "В $ENV_SRC нет строки MAX_BOT_TOKEN=... или она пуста — прод без токена запускать нельзя"; exit 1; }
-
-# Режимы demo и sandbox входят без подписи MAX: на сервере их быть не должно.
-MODE_LINE="$(grep -E '^[[:space:]]*(export[[:space:]]+)?APP_MODE=' "$ENV_SRC" | tail -1 || true)"
-if [ -n "$MODE_LINE" ]; then
-  MODE_VAL="$(printf '%s' "$MODE_LINE" | cut -d= -f2- | tr -d '[:space:]"'"'")"
-  if [ "$MODE_VAL" != "prod" ]; then
-    echo "В $ENV_SRC указан APP_MODE=$MODE_VAL. На сервере допустим только prod: удалите эту строку или поставьте APP_MODE=prod."
-    exit 1
-  fi
+# Серверный /opt/school-hero/.env главный: если он есть, .env из папки проекта
+# не используется и не копируется. Иначе .env проекта копируется один раз.
+if [ -f "$APP_DIR/.env" ]; then
+  ENV_SRC="$APP_DIR/.env"
+  if [ -f "$SRC/.env" ]; then echo "Есть $APP_DIR/.env — $SRC/.env не используется и не копируется."; fi
+else
+  ENV_SRC="$SRC/.env"
 fi
+[ -f "$ENV_SRC" ] || { echo "Нет .env (положите его в $SRC, образец .env.example)"; exit 1; }
+echo "Использую .env: $ENV_SRC"
+check_env_file "$ENV_SRC"
 
 resolve_domain "$ENV_SRC"
 
@@ -77,25 +73,45 @@ apt-get update -y
 apt-get install -y python3 python3-venv python3-pip rsync curl
 
 # --- пользователь и каталоги ---------------------------------------------
+# Права:
+#   /opt/school-hero          root:root, код только для чтения (сервис его не меняет);
+#   /opt/school-hero/.env     root:schoolhero 640 — systemd читает его как
+#                             EnvironmentFile от root, app.py ещё раз через
+#                             python-dotenv от schoolhero; записать сервис не может;
+#   /var/lib/school-hero      schoolhero 700, файлы внутри 600 (UMask=0077 в юните).
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR" /var/www/certbot
 rsync -a --delete \
   --exclude '.git' --exclude '.venv' --exclude '.idea' --exclude 'node_modules' \
   --exclude '__pycache__' --exclude '.pytest_cache' --exclude 'data' --exclude '.env' --exclude 'catalog.json' \
+  --exclude '/dist' --exclude '/tests' \
   "$SRC/" "$APP_DIR/"
-[ -f "$APP_DIR/.env" ] || install -m 600 "$SRC/.env" "$APP_DIR/.env"
+if [ ! -f "$APP_DIR/.env" ]; then
+  install -m 640 -o root -g "$APP_USER" "$SRC/.env" "$APP_DIR/.env"
+  echo "Скопирован $SRC/.env -> $APP_DIR/.env. Дальше правьте только серверную копию; локальный .env можно удалить."
+fi
 CATALOG_DST="$DATA_DIR/catalog.json"
 # Каталог необязателен: школы можно создавать через регистрацию директора.
-if [ ! -f "$CATALOG_DST" ] && [ -f "$SRC/catalog.json" ]; then install -m 640 "$SRC/catalog.json" "$CATALOG_DST"; fi
-chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR"
-chmod 600 "$APP_DIR/.env"
+if [ ! -f "$CATALOG_DST" ] && [ -f "$SRC/catalog.json" ]; then
+  install -m 600 -o "$APP_USER" -g "$APP_USER" "$SRC/catalog.json" "$CATALOG_DST"
+fi
+chown -R root:root "$APP_DIR"
+chmod 755 "$APP_DIR"
+chown root:"$APP_USER" "$APP_DIR/.env"
+chmod 640 "$APP_DIR/.env"
+chown -R "$APP_USER:$APP_USER" "$DATA_DIR"
+chmod 700 "$DATA_DIR"
+find "$DATA_DIR" -type d -exec chmod 700 {} +
+find "$DATA_DIR" -type f -exec chmod 600 {} +
 ensure_public_url "$APP_DIR/.env"
 
 # --- Python -------------------------------------------------------------
+# Окружение принадлежит root: сервис не может подменить свои зависимости.
 [ -d "$APP_DIR/.venv" ] || python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --upgrade pip -q
+# Только runtime-зависимости; pytest и прочее для разработки — requirements-dev.txt.
 "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
-chown -R "$APP_USER:$APP_USER" "$APP_DIR/.venv"
+chown -R root:root "$APP_DIR/.venv"  # pip работал от root; на всякий случай
 
 # --- systemd ------------------------------------------------------------
 install -m 644 "$SRC/deploy/school-hero.service" /etc/systemd/system/school-hero.service

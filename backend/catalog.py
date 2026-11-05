@@ -2,7 +2,9 @@
 
 The catalog is plain JSON owned by the operator (``CATALOG_FILE``). It is
 applied idempotently on every start, so adding a class means editing the file
-and restarting the service. No users, scores or challenges are ever created
+and restarting the service. ``invite_code`` is used only when a class is
+created; codes of existing classes are managed in the app (re-issue) and are
+not overwritten by the file. No users, scores or challenges are ever created
 from it.
 
 Format::
@@ -82,8 +84,10 @@ def import_catalog(conn: sqlite3.Connection, path: Path) -> bool:
             conn.execute(
                 "INSERT INTO classes (school_id, name, weekly_goal, invite_code) "
                 "VALUES (?, ?, ?, ?) "
+                # The code is set only when the class is created: a code the
+                # director re-issued in the app must survive a restart.
                 "ON CONFLICT(school_id, name) DO UPDATE SET "
-                "weekly_goal = excluded.weekly_goal, invite_code = excluded.invite_code",
+                "weekly_goal = excluded.weekly_goal",
                 (school_id, class_name, goal, code),
             )
             class_id = conn.execute(

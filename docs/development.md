@@ -40,7 +40,7 @@ Python 3.11+ (в Docker-образе 3.12), Node.js 20.19+.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 Copy-Item .env.example .env
 ```
 

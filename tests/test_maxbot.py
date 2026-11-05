@@ -10,7 +10,7 @@ from backend import maxbot
 from tests.conftest import build_client, make_settings
 
 TOKEN = "super-secret-bot-token"
-SECRET = "hook-secret-12345"
+SECRET = "hook-secret-0123456789abcdefghijklmnop"
 HEADERS = {"X-Max-Bot-Api-Secret": SECRET}
 
 

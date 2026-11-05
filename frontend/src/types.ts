@@ -413,7 +413,7 @@ export type DirectorKPI = {
   total_weekly_xp: number;
   completed_fop_tasks?: number;
   social_activity_index?: number;
-  leading_grade?: string;
+  leading_grade?: string | null;
 };
 
 export type DirectorData = {
@@ -459,7 +459,10 @@ export type BatchReviewResult = {
   action: string;
   approved: number;
   rejected: number;
+  failed?: number;
   total: number;
+  counts?: { approved: number; rejected: number; failed: number };
+  errors?: { id: number; detail: string; status: number }[];
 };
 
 export type SubmitResult = {

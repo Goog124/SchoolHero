@@ -1,0 +1,4 @@
+# Зависимости для разработки и тестов. Боевой сервер и Docker-образ
+# ставят только requirements.txt.
+-r requirements.txt
+pytest>=8.0,<9

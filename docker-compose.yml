@@ -34,6 +34,14 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - school_hero_data:/data
+    # Корневая ФС только для чтения: приложение пишет лишь в /data (база,
+    # каталог) и, возможно, во временные файлы SQLite в /tmp. Байткод Python
+    # не пишется (PYTHONDONTWRITEBYTECODE=1 в образе).
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: 128
+    mem_limit: 512m
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -56,6 +64,8 @@ services:
     init: true
     environment:
       APP_MODE: demo
+      # Внутри контейнера приложение слушает 0.0.0.0, наружу порт открыт только на 127.0.0.1.
+      ALLOW_PUBLIC_DEMO: "1"
       HOST: 0.0.0.0
       PORT: "8000"
       STATIC_DIR: /app/static
@@ -65,13 +75,19 @@ services:
       - "127.0.0.1:8001:8000"
     volumes:
       - school_hero_demo_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: 128
+    mem_limit: 512m
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
 
   caddy:
-    image: caddy:2-alpine
+    # Версия закреплена; как обновить и закрепить по digest — docs/docker.md.
+    image: caddy:2.10.0-alpine
     profiles: ["proxy"]
     restart: unless-stopped
     depends_on:

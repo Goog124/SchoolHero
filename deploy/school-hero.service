@@ -1,12 +1,16 @@
 [Unit]
 Description=School Hero (MAX mini app)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=schoolhero
 Group=schoolhero
 WorkingDirectory=/opt/school-hero
+# .env: владелец root, группа schoolhero, права 640. systemd читает его от root,
+# а app.py ещё раз читает тот же файл через python-dotenv (поэтому группе нужно
+# право чтения). Записать в .env сервис не может.
 EnvironmentFile=/opt/school-hero/.env
 Environment=APP_MODE=prod
 Environment=CATALOG_FILE=/var/lib/school-hero/catalog.json
@@ -15,16 +19,59 @@ Environment=PORT=8000
 Environment=SERVE_FRONTEND=true
 Environment=STATIC_DIR=/opt/school-hero/static
 Environment=DATA_DIR=/var/lib/school-hero
+Environment=PYTHONDONTWRITEBYTECODE=1
 # env перебивает APP_MODE из EnvironmentFile: на сервере всегда prod.
 ExecStart=/usr/bin/env APP_MODE=prod /opt/school-hero/.venv/bin/python app.py
 Restart=on-failure
 RestartSec=3
 
+# --- Права на создаваемые файлы -------------------------------------------
+# База, -wal и -shm создаются с правами 600, каталог данных — 700.
+UMask=0077
+
+# --- Файловая система -----------------------------------------------------
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/school-hero
+# Другие процессы в /proc не видны (systemd 247+, на более старых строка игнорируется с предупреждением).
+ProtectProc=invisible
+
+# --- Привилегии -----------------------------------------------------------
+# Порт 8000 > 1024: никакие capabilities не нужны.
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+
+# --- Ядро -----------------------------------------------------------------
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+
+# --- Сеть -----------------------------------------------------------------
+# Сеть нужна: сервис слушает 127.0.0.1:8000, бот ходит в https://platform-api2.max.ru.
+# AF_UNIX — для journald/stdout. AF_NETLINK не разрешён: glibc в getaddrinfo
+# при отказе netlink считает, что IPv4 и IPv6 доступны, и работает дальше.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# --- Системные вызовы и память -------------------------------------------
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# CPython (без экспериментального JIT 3.13+), uvicorn, uvloop, httptools и
+# httpx не создают исполняемую память, поэтому запрет W+X безопасен. Если
+# после обновления Python или зависимостей сервис падает при старте с
+# SIGSYS/EPERM на mprotect/mmap (journalctl -u school-hero), закомментируйте
+# эту строку и выполните systemctl daemon-reload.
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target

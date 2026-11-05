@@ -47,15 +47,18 @@ npm run build      # пишет в ../static
 ```text
 APP_MODE=prod
 MAX_BOT_TOKEN=<токен бота>
-SCHOOL_APPROVAL=auto
-PLATFORM_ADMIN_MAX_IDS=<MAX id администраторов, если нужно>
+SCHOOL_APPROVAL=manual
+PLATFORM_ADMIN_MAX_IDS=<MAX id администраторов, подтверждающих школы>
 ```
 
 Правила:
 
 - `APP_MODE` в серверном `.env` должен быть `prod`. По документации systemd значения из `EnvironmentFile` перекрывают `Environment=` юнита, поэтому `ExecStart` запускает процесс через `/usr/bin/env APP_MODE=prod ...`: значение юнита всегда выигрывает. Кроме того, `deploy/deploy.sh` отказывается работать, если в `.env` есть `APP_MODE` не `prod`.
 - Пустой `MAX_BOT_TOKEN` скрипт отклонит; сервис без токена в `prod` не стартует.
-- Готовый `.env` скрипт берёт из `/opt/school-hero/.env` (если уже есть), иначе из корня проекта, и ставит права 600.
+- `MAX_WEBHOOK_SECRET` либо пуст, либо не короче 32 символов (`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`). Короткий секрет скрипт отметит предупреждением. Также предупреждения выдаются для `INIT_DATA_MAX_AGE` вне 60..86400 и для `SCHOOL_APPROVAL` не `manual`.
+- `SCHOOL_APPROVAL=manual` рекомендуется для прода: при `auto` любой пользователь MAX может зарегистрировать «школу», и она сразу видна. При `manual` школы подтверждают администраторы из `PLATFORM_ADMIN_MAX_IDS`.
+- `.env` копируется на сервер **только один раз**: если `/opt/school-hero/.env` уже есть, скрипт проверяет и использует его, а `.env` из папки проекта не трогает. Дальше правьте серверную копию.
+- Права на сервере: `/opt/school-hero/.env` - владелец `root`, группа `schoolhero`, `640`. Почему не `600 root`: systemd читает `EnvironmentFile` от root, но `app.py` дополнительно загружает тот же файл через `python-dotenv` уже от пользователя `schoolhero`, и без права чтения процесс упал бы с `PermissionError`. Писать в `.env` сервис не может.
 - Полный список переменных: [configuration.md](configuration.md).
 
 ### 3. Каталог школ - необязательно
@@ -87,9 +90,18 @@ sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
 4. **Фронтенд.** Если `static/index.html` нет, выполняет `npm ci && npm run build` (нужен npm), иначе пропускает. **Уже существующий `static/` не пересобирается** - при обновлении собирайте заново сами.
 5. **Пакеты.** `apt-get update` и установка зависимостей.
 6. **Пользователь и каталоги.** Системный пользователь `schoolhero` (без оболочки), `/opt/school-hero`, `/var/lib/school-hero`, `/var/www/certbot`.
-7. **Копирование.** `rsync -a --delete` проекта в `/opt/school-hero`, кроме `.git`, `.venv`, `.idea`, `node_modules`, `__pycache__`, `.pytest_cache`, `data`, `.env`, `catalog.json`. Выкладывается и `docs/`. Данные вне `/opt`, поэтому не затрагиваются.
-8. **`.env` и каталог.** Копирование `.env` (если в `/opt` его нет), необязательного `catalog.json`; владелец `schoolhero`; права `.env` 600.
-9. **Python.** Виртуальное окружение `/opt/school-hero/.venv`, `pip install -r requirements.txt`.
+7. **Копирование.** `rsync -a --delete` проекта в `/opt/school-hero`, кроме `.git`, `.venv`, `.idea`, `node_modules`, `__pycache__`, `.pytest_cache`, `data`, `.env`, `catalog.json`, `dist`, `tests`. Выкладывается и `docs/`. Данные вне `/opt`, поэтому не затрагиваются.
+8. **`.env`, каталог и права.** Копирование `.env` (только если в `/opt` его нет) и необязательного `catalog.json`. Права:
+
+   | Путь | Владелец | Права |
+   | --- | --- | --- |
+   | `/opt/school-hero` (код, `.venv`) | `root:root` | сервису только чтение |
+   | `/opt/school-hero/.env` | `root:schoolhero` | `640` |
+   | `/var/lib/school-hero` | `schoolhero:schoolhero` | `700` |
+   | файлы в `/var/lib/school-hero` (база, `-wal`, `-shm`, `catalog.json`) | `schoolhero:schoolhero` | `600` |
+
+   Новые файлы базы сервис создаёт с правами `600` (`UMask=0077` в юните).
+9. **Python.** Виртуальное окружение `/opt/school-hero/.venv` (владелец root), `pip install -r requirements.txt` - только runtime-зависимости; `pytest` лежит в `requirements-dev.txt` и на сервер не ставится.
 10. **systemd.** Установка `school-hero.service`, `daemon-reload`, `enable`, `restart`.
 11. **nginx и сертификат.** Если сертификата ещё нет: временный конфиг на порту 80 с `/.well-known/acme-challenge/`, `certbot certonly --webroot`. Затем из шаблона `deploy/nginx.conf.template` (подстановка `__DOMAIN__`) создаётся `/etc/nginx/conf.d/<домен>.conf`; если в системе нет IPv6 (`/proc/net/if_inet6` отсутствует), строки `listen [::]` удаляются; `nginx -t`, `reload`.
 12. **Хук продления.** Создаёт `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` (`systemctl reload nginx`).
@@ -102,15 +114,44 @@ sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
 ### `deploy/nginx.conf.template`
 
 - Порт 80: `/.well-known/acme-challenge/` отдаётся из `/var/www/certbot`, остальное - редирект 301 на HTTPS.
-- Порт 443: TLS 1.2/1.3, сертификаты `/etc/letsencrypt/live/app.example.org/`, HSTS (`max-age=31536000`), `client_max_body_size 2m`, gzip для css/js/json/svg.
-- `location /` проксирует на `http://127.0.0.1:8000` с заголовками `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, таймаут чтения 60 с.
+- `server_tokens off` в обоих server: версия nginx не раскрывается.
+- Порт 443: TLS 1.2/1.3, сертификаты `/etc/letsencrypt/live/app.example.org/`, gzip для css/js/json/svg.
+- Заголовки: `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (одноимённые заголовки приложения скрываются `proxy_hide_header`, чтобы не дублировались). `X-Frame-Options` намеренно не ставится: веб-версия MAX может открывать мини-приложение во фрейме.
+- `client_max_body_size 6m` - под загрузку фото до 5 МБ. Таймауты: `client_body_timeout`/`client_header_timeout` 15 с, `send_timeout` 30 с, `proxy_connect_timeout` 5 с, `proxy_send_timeout`/`proxy_read_timeout` 60 с.
+- Ограничение частоты: `limit_req_zone ... zone=school_hero_api:10m rate=10r/s` объявлена в начале файла (файлы `conf.d` подключаются внутрь `http {}`, там директива допустима). `location /api/` - `burst=40 nodelay`, сверх лимита ответ `429`. Конфиг должен быть на сервере в одном экземпляре: два файла с одной зоной (например, после смены домена остался старый `conf.d/<старый-домен>.conf`) дадут ошибку `nginx -t` «duplicate zone» - удалите старый файл.
+- `location /api/` и `location /` проксируют на `http://127.0.0.1:8000` с заголовками `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`.
 - Установленная копия лежит в `/etc/nginx/conf.d/app.example.org.conf`; правки делайте в репозитории и перезапускайте скрипт, иначе они потеряются (в частности, удаление `listen [::]`).
+
+#### Рекомендация: сервер по умолчанию
+
+Наш конфиг не объявляет `default_server`, потому что на сервере могут быть другие сайты. Если своего сервера по умолчанию на сервере нет, nginx отвечает на запросы с чужим или пустым `Host` (сканеры, обращение по IP) первым подходящим `server`, то есть School Hero. Рекомендуется один раз добавить заглушку, например `/etc/nginx/conf.d/00-default.conf`:
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;   # nginx 1.19.4+: обрыв TLS без сертификата
+    server_name _;
+    server_tokens off;
+    return 444;
+}
+```
+
+Уберите строки `[::]`, если на сервере нет IPv6, и проверьте `nginx -t`.
 
 ### `deploy/school-hero.service`
 
 - Запуск от `schoolhero`, рабочий каталог `/opt/school-hero`, команда `/opt/school-hero/.venv/bin/python app.py`, `Restart=on-failure` с паузой 3 с.
 - `EnvironmentFile=/opt/school-hero/.env`, а также `Environment=`: `APP_MODE=prod`, `CATALOG_FILE=/var/lib/school-hero/catalog.json`, `HOST=127.0.0.1`, `PORT=8000`, `SERVE_FRONTEND=true`, `STATIC_DIR=/opt/school-hero/static`, `DATA_DIR=/var/lib/school-hero`.
-- Усиление: `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome`, запись разрешена только в `/var/lib/school-hero`.
+- `UMask=0077`: файлы базы создаются с правами 600.
+- Файловая система: `ProtectSystem=strict` (запись только в `ReadWritePaths=/var/lib/school-hero`), `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible` (systemd 247+), `PYTHONDONTWRITEBYTECODE=1`.
+- Привилегии: `NoNewPrivileges`, пустые `CapabilityBoundingSet=` и `AmbientCapabilities=`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `RestrictNamespaces`.
+- Ядро: `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`.
+- Сеть: `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` - сеть нужна (порт 8000 и запросы бота к `https://platform-api2.max.ru`).
+- Системные вызовы и память: `SystemCallArchitectures=native`, `SystemCallFilter=@system-service` (запрещённые вызовы получают `EPERM`), `MemoryDenyWriteExecute=true`. CPython без JIT, uvicorn, uvloop, httptools и httpx не создают исполняемую память. Если после обновления Python или зависимостей сервис падает при старте с ошибкой на `mmap`/`mprotect`, закомментируйте `MemoryDenyWriteExecute` и выполните `systemctl daemon-reload`.
+- Оценка: `systemd-analyze security school-hero` (на systemd 255 - около 1.5, «OK»).
 - Один процесс uvicorn без `--workers`; это важно из-за лимитов в памяти ([development.md](development.md#масштабирование-и-пределы)).
 
 Управление:
@@ -155,7 +196,7 @@ sudo certbot renew --dry-run
 Команда `sqlite3` не ставится скриптом: `sudo apt-get install sqlite3`. Копию делайте от имени `schoolhero`, чтобы не создать файлы базы с владельцем root.
 
 ```bash
-sudo install -d -o schoolhero -g schoolhero /var/lib/school-hero/backups
+sudo install -d -m 700 -o schoolhero -g schoolhero /var/lib/school-hero/backups
 sudo -u schoolhero sqlite3 /var/lib/school-hero/school_hero.db \
   ".backup '/var/lib/school-hero/backups/school_hero-$(date +%F).db'"
 ```
@@ -216,6 +257,10 @@ sudo nginx -t
 | --- | --- |
 | `nginx -t` падает на `listen [::]:...` | Сервер без IPv6. Скрипт удаляет такие строки автоматически; при ручной правке удалите `listen [::]:80;` и `listen [::]:443 ssl;` |
 | `nginx -t` падает на `http2 on` | nginx старше 1.25.1. См. требования |
+| `nginx -t`: `duplicate zone "school_hero_api"` | В `conf.d` два конфига School Hero (например, от старого домена). Оставьте один |
+| Клиенты получают 429 | Сработал лимит `/api/` (10 запросов/с, всплеск 40 с одного IP). Если много пользователей за одним NAT (школьная сеть), поднимите `rate`/`burst` в шаблоне |
+| Сервис падает сразу, в журнале `status=31/SYS` | Системный вызов вне `@system-service` или запрет `MemoryDenyWriteExecute`: см. раздел про юнит |
+| В журнале `PermissionError` на `/opt/school-hero/.env` | Права `.env` изменены вручную. Нужно `root:schoolhero 640`: `chown root:schoolhero /opt/school-hero/.env; chmod 640 /opt/school-hero/.env` |
 | 502 Bad Gateway от nginx | Сервис не запущен или падает. `systemctl status school-hero`, `journalctl -u school-hero -n 100`, `curl http://127.0.0.1:8000/api/health` |
 | Сервис перезапускается по кругу, в журнале `APP_MODE=prod требует MAX_BOT_TOKEN` | Токен в `.env` пуст. Заполните `MAX_BOT_TOKEN` и `systemctl restart school-hero` |
 | В журнале `APP_MODE должен быть ...` / `SCHOOL_APPROVAL должен быть ...` | Опечатка в значении переменной |

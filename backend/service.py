@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timezone
 from typing import Any
 
 from .config import Settings
+from .db import immediate
 from .game import (
     BASIC_AVATAR,
     CATEGORIES,
@@ -18,6 +19,7 @@ from .game import (
     achievements_for,
     award_xp,
     cosmetic_state,
+    current_streak,
     deadline_in,
     dump_avatar,
     dump_owned,
@@ -43,6 +45,24 @@ class GameError(Exception):
         super().__init__(message)
         self.message = message
         self.status = status
+
+
+REVIEW_ACTIONS = ("approve", "reject")
+
+# Manual XP from staff (POST /api/teacher/reward), per local (MSK) day.
+MANUAL_XP_PER_STUDENT_DAY = 300  # from all teachers together
+MANUAL_XP_PER_TEACHER_DAY = 3000  # given by one teacher/director
+
+PROOF_MIN, PROOF_MAX = 3, 1000
+PROOF_URL_MAX = 500
+
+_GRADE_RE = re.compile(r"\s*(\d{1,2})")
+
+
+def class_grade(name: str) -> str | None:
+    """Parallel of a class from its leading digits: "10-1" -> "10", "11А" -> "11"."""
+    match = _GRADE_RE.match(str(name or ""))
+    return str(int(match.group(1))) if match else None
 
 
 def effective_role(user: sqlite3.Row, settings: Settings) -> str:
@@ -253,13 +273,16 @@ LEADERBOARD_CAP = 100
 
 
 def _weekly_map(conn, *, class_id: int | None = None) -> dict[int, int]:
-    """Weekly XP per user of one class (empty when there is no class)."""
+    """Weekly XP per user earned in one class (empty when there is no class).
+
+    Only events recorded for this class count: XP earned in another class
+    stays with the student but is not added to the new class.
+    """
     if class_id is None:
         return {}
     rows = conn.execute(
         "SELECT e.user_id, SUM(e.amount) AS xp FROM xp_events e "
-        "JOIN users u ON u.id = e.user_id "
-        "WHERE u.class_id = ? AND e.created_at >= ? GROUP BY e.user_id",
+        "WHERE e.class_id = ? AND e.created_at >= ? GROUP BY e.user_id",
         (class_id, week_start_utc_sql()),
     ).fetchall()
     return {int(row["user_id"]): int(row["xp"] or 0) for row in rows}
@@ -278,28 +301,30 @@ def _class_students(conn, class_id: int | None) -> list[sqlite3.Row]:
 def _class_aggregates(conn, visible_school_id: int | None) -> list[sqlite3.Row]:
     """XP, weekly XP and head count per class, computed by SQL aggregates.
 
-    Classes of schools that are not active (awaiting approval) are visible
-    only to their own school.
+    Class XP is the XP earned *in that class* (``xp_events.class_id``), so a
+    student who moves to another class keeps their XP but does not carry it
+    into the new class rating. Classes of schools that are not active
+    (awaiting approval) are visible only to their own school.
     """
     return conn.execute(
         """
         SELECT c.id, c.name, c.school_id, c.weekly_goal,
                s.name AS school_name, s.city,
-               COALESCE(a.xp, 0) AS xp, COALESCE(a.members, 0) AS members,
-               COALESCE(w.weekly, 0) AS weekly
+               COALESCE(x.xp, 0) AS xp, COALESCE(a.members, 0) AS members,
+               COALESCE(x.weekly, 0) AS weekly
         FROM classes c
         JOIN schools s ON s.id = c.school_id
         LEFT JOIN (
-            SELECT class_id, SUM(xp) AS xp, COUNT(*) AS members
+            SELECT class_id, COUNT(*) AS members
             FROM users WHERE role = 'student' AND class_id IS NOT NULL
             GROUP BY class_id
         ) a ON a.class_id = c.id
         LEFT JOIN (
-            SELECT u.class_id, SUM(e.amount) AS weekly
-            FROM xp_events e JOIN users u ON u.id = e.user_id
-            WHERE u.role = 'student' AND u.class_id IS NOT NULL AND e.created_at >= ?
-            GROUP BY u.class_id
-        ) w ON w.class_id = c.id
+            SELECT class_id, SUM(amount) AS xp,
+                   SUM(CASE WHEN created_at >= ? THEN amount ELSE 0 END) AS weekly
+            FROM xp_events WHERE class_id IS NOT NULL
+            GROUP BY class_id
+        ) x ON x.class_id = c.id
         WHERE s.status = 'active' OR s.id = ?
         ORDER BY c.id
         """,
@@ -319,7 +344,7 @@ def _student_public(row: sqlite3.Row, week_xp: int, viewer_id: int) -> dict[str,
         "weekly_xp": int(week_xp),
         "level": info["level"],
         "level_title": info["title"],
-        "streak": int(row["streak"] or 0),
+        "streak": current_streak(row["streak"], row["last_active_date"]),
         "is_viewer": int(row["id"]) == viewer_id,
     }
 
@@ -465,6 +490,10 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
         completion = completions.get(int(row["id"]))
         if completion is not None:
             status = completion["status"]
+            # Work returned for rework cannot be resent after the deadline:
+            # show it as expired (the reject reason stays visible).
+            if status == "rejected" and is_past(row["deadline"]):
+                status = "expired"
         elif is_past(row["deadline"]):
             status = "expired"
         else:
@@ -501,13 +530,15 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
 
 
 def _feed(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
+    if viewer["class_id"] is None:
+        return []
     rows = conn.execute(
         """
         SELECT e.amount, e.reason, e.category, e.created_at,
                u.first_name, u.last_name, u.avatar, u.id AS user_id
         FROM xp_events e
         JOIN users u ON u.id = e.user_id
-        WHERE u.class_id = ? AND u.role = 'student'
+        WHERE e.class_id = ? AND u.class_id = e.class_id AND u.role = 'student'
         ORDER BY e.created_at DESC, e.id DESC
         LIMIT 12
         """,
@@ -535,9 +566,13 @@ def _student_stats(conn, viewer: sqlite3.Row, week_xp: int) -> dict[str, Any]:
         "SELECT COUNT(*) AS n FROM completions WHERE user_id = ? AND status = 'approved'",
         (viewer["id"],),
     ).fetchone()["n"]
+    # Only work that the current class's teacher can review: pending work of a
+    # previous class is not reviewable after a class change.
     pending = conn.execute(
-        "SELECT COUNT(*) AS n FROM completions WHERE user_id = ? AND status = 'pending'",
-        (viewer["id"],),
+        "SELECT COUNT(*) AS n FROM completions cp "
+        "JOIN challenges c ON c.id = cp.challenge_id "
+        "WHERE cp.user_id = ? AND cp.status = 'pending' AND c.class_id = ?",
+        (viewer["id"], viewer["class_id"]),
     ).fetchone()["n"]
     help_count = conn.execute(
         """
@@ -614,22 +649,22 @@ def _teacher_data(
             FROM completions cp
             JOIN challenges c ON c.id = cp.challenge_id
             JOIN users u ON u.id = cp.user_id AND u.class_id = c.class_id
-            WHERE c.class_id = ? AND cp.status = 'pending' AND c.active = 1
+            WHERE c.class_id = ? AND cp.status = 'pending' AND u.role = 'student'
             GROUP BY cp.user_id
             """,
             (class_id,),
         ).fetchall()
     }
 
-    # Fetch all completions for class students to populate history and attention indicators
+    # Work on this class's challenges (the class of the challenge, not the
+    # student's current class): history and attention indicators.
     all_completions = conn.execute(
         """
         SELECT cp.id, cp.user_id, cp.status, cp.proof, cp.proof_url, cp.created_at, cp.reject_reason,
                c.title, c.category, c.subject, c.xp
         FROM completions cp
         JOIN challenges c ON c.id = cp.challenge_id
-        JOIN users u ON u.id = cp.user_id
-        WHERE u.class_id = ?
+        WHERE c.class_id = ?
         ORDER BY cp.created_at DESC
         """,
         (class_id,),
@@ -714,7 +749,7 @@ def _teacher_data(
                 "weekly_xp": week.get(uid, 0),
                 "level": info["level"],
                 "level_title": info["title"],
-                "streak": int(student["streak"] or 0),
+                "streak": current_streak(student["streak"], student["last_active_date"]),
                 "pending_count": pending_counts.get(uid, 0),
                 "approved_count": len(approved_comps),
                 "rejected_count": len(rejected_comps),
@@ -738,8 +773,7 @@ def _teacher_data(
         """
         SELECT e.created_at, e.amount
         FROM xp_events e
-        JOIN users u ON u.id = e.user_id
-        WHERE u.class_id = ? AND u.role = 'student' AND e.created_at >= ?
+        WHERE e.class_id = ? AND e.created_at >= ?
         """,
         (class_id, week_start_utc_sql()),
     ).fetchall()
@@ -827,52 +861,57 @@ def batch_review_completions(
 ) -> dict[str, Any]:
     if effective_role(viewer, settings) not in {"teacher", "director"}:
         raise GameError("Массовая проверка доступна только педагогу или администрации", 403)
-    approved_count = 0
-    rejected_count = 0
-    results = []
-    for cid in completion_ids:
+    if action not in REVIEW_ACTIONS:
+        raise GameError("Неизвестное действие: ожидается approve или reject")
+    counts = {"approved": 0, "rejected": 0, "failed": 0}
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    # Each item is its own transaction: one failed item does not undo the rest.
+    for cid in dict.fromkeys(completion_ids):
         try:
             res = review_completion(conn, viewer, settings, cid, action, reason)
-            results.append({"id": cid, "success": True, "result": res})
-            if action == "approve":
-                approved_count += 1
-            else:
-                rejected_count += 1
-        except Exception as e:
-            results.append({"id": cid, "success": False, "error": str(e)})
+        except GameError as exc:
+            counts["failed"] += 1
+            errors.append({"id": cid, "detail": exc.message, "status": exc.status})
+            results.append({"id": cid, "success": False, "error": exc.message})
+            continue
+        counts["approved" if action == "approve" else "rejected"] += 1
+        results.append({"id": cid, "success": True, "result": res})
     return {
         "action": action,
-        "approved": approved_count,
-        "rejected": rejected_count,
-        "total": len(completion_ids),
+        "approved": counts["approved"],
+        "rejected": counts["rejected"],
+        "failed": counts["failed"],
+        "total": len(results),
+        "counts": counts,
+        "errors": errors,
         "results": results,
     }
 
 
 def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
     """Figures for one school, computed with SQL aggregates scoped to it."""
+    # XP of a class is the XP earned in it (xp_events.class_id); "active" is a
+    # current member who earned XP in this class this week.
+    week_start = week_start_utc_sql()
     class_rows = conn.execute(
         """
         SELECT c.id, c.name, c.weekly_goal, s.name AS school_name, s.city,
-               COUNT(u.id) AS members,
-               COALESCE(SUM(u.xp), 0) AS xp,
-               COALESCE(SUM(w.weekly), 0) AS weekly_xp,
-               COALESCE(SUM(CASE WHEN w.weekly > 0 THEN 1 ELSE 0 END), 0) AS active
+               (SELECT COUNT(*) FROM users u
+                 WHERE u.class_id = c.id AND u.role = 'student') AS members,
+               (SELECT COALESCE(SUM(e.amount), 0) FROM xp_events e
+                 WHERE e.class_id = c.id) AS xp,
+               (SELECT COALESCE(SUM(e.amount), 0) FROM xp_events e
+                 WHERE e.class_id = c.id AND e.created_at >= ?) AS weekly_xp,
+               (SELECT COUNT(DISTINCT e.user_id) FROM xp_events e
+                 JOIN users u ON u.id = e.user_id
+                 WHERE e.class_id = c.id AND e.created_at >= ? AND e.amount > 0
+                   AND u.class_id = c.id AND u.role = 'student') AS active
         FROM classes c
         JOIN schools s ON s.id = c.school_id
-        LEFT JOIN users u ON u.class_id = c.id AND u.role = 'student'
-        LEFT JOIN (
-            SELECT e.user_id, SUM(e.amount) AS weekly
-            FROM xp_events e
-            JOIN users uu ON uu.id = e.user_id
-            JOIN classes cc ON cc.id = uu.class_id
-            WHERE cc.school_id = ? AND e.created_at >= ?
-            GROUP BY e.user_id
-        ) w ON w.user_id = u.id
         WHERE c.school_id = ?
-        GROUP BY c.id
         """,
-        (school_id, week_start_utc_sql(), school_id),
+        (week_start, week_start, school_id),
     ).fetchall()
 
     total_students = sum(int(r["members"]) for r in class_rows)
@@ -884,9 +923,7 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
     # Grades aggregation (parallel 5..11)
     grades_map: dict[str, dict[str, Any]] = {}
     for c in class_rows:
-        name = c["name"].strip()
-        # Extract leading digit(s) e.g. "8А" -> "8"
-        grade_num = "".join(ch for ch in name if ch.isdigit()) or "Другие"
+        grade_num = class_grade(c["name"]) or "Другие"
         grade_label = f"{grade_num} классы" if grade_num != "Другие" else "Спецгруппы"
         bucket = grades_map.setdefault(
             grade_num,
@@ -931,7 +968,8 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
         key=lambda g: (g["engagement"], g["total_xp"]),
         default=None,
     )
-    leading_grade_label = leading_parallel["label"] if leading_parallel else "8 классы"
+    # No students yet: there is no leading parallel to show.
+    leading_grade_label = leading_parallel["label"] if leading_parallel else None
 
     # Approved tasks of this school grouped by category. The directions follow
     # the school's educational (upbringing) programme sections; "completed_fop_tasks"
@@ -943,7 +981,8 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
         FROM completions cp
         JOIN challenges c ON c.id = cp.challenge_id
         JOIN users u ON u.id = cp.user_id
-        WHERE cp.status = 'approved' AND u.class_id IN (SELECT id FROM classes WHERE school_id = ?)
+        WHERE cp.status = 'approved' AND u.role = 'student'
+          AND c.class_id IN (SELECT id FROM classes WHERE school_id = ?)
         GROUP BY c.category
         """,
         (school_id,),
@@ -1112,7 +1151,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "xp": int(viewer["xp"]),
         "level": level,
         "sparks": int(viewer["sparks"]),
-        "streak": int(viewer["streak"] or 0),
+        "streak": current_streak(viewer["streak"], viewer["last_active_date"]),
         "avatar": avatar,
         "owned": owned,
         "onboarded": bool(viewer["onboarded"]),
@@ -1602,19 +1641,65 @@ def buy_item(conn, viewer: sqlite3.Row, item_id: str) -> None:
         raise GameError("Предмет не найден")
     if item.price <= 0:
         raise GameError("Этот предмет уже доступен")
-    owned = load_owned(viewer["owned"])
-    if item.id in owned:
-        raise GameError("Предмет уже куплен")
-    level = level_info(int(viewer["xp"]))["level"]
-    if level < item.unlock_level:
-        raise GameError(f"Предмет откроется на {item.unlock_level} уровне")
-    if int(viewer["sparks"]) < item.price:
-        raise GameError("Не хватает искр")
-    owned.append(item.id)
-    conn.execute(
-        "UPDATE users SET sparks = sparks - ?, owned = ? WHERE id = ?",
-        (item.price, dump_owned(owned), viewer["id"]),
-    )
+    # Balance and ownership are read inside the write lock, and the debit is
+    # conditional, so two parallel purchases cannot spend the same sparks.
+    with immediate(conn):
+        user = conn.execute(
+            "SELECT xp, sparks, owned FROM users WHERE id = ?", (viewer["id"],)
+        ).fetchone()
+        if user is None:
+            raise GameError("Пользователь не найден", 404)
+        owned = load_owned(user["owned"])
+        if item.id in owned:
+            raise GameError("Предмет уже куплен")
+        level = level_info(int(user["xp"]))["level"]
+        if level < item.unlock_level:
+            raise GameError(f"Предмет откроется на {item.unlock_level} уровне")
+        owned.append(item.id)
+        cursor = conn.execute(
+            "UPDATE users SET sparks = sparks - ?, owned = ? WHERE id = ? AND sparks >= ?",
+            (item.price, dump_owned(owned), viewer["id"], item.price),
+        )
+        if cursor.rowcount != 1:
+            raise GameError("Не хватает искр")
+
+
+_URL_RE = re.compile(r"https?://[^\s/$.?#][^\s]*", re.IGNORECASE)
+
+
+def _clean_proof(proof: Any, proof_url: Any, proof_type: str) -> tuple[str, str]:
+    """Server-side rules for a submission (the client checks the same)."""
+    text = str(proof or "").strip()
+    if not PROOF_MIN <= len(text) <= PROOF_MAX:
+        raise GameError(
+            f"Опишите, что сделано: от {PROOF_MIN} до {PROOF_MAX} символов"
+        )
+    url = str(proof_url or "").strip()
+    if url:
+        if len(url) > PROOF_URL_MAX or not _URL_RE.fullmatch(url):
+            raise GameError(
+                "Ссылка должна начинаться с http:// или https:// "
+                f"и быть не длиннее {PROOF_URL_MAX} символов"
+            )
+    elif proof_type == "link":
+        raise GameError("Для этого задания нужна ссылка на материал")
+    return text, url
+
+
+def _require_school_open(conn, class_id: int | None) -> None:
+    """Classes of a school rejected by the platform are read-only."""
+    if class_id is None:
+        return
+    row = conn.execute(
+        "SELECT s.status FROM classes c JOIN schools s ON s.id = c.school_id WHERE c.id = ?",
+        (class_id,),
+    ).fetchone()
+    if row is not None and row["status"] == "rejected":
+        raise GameError(
+            "Школа отклонена администратором платформы. Действия в классе недоступны, "
+            "пока школа не будет восстановлена.",
+            403,
+        )
 
 
 def submit_challenge(
@@ -1625,46 +1710,54 @@ def submit_challenge(
     proof: str,
     proof_url: str = "",
 ) -> dict[str, Any]:
-    if effective_role(viewer, settings) == "teacher":
-        raise GameError("В режиме педагога нельзя отправлять задания", 403)
-    if viewer["class_id"] is None:
-        raise GameError("Сначала выберите класс")
-    challenge = conn.execute(
-        "SELECT * FROM challenges WHERE id = ? AND active = 1", (challenge_id,)
-    ).fetchone()
-    if challenge is None:
-        raise GameError("Задание не найдено", 404)
-    if int(challenge["class_id"]) != int(viewer["class_id"]):
-        raise GameError("Задание для другого класса", 403)
-    if is_past(challenge["deadline"]):
-        raise GameError("Срок выполнения уже истёк")
-    existing = conn.execute(
-        "SELECT * FROM completions WHERE user_id = ? AND challenge_id = ?",
-        (viewer["id"], challenge_id),
-    ).fetchone()
-    if existing and existing["status"] in {"pending", "approved"}:
-        raise GameError(
-            "Задание уже на проверке" if existing["status"] == "pending" else "Задание уже выполнено"
-        )
-    proof = str(proof or "").strip()[:300]
-    proof_url = str(proof_url or "").strip()[:500]
-    if existing:
-        conn.execute(
-            """
-            UPDATE completions
-            SET status = 'pending', proof = ?, proof_url = ?, created_at = ?, reviewed_at = NULL,
-                reviewed_by = NULL, reject_reason = ''
-            WHERE id = ?
-            """,
-            (proof, proof_url, utc_sql(), existing["id"]),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO completions (user_id, challenge_id, status, proof, proof_url, created_at) "
-            "VALUES (?, ?, 'pending', ?, ?, ?)",
-            (viewer["id"], challenge_id, proof, proof_url, utc_sql()),
-        )
-    mark_active(conn, int(viewer["id"]))
+    if effective_role(viewer, settings) != "student":
+        raise GameError("Отправлять задания может только ученик", 403)
+    with immediate(conn):
+        user = conn.execute("SELECT * FROM users WHERE id = ?", (viewer["id"],)).fetchone()
+        if user is None or user["class_id"] is None:
+            raise GameError("Сначала выберите класс")
+        challenge = conn.execute(
+            "SELECT * FROM challenges WHERE id = ? AND active = 1", (challenge_id,)
+        ).fetchone()
+        if challenge is None:
+            raise GameError("Задание не найдено", 404)
+        if int(challenge["class_id"]) != int(user["class_id"]):
+            raise GameError("Задание для другого класса", 403)
+        _require_school_open(conn, int(challenge["class_id"]))
+        if is_past(challenge["deadline"]):
+            raise GameError("Срок выполнения уже истёк")
+        proof, proof_url = _clean_proof(proof, proof_url, challenge["proof_type"] or "text")
+        existing = conn.execute(
+            "SELECT * FROM completions WHERE user_id = ? AND challenge_id = ?",
+            (viewer["id"], challenge_id),
+        ).fetchone()
+        if existing and existing["status"] in {"pending", "approved"}:
+            raise GameError(
+                "Задание уже на проверке" if existing["status"] == "pending" else "Задание уже выполнено"
+            )
+        if existing:
+            cursor = conn.execute(
+                """
+                UPDATE completions
+                SET status = 'pending', proof = ?, proof_url = ?, created_at = ?, reviewed_at = NULL,
+                    reviewed_by = NULL, reject_reason = ''
+                WHERE id = ? AND status = 'rejected'
+                """,
+                (proof, proof_url, utc_sql(), existing["id"]),
+            )
+            if cursor.rowcount != 1:
+                raise GameError("Задание уже на проверке")
+        else:
+            try:
+                conn.execute(
+                    "INSERT INTO completions (user_id, challenge_id, status, proof, proof_url, created_at) "
+                    "VALUES (?, ?, 'pending', ?, ?, ?)",
+                    (viewer["id"], challenge_id, proof, proof_url, utc_sql()),
+                )
+            except sqlite3.IntegrityError:
+                raise GameError("Задание уже отправлено на проверку") from None
+        # Sending own work is the student's activity for the day (streak).
+        mark_active(conn, int(viewer["id"]))
     return {"status": "pending", "challenge_title": challenge["title"]}
 
 
@@ -1678,59 +1771,70 @@ def review_completion(
 ) -> dict[str, Any]:
     if effective_role(viewer, settings) not in {"teacher", "director"}:
         raise GameError("Подтверждать достижения может только педагог или администратор", 403)
-    row = conn.execute(
-        """
-        SELECT cp.*, c.title, c.xp, c.category, c.class_id,
-               u.first_name, u.last_name, u.xp AS student_xp, u.class_id AS student_class
-        FROM completions cp
-        JOIN challenges c ON c.id = cp.challenge_id
-        JOIN users u ON u.id = cp.user_id
-        WHERE cp.id = ?
-        """,
-        (completion_id,),
-    ).fetchone()
-    if row is None:
-        raise GameError("Заявка не найдена", 404)
-    if not can_manage_class(conn, viewer, settings, int(row["class_id"])):
-        raise GameError("Заявка из другого класса", 403)
-    if row["student_class"] is None or int(row["student_class"]) != int(row["class_id"]):
-        raise GameError("Ученик больше не состоит в классе")
-    if row["status"] != "pending":
-        raise GameError("Эта заявка уже проверена")
-    if action not in {"approve", "reject"}:
-        raise GameError("Неизвестное действие")
-    now = utc_sql()
-    if action == "reject":
-        conn.execute(
-            "UPDATE completions SET status = 'rejected', reject_reason = ?, "
-            "reviewed_at = ?, reviewed_by = ? WHERE id = ?",
-            (str(reason or "").strip()[:200], now, viewer["id"], completion_id),
-        )
-        return {
-            "status": "rejected",
-            "student_name": f"{row['first_name']} {row['last_name']}".strip(),
-            "xp_awarded": 0,
-        }
+    if action not in REVIEW_ACTIONS:
+        raise GameError("Неизвестное действие: ожидается approve или reject")
+    with immediate(conn):
+        row = conn.execute(
+            """
+            SELECT cp.*, c.title, c.xp, c.category, c.class_id,
+                   u.first_name, u.last_name, u.role AS student_role,
+                   u.class_id AS student_class
+            FROM completions cp
+            JOIN challenges c ON c.id = cp.challenge_id
+            JOIN users u ON u.id = cp.user_id
+            WHERE cp.id = ?
+            """,
+            (completion_id,),
+        ).fetchone()
+        if row is None:
+            raise GameError("Заявка не найдена", 404)
+        if not can_manage_class(conn, viewer, settings, int(row["class_id"])):
+            raise GameError("Заявка из другого класса", 403)
+        # Staff never review their own work; in the demo the shared profile
+        # previews the teacher role over its own student submissions.
+        if int(row["user_id"]) == int(viewer["id"]) and not settings.demo_mode:
+            raise GameError("Нельзя проверять собственную работу", 403)
+        if row["student_role"] != "student":
+            raise GameError("Проверять можно только работы учеников", 403)
+        if row["student_class"] is None or int(row["student_class"]) != int(row["class_id"]):
+            raise GameError("Ученик больше не состоит в классе")
+        _require_school_open(conn, int(row["class_id"]))
+        if row["status"] != "pending":
+            raise GameError("Эта заявка уже проверена")
+        now = utc_sql()
+        student_name = f"{row['first_name']} {row['last_name']}".strip()
+        if action == "reject":
+            cursor = conn.execute(
+                "UPDATE completions SET status = 'rejected', reject_reason = ?, "
+                "reviewed_at = ?, reviewed_by = ? WHERE id = ? AND status = 'pending'",
+                (str(reason or "").strip()[:200], now, viewer["id"], completion_id),
+            )
+            if cursor.rowcount != 1:
+                raise GameError("Эта заявка уже проверена")
+            return {"status": "rejected", "student_name": student_name, "xp_awarded": 0}
 
-    conn.execute(
-        "UPDATE completions SET status = 'approved', reviewed_at = ?, "
-        "reviewed_by = ?, reject_reason = '' WHERE id = ?",
-        (now, viewer["id"], completion_id),
-    )
-    award = award_xp(
-        conn,
-        int(row["user_id"]),
-        int(row["xp"]),
-        row["title"],
-        row["category"],
-    )
-    conn.execute(
-        "UPDATE users SET sparks = sparks + 5 WHERE id = ?", (row["user_id"],)
-    )
-    mark_active(conn, int(row["user_id"]))
+        # Only the request that actually moved the row out of 'pending' awards XP.
+        cursor = conn.execute(
+            "UPDATE completions SET status = 'approved', reviewed_at = ?, "
+            "reviewed_by = ?, reject_reason = '' WHERE id = ? AND status = 'pending'",
+            (now, viewer["id"], completion_id),
+        )
+        if cursor.rowcount != 1:
+            raise GameError("Эта заявка уже проверена")
+        award = award_xp(
+            conn,
+            int(row["user_id"]),
+            int(row["xp"]),
+            row["title"],
+            row["category"],
+            class_id=int(row["class_id"]),
+            source="challenge",
+            awarded_by=int(viewer["id"]),
+        )
+        conn.execute("UPDATE users SET sparks = sparks + 5 WHERE id = ?", (row["user_id"],))
     return {
         "status": "approved",
-        "student_name": f"{row['first_name']} {row['last_name']}".strip(),
+        "student_name": student_name,
         "xp_awarded": int(row["xp"]),
         "student_level": award["level"],
         "level_up": award["level_up"],
@@ -1751,6 +1855,7 @@ def create_challenge(
     if not can_manage_class(conn, viewer, settings, int(target_class)):
         raise GameError("Нельзя создавать задания для чужого класса", 403)
     target_class = int(target_class)
+    _require_school_open(conn, target_class)
     title = str(payload.get("title", "")).strip()
     description = str(payload.get("description", "")).strip()
     category = str(payload.get("category", ""))
@@ -1792,29 +1897,64 @@ def create_challenge(
     )
 
 
+def _local_day_start_sql() -> str:
+    return utc_sql(datetime.combine(today_local(), time.min, tzinfo=now_local().tzinfo))
+
+
 def award_student_by_teacher(
     conn,
     viewer: sqlite3.Row,
     settings: Settings,
     student_id: int,
-    amount: int = 50,
-    reason: str = "Активность на уроке",
+    amount: int,
+    reason: str,
 ) -> None:
     if effective_role(viewer, settings) not in {"teacher", "director"}:
         raise GameError("Поощрять учеников может только педагог или администратор", 403)
-    student = conn.execute(
-        "SELECT * FROM users WHERE id = ? AND role = 'student'", (student_id,)
-    ).fetchone()
-    if student is None:
-        raise GameError("Ученик не найден", 404)
-    if not can_manage_class(conn, viewer, settings, student["class_id"]):
-        raise GameError("Ученик из другого класса", 403)
-    if not (10 <= amount <= 300):
+    if not (10 <= int(amount) <= 300):
         raise GameError("Количество баллов должно быть от 10 до 300")
-    clean_reason = reason.strip() or "Активность на уроке"
-    award_xp(conn, student_id, amount, clean_reason, "homework")
-    conn.execute("UPDATE users SET sparks = sparks + 5 WHERE id = ?", (student_id,))
-    mark_active(conn, student_id)
+    clean_reason = " ".join(str(reason or "").split())
+    if not 3 <= len(clean_reason) <= 120:
+        raise GameError("Укажите причину начисления: от 3 до 120 символов")
+    with immediate(conn):
+        student = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND role = 'student'", (student_id,)
+        ).fetchone()
+        if student is None:
+            raise GameError("Ученик не найден", 404)
+        if int(student["id"]) == int(viewer["id"]):
+            raise GameError("Нельзя начислять опыт самому себе", 403)
+        if not can_manage_class(conn, viewer, settings, student["class_id"]):
+            raise GameError("Ученик из другого класса", 403)
+        _require_school_open(conn, int(student["class_id"]))
+        day_start = _local_day_start_sql()
+        to_student = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM xp_events "
+            "WHERE user_id = ? AND source = 'manual' AND created_at >= ?",
+            (student_id, day_start),
+        ).fetchone()[0]
+        if int(to_student) + int(amount) > MANUAL_XP_PER_STUDENT_DAY:
+            left = max(0, MANUAL_XP_PER_STUDENT_DAY - int(to_student))
+            raise GameError(
+                f"Лимит ручных начислений ученику: {MANUAL_XP_PER_STUDENT_DAY} XP в день "
+                f"от всех педагогов. Сегодня можно ещё {left} XP."
+            )
+        by_teacher = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM xp_events "
+            "WHERE awarded_by = ? AND source = 'manual' AND created_at >= ?",
+            (viewer["id"], day_start),
+        ).fetchone()[0]
+        if int(by_teacher) + int(amount) > MANUAL_XP_PER_TEACHER_DAY:
+            left = max(0, MANUAL_XP_PER_TEACHER_DAY - int(by_teacher))
+            raise GameError(
+                f"Лимит ручных начислений педагога: {MANUAL_XP_PER_TEACHER_DAY} XP в день. "
+                f"Сегодня можно ещё {left} XP."
+            )
+        award_xp(
+            conn, student_id, int(amount), clean_reason, "homework",
+            class_id=int(student["class_id"]), source="manual", awarded_by=int(viewer["id"]),
+        )
+        conn.execute("UPDATE users SET sparks = sparks + 5 WHERE id = ?", (student_id,))
 
 
 def archive_challenge(

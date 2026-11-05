@@ -33,14 +33,10 @@ command -v docker >/dev/null || { echo "Docker не установлен"; exit 
 docker compose version >/dev/null 2>&1 || { echo "Нужен плагин docker compose (v2)"; exit 1; }
 [ -f .env ] || { echo "Нет $SRC/.env (образец: .env.example)"; exit 1; }
 
-TOKEN="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MAX_BOT_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '[:space:]"'"'" || true)"
-[ -n "$TOKEN" ] || { echo "В .env нет MAX_BOT_TOKEN или он пуст — прод без токена запускать нельзя"; exit 1; }
-
-if grep -Eq '^[[:space:]]*(export[[:space:]]+)?APP_MODE=' .env \
-   && ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?APP_MODE=[[:space:]]*"?prod"?[[:space:]]*$' .env; then
-  echo "В .env задан APP_MODE не prod. Уберите строку или поставьте prod."
-  exit 1
-fi
+check_env_file .env
+# .env содержит токен бота: читать его должен только root (compose читает от root).
+chown root:root .env
+chmod 600 .env
 
 resolve_domain .env
 ensure_public_url .env

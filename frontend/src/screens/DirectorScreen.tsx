@@ -1,6 +1,8 @@
 import { useId, useMemo, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { DirectorKpiInfo, SocialIndexInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatNumber, plural } from '../game';
 import type { ClassEntry, DirectorData, GameState } from '../types';
@@ -157,7 +159,15 @@ export function DirectorScreen({ state, director, section = 'school' }: Director
       {section === 'school' ? (
       <div className="tc-stats">
         <div className="tc-stat">
-          <span className="tc-stat__label">Активны за неделю</span>
+          <span className="tc-stat__label">
+            Активны за{' '}
+            <span className="info-nw">
+              неделю
+              <InfoButton title="Показатели сводки">
+                <DirectorKpiInfo />
+              </InfoButton>
+            </span>
+          </span>
           <span className="tc-stat__value">{kpi.engagement_rate}%</span>
           <span className="tc-stat__hint">
             {kpi.active_students_week} из {kpi.total_students} учеников
@@ -177,7 +187,17 @@ export function DirectorScreen({ state, director, section = 'school' }: Director
         </div>
         {kpi.completed_fop_tasks !== undefined ? (
           <div className="tc-stat">
-            <span className="tc-stat__label">Подтверждено заданий</span>
+            <span className="tc-stat__label">
+              Подтверждено{' '}
+              <span className="info-nw">
+                заданий
+                {kpi.social_activity_index !== undefined ? (
+                  <InfoButton title="Индекс социальной активности">
+                    <SocialIndexInfo />
+                  </InfoButton>
+                ) : null}
+              </span>
+            </span>
             <span className="tc-stat__value">{formatNumber(kpi.completed_fop_tasks)}</span>
             {kpi.social_activity_index !== undefined ? (
               <span className="tc-stat__hint">индекс соц. активности: {kpi.social_activity_index}</span>

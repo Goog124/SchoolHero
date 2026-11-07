@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import '../styles/student.css';
 import { AvatarFrame } from '../components/AvatarFrame';
+import { InfoButton } from '../components/InfoButton';
+import { RatingInfo } from '../components/infoTexts';
 import { formatNumber, plural } from '../game';
 import { tapHaptic } from '../max';
 import type { AvatarConfig, GameState } from '../types';
@@ -84,7 +86,12 @@ export function LeaderboardScreen({ state, onNavigateChallenges }: LeaderboardSc
   return (
     <div className="st-page">
       <header className="st-head">
-        <h1>Рейтинг</h1>
+        <h1>
+          Рейтинг
+          <InfoButton title="Как считается рейтинг">
+            <RatingInfo />
+          </InfoButton>
+        </h1>
         <p>Места считаются по XP за подтверждённые задания.</p>
       </header>
 

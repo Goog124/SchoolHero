@@ -3,6 +3,8 @@ import { api } from '../api';
 import { AvatarFrame } from '../components/AvatarFrame';
 import { CityInput, type CityStatus } from '../components/CityInput';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { JoinModeInfo } from '../components/infoTexts';
 import { PixelHero } from '../components/PixelHero';
 import type { AvatarConfig, Cosmetic, GameState, SchoolCatalog } from '../types';
 import '../styles/onboarding.css';
@@ -398,7 +400,12 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
         {step === 1 && (
           <section className="ob-card" aria-labelledby="ob-h-class">
             <div>
-              <h1 className="ob-title" id="ob-h-class">Ваш класс</h1>
+              <h1 className="ob-title" id="ob-h-class">
+                Ваш класс
+                <InfoButton title="Заявка или код класса">
+                  <JoinModeInfo />
+                </InfoButton>
+              </h1>
               <p className="ob-lead">
                 По коду класса вы войдёте сразу. Из списка школ отправляется заявка: войти в класс
                 можно будет после того, как её примет педагог.

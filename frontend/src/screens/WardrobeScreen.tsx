@@ -2,6 +2,8 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { AvatarFrame, frameUnit } from '../components/AvatarFrame';
 import { HERO_GRID, HERO_PARTS, PixelHero } from '../components/PixelHero';
+import { InfoButton } from '../components/InfoButton';
+import { RarityInfo, SparksInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatSparks } from '../game';
 import { tapHaptic } from '../max';
@@ -248,6 +250,9 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
             <div className="wd-balance">
               <span>Искры</span>
               <strong>{formatSparks(viewer.sparks)}</strong>
+              <InfoButton title="Искры" className="info-btn--flush">
+                <SparksInfo />
+              </InfoButton>
             </div>
             {hatHidden ? <p className="wd-note">Шапка скрыта на время примерки</p> : null}
           </div>
@@ -294,6 +299,15 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
         </section>
 
         <section className="wd-catalog" aria-label="Каталог">
+          <p className="info-hint">
+            Редкость и{' '}
+            <span className="info-nw">
+              уровни предметов
+              <InfoButton title="Редкость и уровни предметов">
+                <RarityInfo />
+              </InfoButton>
+            </span>
+          </p>
           <div
             className="wd-tabs"
             role="tablist"

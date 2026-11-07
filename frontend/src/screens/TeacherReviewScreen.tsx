@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 
 import { AvatarFrame } from '../components/AvatarFrame';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { ReviewQueueInfo } from '../components/infoTexts';
 import { ProofPhoto } from '../components/ProofPhoto';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { Sheet } from '../components/Sheet';
@@ -212,6 +214,11 @@ export function TeacherReviewScreen({
     <div className="screen tc-page">
       <ScreenTitle
         title="Проверка работ"
+        info={
+          <InfoButton title="Проверка работ">
+            <ReviewQueueInfo />
+          </InfoButton>
+        }
         subtitle={
           pending.length
             ? `В очереди ${pending.length} ${plural(pending.length, 'работа', 'работы', 'работ')} · ${formatNumber(

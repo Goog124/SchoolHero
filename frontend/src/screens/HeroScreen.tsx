@@ -4,6 +4,8 @@ import type { GameState, TabId } from '../types';
 import { AvatarFrame } from '../components/AvatarFrame';
 import { ChallengeCard } from '../components/ChallengeCard';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { ClassGoalInfo, LevelInfo, PlaceInfo, StreakInfo } from '../components/infoTexts';
 import { ProgressBar } from '../components/ProgressBar';
 import { StatTile } from '../components/StatTile';
 import { formatLongDate, formatNumber, formatRelative, greeting, plural } from '../game';
@@ -52,6 +54,11 @@ export function HeroScreen({ state, onOpenChallenge, onNavigate }: HeroScreenPro
       <div className="st-stats st-stats--4">
         <StatTile
           label="Место в классе"
+          info={
+            <InfoButton title="Место в классе">
+              <PlaceInfo />
+            </InfoButton>
+          }
           value={viewer.personal_rank > 0 ? `${viewer.personal_rank}` : '—'}
           hint={
             leaderboard.students.length
@@ -61,6 +68,11 @@ export function HeroScreen({ state, onOpenChallenge, onNavigate }: HeroScreenPro
         />
         <StatTile
           label="Серия"
+          info={
+            <InfoButton title="Серия дней">
+              <StreakInfo />
+            </InfoButton>
+          }
           value={`${viewer.streak} ${plural(viewer.streak, 'день', 'дня', 'дней')}`}
         />
         <StatTile label="Принято" value={viewer.stats.confirmed} hint="заданий" />
@@ -85,7 +97,13 @@ export function HeroScreen({ state, onOpenChallenge, onNavigate }: HeroScreenPro
                 </h2>
                 {classLine ? <p className="st-profile__meta">{classLine}</p> : null}
                 <p className="st-profile__meta">
-                  Уровень {level.level} · {level.title}
+                  Уровень {level.level} ·{' '}
+                  <span className="info-nw">
+                    {level.title}
+                    <InfoButton title="XP и уровень">
+                      <LevelInfo />
+                    </InfoButton>
+                  </span>
                 </p>
               </div>
             </div>
@@ -152,7 +170,13 @@ export function HeroScreen({ state, onOpenChallenge, onNavigate }: HeroScreenPro
             <section className="st-card" aria-labelledby="st-sprint-title">
               <div className="st-card__head">
                 <h2 className="st-h2" id="st-sprint-title">
-                  Цель класса на неделю
+                  Цель класса на{' '}
+                  <span className="info-nw">
+                    неделю
+                    <InfoButton title="Цель класса на неделю">
+                      <ClassGoalInfo />
+                    </InfoButton>
+                  </span>
                 </h2>
                 {sprint.rank > 0 ? (
                   <span className="st-muted">{sprint.rank} место среди классов</span>

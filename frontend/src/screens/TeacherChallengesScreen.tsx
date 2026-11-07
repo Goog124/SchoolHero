@@ -1,6 +1,8 @@
 import { useId, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { DeadlineInfo, RewardXpInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { Sheet } from '../components/Sheet';
 import { daysFromNow, formatDeadline, formatNumber, plural } from '../game';
@@ -395,9 +397,14 @@ export function TeacherChallengesScreen({
 
           <div className="tc-form__row">
             <div className="tc-field">
-              <label className="tc-label" htmlFor={fieldId('term')}>
-                Срок
-              </label>
+              <div className="info-label-row">
+                <label className="tc-label" htmlFor={fieldId('term')}>
+                  Срок
+                </label>
+                <InfoButton title="Срок задания">
+                  <DeadlineInfo />
+                </InfoButton>
+              </div>
               <select
                 id={fieldId('term')}
                 className="tc-select"
@@ -432,9 +439,14 @@ export function TeacherChallengesScreen({
 
           <div className="tc-form__row">
             <div className="tc-field">
-              <label className="tc-label" htmlFor={fieldId('xp')}>
-                Награда, XP
-              </label>
+              <div className="info-label-row">
+                <label className="tc-label" htmlFor={fieldId('xp')}>
+                  Награда, XP
+                </label>
+                <InfoButton title="Награда в XP">
+                  <RewardXpInfo />
+                </InfoButton>
+              </div>
               <input
                 id={fieldId('xp')}
                 className="tc-input"

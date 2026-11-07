@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { BlockInfo, SchoolStatusesInfo } from '../components/infoTexts';
 import { formatShortDate } from '../components/PrintReport';
 import type {
   AdminSchoolDetail,
@@ -227,7 +229,15 @@ export function AdminSchoolsScreen({ busy, notify, onSetStatus, onDelete }: Scho
   return (
     <div className="ad">
       <header className="ad-head">
-        <h1 className="ad-title">Школы платформы</h1>
+        <h1 className="ad-title">
+          Школы{' '}
+          <span className="info-nw">
+            платформы
+            <InfoButton title="Статусы школ и удаление">
+              <SchoolStatusesInfo />
+            </InfoButton>
+          </span>
+        </h1>
         <p className="ad-sub">Все школы, модерация и удаление.</p>
       </header>
 
@@ -596,7 +606,12 @@ export function AdminUsersScreen({ notify }: { notify: Notify }) {
   return (
     <div className="ad">
       <header className="ad-head">
-        <h1 className="ad-title">Пользователи</h1>
+        <h1 className="ad-title">
+          Пользователи
+          <InfoButton title="Блокировка пользователя">
+            <BlockInfo />
+          </InfoButton>
+        </h1>
         <p className="ad-sub">Поиск по имени или идентификатору. Блокировка защищает от спама.</p>
       </header>
 

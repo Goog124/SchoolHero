@@ -1,6 +1,9 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Icon } from './Icon';
 
+// Открытые окна друг над другом: Escape закрывает только верхнее.
+const openSheets: symbol[] = [];
+
 type SheetProps = {
   open: boolean;
   onClose: () => void;
@@ -30,8 +33,12 @@ export function Sheet({
 
   useEffect(() => {
     if (!open) return;
+    const token = Symbol('sheet');
+    openSheets.push(token);
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current();
+      if (event.key === 'Escape' && openSheets[openSheets.length - 1] === token) {
+        onCloseRef.current();
+      }
     };
     document.addEventListener('keydown', handleKey);
     const previousOverflow = document.body.style.overflow;
@@ -42,6 +49,8 @@ export function Sheet({
     }, 60);
     return () => {
       document.removeEventListener('keydown', handleKey);
+      const at = openSheets.indexOf(token);
+      if (at >= 0) openSheets.splice(at, 1);
       document.body.style.overflow = previousOverflow;
       window.clearTimeout(timer);
     };

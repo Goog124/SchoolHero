@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { SchoolCodesInfo, SchoolPendingInfo, TimezoneInfo } from '../components/infoTexts';
 import { JoinRequestsList } from '../components/JoinRequestsList';
 import { formatShortDate } from '../components/PrintReport';
 import type {
@@ -916,6 +918,11 @@ export function SchoolSetupScreen({
             {school.status === 'pending'
               ? 'Пока школа не подтверждена администратором платформы, ученики не видят её в списке, а коды не работают.'
               : 'Ученики и педагоги не могут присоединиться к этой школе.'}
+            {school.status === 'pending' ? (
+              <InfoButton title="Школа ожидает подтверждения">
+                <SchoolPendingInfo />
+              </InfoButton>
+            ) : null}
             {school.status === 'rejected' && school.reject_reason ? (
               <>
                 {' '}
@@ -937,7 +944,12 @@ export function SchoolSetupScreen({
           <h2 className="su-h2" id="su-tz-h">Настройки школы</h2>
         </div>
         <div className="ob-field">
-          <label className="ob-label" htmlFor="su-tz-edit">Часовой пояс</label>
+          <div className="info-label-row">
+            <label className="ob-label" htmlFor="su-tz-edit">Часовой пояс</label>
+            <InfoButton title="Часовой пояс школы">
+              <TimezoneInfo />
+            </InfoButton>
+          </div>
           <select
             id="su-tz-edit"
             className="ob-select"
@@ -958,7 +970,15 @@ export function SchoolSetupScreen({
 
       <section className="ob-card" aria-labelledby="su-codes-h">
         <div>
-          <h2 className="su-h2" id="su-codes-h">Классы и коды</h2>
+          <h2 className="su-h2" id="su-codes-h">
+            Классы и{' '}
+            <span className="info-nw">
+              коды
+              <InfoButton title="Коды и цель недели">
+                <SchoolCodesInfo />
+              </InfoButton>
+            </span>
+          </h2>
           <p className="ob-lead">
             Код ученика передайте классу, код педагога только педагогу этого класса.
           </p>

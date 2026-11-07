@@ -1,0 +1,112 @@
+/* Кнопка «i» и окно с пояснением (components/InfoButton.tsx). */
+
+.info-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  vertical-align: -3px;
+  font: inherit;
+  line-height: 1;
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Невидимая зона нажатия 44x44 px вокруг значка 18x18. */
+.info-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.info-btn:hover {
+  color: var(--sferum-blue);
+}
+
+.info-btn:focus-visible {
+  outline: none;
+  color: var(--sferum-blue);
+  box-shadow: var(--focus-ring);
+}
+
+.info-btn svg {
+  display: block;
+  pointer-events: none;
+}
+
+/* Заголовок не должен переносить кнопку отдельно от последнего слова. */
+h1 .info-btn,
+h2 .info-btn,
+h3 .info-btn {
+  vertical-align: -2px;
+}
+
+.info-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.info-sheet__body p {
+  margin: 0;
+}
+
+.info-sheet__body ul {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-sheet__body strong {
+  color: var(--text-primary);
+}
+
+/* Последнее слово подписи и кнопка не расходятся по разным строкам. */
+.info-nw {
+  white-space: nowrap;
+}
+
+/* Короткая строка-подсказка с кнопкой над списком. */
+.info-hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+/* В шапке зазор задаёт сама шапка. */
+.info-btn--bar {
+  margin-left: -2px;
+}
+
+/* Внутри плашки баланса кнопка без внешнего отступа. */
+.info-btn--flush {
+  align-self: center;
+  margin-left: 2px;
+}
+
+/* Подпись поля и кнопка рядом: кнопка не входит в <label>. */
+.info-label-row {
+  display: flex;
+  align-items: center;
+}

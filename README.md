@@ -64,6 +64,7 @@ python app.py                   # http://127.0.0.1:8000
 - [docs/setup-school.md](docs/setup-school.md) - подключение школы: регистрация директора, коды, подтверждение, лимиты
 - [docs/roles.md](docs/roles.md) - что делают ученик, педагог, директор, администратор платформы; печать и PDF
 - [docs/docker.md](docs/docker.md) - запуск в Docker: compose, профили, деплой с nginx и Caddy, данные, обновление, бот
+- [docs/docker-windows.md](docs/docker-windows.md) - Docker на Windows без WSL: Docker Desktop с Hyper-V, команды PowerShell
 - [docs/deploy.md](docs/deploy.md) - сервер без Docker: nginx, systemd, сертификат, резервные копии
 - [docs/configuration.md](docs/configuration.md) - все переменные окружения, режимы, пути данных
 - [docs/bot.md](docs/bot.md) - бот MAX: приветствие и кнопка мини-приложения, webhook, настройка и проверка

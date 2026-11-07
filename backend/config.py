@@ -149,12 +149,6 @@ class Settings:
                 f"MAX_WEBHOOK_SECRET: {WEBHOOK_SECRET_MIN}-256 символов, только латиница, "
                 "цифры, - и _ (например: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
             )
-        if self.app_mode == "prod" and self.bootstrap_first_admin and not self.platform_admin_max_ids:
-            log.warning(
-                "BOOTSTRAP_FIRST_ADMIN=1: первый пользователь пустой базы станет "
-                "администратором платформы. Откройте приложение первым или задайте "
-                "PLATFORM_ADMIN_MAX_IDS"
-            )
         if self.app_mode == "prod" and not self.bot_token:
             raise RuntimeError("APP_MODE=prod требует MAX_BOT_TOKEN")
 

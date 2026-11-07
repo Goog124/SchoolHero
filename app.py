@@ -93,6 +93,17 @@ async def lifespan(_: FastAPI):
                     settings.default_class_id,
                 )
                 object.__setattr__(settings, "default_class_id", None)
+            # Warn only while the rule can still fire: an empty production base.
+            if (
+                settings.bootstrap_first_admin
+                and not settings.platform_admin_max_ids
+                and conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None
+            ):
+                logging.getLogger("uvicorn.error").warning(
+                    "База пуста: первый, кто откроет приложение в MAX, станет "
+                    "администратором платформы (BOOTSTRAP_FIRST_ADMIN=1). Откройте его "
+                    "первым сами или задайте PLATFORM_ADMIN_MAX_IDS."
+                )
         cleanup_orphan_uploads(conn, settings)
     finally:
         conn.close()

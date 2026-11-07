@@ -4,6 +4,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { useConfirm } from '../components/ConfirmDialog';
+import { JoinRequestsList } from '../components/JoinRequestsList';
 import { Sheet } from '../components/Sheet';
 import { formatNumber, formatRelative } from '../game';
 import type { GameState, TeacherStudent } from '../types';
@@ -31,6 +32,8 @@ type TeacherClassScreenProps = {
   onRewardStudent?: (studentId: number, amount: number, reason: string) => Promise<boolean>;
   onRemoveStudent?: (studentId: number, reason: string) => Promise<boolean>;
   onRestoreStudent?: (studentId: number) => Promise<boolean>;
+  /** Заявки учеников, выбравших класс из списка. */
+  onDecideJoin?: (requestId: number, action: 'approve' | 'decline') => Promise<boolean>;
 };
 
 function csvCell(value: string | number): string {
@@ -43,6 +46,7 @@ export function TeacherClassScreen({
   onRewardStudent,
   onRemoveStudent,
   onRestoreStudent,
+  onDecideJoin,
 }: TeacherClassScreenProps) {
   const { viewer, teacher, class_sprint: sprint } = state;
   const uid = useId();
@@ -267,6 +271,10 @@ export function TeacherClassScreen({
         }
       />
       {all.length > 0 ? <PrintHint /> : null}
+
+      {onDecideJoin ? (
+        <JoinRequestsList requests={teacher.join_requests ?? []} onDecide={onDecideJoin} />
+      ) : null}
 
       <div className="tc-stats">
         <div className="tc-stat">

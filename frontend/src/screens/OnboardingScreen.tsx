@@ -22,6 +22,8 @@ type OnboardingScreenProps = {
   onJoin?: (classId?: number, inviteCode?: string) => Promise<string | null>;
   /** Подсказка над выбором класса (например, об исключении). */
   notice?: string;
+  /** Сразу открыть ввод кода (например, вместо ожидания заявки). */
+  initialMode?: 'code' | 'list';
   onBack?: () => void;
 };
 
@@ -67,7 +69,7 @@ function readCodeFromUrl(): string {
   }
 }
 
-export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, notice, onBack }: OnboardingScreenProps) {
+export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, notice, initialMode, onBack }: OnboardingScreenProps) {
   const { viewer } = state;
   const firstStep = joinOnly ? 1 : 0;
   const lastStep = joinOnly ? 1 : TOTAL_STEPS - 1;
@@ -83,7 +85,9 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   const [touched, setTouched] = useState({ first: false, last: false });
 
   // Шаг 2: класс
-  const [mode, setMode] = useState<'code' | 'list'>(readCodeFromUrl() ? 'code' : 'list');
+  const [mode, setMode] = useState<'code' | 'list'>(
+    initialMode ?? (readCodeFromUrl() ? 'code' : 'list'),
+  );
   const [code, setCode] = useState(readCodeFromUrl);
   const [checking, setChecking] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -395,7 +399,10 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
           <section className="ob-card" aria-labelledby="ob-h-class">
             <div>
               <h1 className="ob-title" id="ob-h-class">Ваш класс</h1>
-              <p className="ob-lead">Найдите школу в списке или введите код приглашения.</p>
+              <p className="ob-lead">
+                По коду класса вы войдёте сразу. Из списка школ отправляется заявка: войти в класс
+                можно будет после того, как её примет педагог.
+              </p>
             </div>
 
             {notice && (
@@ -613,7 +620,11 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
                 <span className="ob-found__meta">
                   {chosen.kind === 'teacher'
                     ? 'Код педагога: вы войдёте как педагог этого класса'
-                    : [chosen.city, chosen.teacher_name ? `Классный руководитель: ${chosen.teacher_name}` : '']
+                    : [
+                        chosen.city,
+                        chosen.teacher_name ? `Классный руководитель: ${chosen.teacher_name}` : '',
+                        mode === 'list' ? 'Будет отправлена заявка педагогу' : 'Вход сразу по коду',
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                 </span>

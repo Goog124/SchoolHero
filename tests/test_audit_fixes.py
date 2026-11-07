@@ -245,7 +245,7 @@ def test_delete_class_with_exclusions_and_with_history(env):
     c = env["c"]
     b = env["classes"]["7Б"]
     sid = state(c, STUDENT2)["viewer"]["id"]
-    assert c.post("/api/school/join", headers=h(STUDENT2), json={"class_id": b["id"]}).status_code == 200
+    assert c.post("/api/school/join", headers=h(STUDENT2), json={"invite_code": b["invite_code"]}).status_code == 200
     assert c.post(f"/api/teacher/students/{sid}/remove", headers=h(DIRECTOR), json={}).status_code == 200
     r = c.delete(f"/api/school/classes/{b['id']}", headers=h(DIRECTOR))
     assert r.status_code == 200, r.text  # exclusions go with the class
@@ -381,7 +381,7 @@ def test_class_change_keeps_xp_out_of_new_class_rating(env):
     c.post(f"/api/reviews/{pending_id(c)}", headers=h(TEACHER), json={"action": "approve"})
     ch2 = new_challenge(c, "Второе")
     submit(c, ch2)  # pending in 7А
-    assert c.post("/api/school/join", headers=h(STUDENT), json={"class_id": b["id"]}).status_code == 200
+    assert c.post("/api/school/join", headers=h(STUDENT), json={"invite_code": b["invite_code"]}).status_code == 200
     v = state(c, STUDENT)
     assert v["viewer"]["xp"] >= 100  # XP stays with the student
     assert v["viewer"]["stats"]["pending"] == 0  # 7А work is not pending in 7Б

@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS users (
     class_id INTEGER REFERENCES classes(id),
     school_id INTEGER REFERENCES schools(id),
     name_locked INTEGER NOT NULL DEFAULT 0,
+    -- when the current class was taken (code, approved request); shown to directors
+    class_since TEXT,
+    -- 1 = a director disconnected this teacher: env lists must not reattach them
+    staff_detached INTEGER NOT NULL DEFAULT 0,
     xp INTEGER NOT NULL DEFAULT 0 CHECK(xp >= 0),
     sparks INTEGER NOT NULL DEFAULT 0 CHECK(sparks >= 0),
     streak INTEGER NOT NULL DEFAULT 0,
@@ -130,6 +134,19 @@ CREATE TABLE IF NOT EXISTS class_exclusions (
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY(user_id, class_id)
+);
+
+-- Choosing a class from the public list is a request the class teacher (or
+-- the school director) approves; codes still join at once.
+CREATE TABLE IF NOT EXISTS join_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    class_id INTEGER NOT NULL REFERENCES classes(id),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'approved', 'declined', 'cancelled')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decided_at TEXT,
+    decided_by INTEGER REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS activity_days (
@@ -289,6 +306,10 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     if "name_locked" not in user_cols:
         # 1 = the name was typed by the person; MAX data must not overwrite it.
         conn.execute("ALTER TABLE users ADD COLUMN name_locked INTEGER NOT NULL DEFAULT 0")
+    if "class_since" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN class_since TEXT")
+    if "staff_detached" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN staff_detached INTEGER NOT NULL DEFAULT 0")
 
     school_cols = _columns(conn, "schools")
     if "status" not in school_cols:
@@ -321,6 +342,12 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_schools_created_by ON schools(created_by)",
         "CREATE INDEX IF NOT EXISTS idx_school_staff_school ON school_staff(school_id)",
         "CREATE INDEX IF NOT EXISTS idx_class_exclusions_class ON class_exclusions(class_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_class_exclusions_user ON class_exclusions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_join_requests_class ON join_requests(class_id, status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_join_requests_user ON join_requests(user_id, created_at)",
+        # One active request per student.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_join_requests_one_pending ON join_requests(user_id) "
+        "WHERE status = 'pending'",
         # Codes must be unambiguous. Legacy data with duplicates must not
         # block startup, so these are best-effort.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_invite_code ON classes(invite_code) "

@@ -48,6 +48,8 @@ export type Viewer = {
   needs_name: boolean;
   /** Класс, из которого ученика исключили (пока он без класса). */
   removed_from?: { class_name: string; school_name: string } | null;
+  /** Своя заявка на вступление: ждёт решения или последняя отклонённая. */
+  join_request?: JoinRequestInfo | null;
   xp: number;
   level: LevelInfo;
   sparks: number;
@@ -312,6 +314,7 @@ export type ExcludedStudent = {
 
 export type TeacherData = {
   excluded?: ExcludedStudent[];
+  join_requests?: ClassJoinRequest[];
   invite_code?: string;
   pending: ReviewItem[];
   students: TeacherStudent[];
@@ -349,7 +352,14 @@ export type ManagedClass = {
   members: number;
   invite_code: string;
   teacher_code: string;
-  teachers: string[];
+  teachers: ManagedTeacher[];
+};
+
+export type ManagedTeacher = {
+  id: number;
+  name: string;
+  /** Когда педагог подключился к классу (ISO), если известно. */
+  since: string | null;
 };
 
 export type ManagedSchool = {
@@ -360,7 +370,32 @@ export type ManagedSchool = {
   classes: ManagedClass[];
 };
 
+export type JoinRequestInfo = {
+  id: number;
+  status: 'pending' | 'approved' | 'declined' | 'cancelled';
+  class_id: number;
+  class_name: string;
+  school_name: string;
+  created_at: string;
+  decided_at: string | null;
+};
+
+/** Заявка ученика в класс (для педагога и директора). */
+export type ClassJoinRequest = {
+  id: number;
+  class_id: number;
+  class_name: string;
+  school_id: number;
+  student_id: number;
+  name: string;
+  avatar: AvatarConfig;
+  created_at: string;
+  /** Класс, в котором ученик состоит сейчас (переход), или пусто. */
+  current_class: string;
+};
+
 export type SchoolAdminData = {
+  join_requests: ClassJoinRequest[];
   active_school_id: number | null;
   max_schools: number;
   schools_left: number;
@@ -371,6 +406,14 @@ export type SchoolAdminData = {
 export type PlatformAdminData = {
   approval_mode: 'auto' | 'manual';
   pending: Array<{
+    id: number;
+    name: string;
+    city: string;
+    classes: number;
+    created_by: string;
+    created_at: string;
+  }>;
+  rejected?: Array<{
     id: number;
     name: string;
     city: string;

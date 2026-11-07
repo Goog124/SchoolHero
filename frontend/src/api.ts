@@ -197,10 +197,32 @@ export const api = {
     return request<MutationResponse>(`/api/school/classes/${classId}`, { method: 'DELETE' });
   },
 
-  resetCode(classId: number, kind: 'student' | 'teacher'): Promise<MutationResponse> {
+  resetCode(
+    classId: number,
+    kind: 'student' | 'teacher',
+    disconnectTeachers = false,
+  ): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/school/classes/${classId}/codes`, {
       method: 'POST',
-      body: JSON.stringify({ kind }),
+      body: JSON.stringify({ kind, disconnect_teachers: disconnectTeachers }),
+    });
+  },
+
+  disconnectTeacher(classId: number, teacherId: number): Promise<MutationResponse> {
+    return request<MutationResponse>(
+      `/api/school/classes/${classId}/teachers/${teacherId}/disconnect`,
+      { method: 'POST' },
+    );
+  },
+
+  cancelJoinRequest(): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/join-requests/cancel', { method: 'POST' });
+  },
+
+  decideJoinRequest(requestId: number, action: 'approve' | 'decline'): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/join-requests/${requestId}`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
     });
   },
 
@@ -215,8 +237,12 @@ export const api = {
     });
   },
 
-  joinSchool(inviteCode?: string, classId?: number): Promise<MutationResponse> {
-    return request<MutationResponse>('/api/school/join', {
+  /** По коду вступает сразу (status: joined), из списка подаёт заявку (status: requested). */
+  joinSchool(
+    inviteCode?: string,
+    classId?: number,
+  ): Promise<MutationResponse & { status?: 'joined' | 'requested' }> {
+    return request<MutationResponse & { status?: 'joined' | 'requested' }>('/api/school/join', {
       method: 'POST',
       body: JSON.stringify({ invite_code: inviteCode, class_id: classId }),
     });

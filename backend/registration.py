@@ -10,7 +10,8 @@ from typing import Any
 
 from .config import Settings
 from .db import immediate, school_key
-from .game import utc_sql
+from .game import iso_utc, utc_sql
+from .joins import pending_requests
 from .ratelimit import limiter
 from .service import GameError, director_school_ids
 
@@ -293,21 +294,68 @@ def delete_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int) -
         if busy["tasks"] or busy["events"]:
             raise GameError("У класса есть задания или история опыта, удалить его нельзя")
         conn.execute("DELETE FROM class_exclusions WHERE class_id = ?", (class_id,))
+        conn.execute("DELETE FROM join_requests WHERE class_id = ?", (class_id,))
         conn.execute("DELETE FROM class_staff WHERE class_id = ?", (class_id,))
         conn.execute("DELETE FROM classes WHERE id = ?", (class_id,))
 
 
 def reset_code(
-    conn, viewer: sqlite3.Row, settings: Settings, class_id: int, kind: str
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    class_id: int,
+    kind: str,
+    disconnect_teachers: bool = False,
 ) -> None:
+    """Issue a new code. A new teacher code alone does not take access away
+    from teachers who already joined: ``disconnect_teachers`` does that too."""
     if kind not in {"student", "teacher"}:
         raise GameError("Неизвестный тип кода")
     _require_class_of_director(conn, viewer, settings, class_id)
     column = "invite_code" if kind == "student" else "teacher_code"
+    with immediate(conn):
+        conn.execute(
+            f"UPDATE classes SET {column} = ? WHERE id = ?",
+            (generate_code(conn, kind), class_id),
+        )
+        if kind == "teacher" and disconnect_teachers:
+            for teacher in conn.execute(
+                "SELECT * FROM users WHERE role = 'teacher' AND class_id = ?", (class_id,)
+            ).fetchall():
+                _detach_teacher(conn, teacher, class_id)
+
+
+def _detach_teacher(conn, teacher: sqlite3.Row, class_id: int) -> None:
+    """The teacher keeps the role but loses the class; a catalog/env
+    assignment to it is removed and is not re-applied at the next login."""
     conn.execute(
-        f"UPDATE classes SET {column} = ? WHERE id = ?",
-        (generate_code(conn, kind), class_id),
+        "UPDATE users SET class_id = NULL, class_since = NULL, staff_detached = 1 WHERE id = ?",
+        (teacher["id"],),
     )
+    if teacher["max_user_id"]:
+        conn.execute(
+            "DELETE FROM class_staff WHERE max_user_id = ? AND class_id = ?",
+            (teacher["max_user_id"], class_id),
+        )
+
+
+def disconnect_teacher(
+    conn, viewer: sqlite3.Row, settings: Settings, class_id: int, teacher_id: int
+) -> None:
+    """A director takes a class away from a teacher (also in a school the
+    platform rejected: removing access must always be possible)."""
+    row = conn.execute("SELECT * FROM classes WHERE id = ?", (class_id,)).fetchone()
+    if row is None:
+        raise GameError("Класс не найден", 404)
+    _require_director_of(conn, viewer, settings, int(row["school_id"]), manage=False)
+    with immediate(conn):
+        teacher = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND role = 'teacher' AND class_id = ?",
+            (teacher_id, class_id),
+        ).fetchone()
+        if teacher is None:
+            raise GameError("Педагог не найден в этом классе", 404)
+        _detach_teacher(conn, teacher, class_id)
 
 
 def select_school(conn, viewer: sqlite3.Row, settings: Settings, school_id: int) -> None:
@@ -367,17 +415,21 @@ def school_admin_data(
         """,
         ids,
     ).fetchall()
-    teachers: dict[int, list[str]] = {}
+    teachers: dict[int, list[dict[str, Any]]] = {}
     for row in conn.execute(
         f"""
-        SELECT u.class_id, u.first_name, u.last_name FROM users u
+        SELECT u.id, u.class_id, u.first_name, u.last_name, u.class_since FROM users u
         JOIN classes c ON c.id = u.class_id
         WHERE u.role = 'teacher' AND c.school_id IN ({marks}) ORDER BY u.id
         """,
         ids,
     ).fetchall():
         teachers.setdefault(int(row["class_id"]), []).append(
-            f"{row['first_name']} {row['last_name']}".strip()
+            {
+                "id": int(row["id"]),
+                "name": f"{row['first_name']} {row['last_name']}".strip(),
+                "since": iso_utc(row["class_since"]) if row["class_since"] else None,
+            }
         )
     by_school: dict[int, list[dict[str, Any]]] = {}
     for row in class_rows:
@@ -396,7 +448,9 @@ def school_admin_data(
         "SELECT COUNT(*) AS n FROM schools WHERE created_by = ? AND status != 'rejected'",
         (viewer["id"],),
     ).fetchone()["n"]
+    class_ids = [int(r["id"]) for r in class_rows]
     return {
+        "join_requests": pending_requests(conn, class_ids),
         "active_school_id": active_school_id,
         "max_schools": settings.max_schools_per_user,
         "schools_left": max(0, settings.max_schools_per_user - int(owned)),
@@ -417,17 +471,17 @@ def school_admin_data(
 def platform_admin_data(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any] | None:
     if not is_platform_admin(viewer, settings):
         return None
-    rows = conn.execute(
-        """
-        SELECT s.id, s.name, s.city, s.created_at, u.first_name, u.last_name,
-               (SELECT COUNT(*) FROM classes c WHERE c.school_id = s.id) AS classes
-        FROM schools s LEFT JOIN users u ON u.id = s.created_by
-        WHERE s.status = 'pending' ORDER BY s.id LIMIT 100
-        """
-    ).fetchall()
-    return {
-        "approval_mode": settings.school_approval,
-        "pending": [
+    def schools_with(status: str) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.name, s.city, s.created_at, u.first_name, u.last_name,
+                   (SELECT COUNT(*) FROM classes c WHERE c.school_id = s.id) AS classes
+            FROM schools s LEFT JOIN users u ON u.id = s.created_by
+            WHERE s.status = ? ORDER BY s.id DESC LIMIT 100
+            """,
+            (status,),
+        ).fetchall()
+        return [
             {
                 "id": int(r["id"]),
                 "name": r["name"],
@@ -437,7 +491,12 @@ def platform_admin_data(conn, viewer: sqlite3.Row, settings: Settings) -> dict[s
                 "created_at": r["created_at"] or "",
             }
             for r in rows
-        ],
+        ]
+
+    return {
+        "approval_mode": settings.school_approval,
+        "pending": list(reversed(schools_with("pending"))),
+        "rejected": schools_with("rejected"),
     }
 
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import connect
-from . import registration
+from . import joins, registration
 from .security import AuthError, Identity, identity_from_request
 from .service import (
     archive_challenge,
@@ -124,6 +124,12 @@ class NewSchoolBody(BaseModel):
 
 class CodeResetBody(BaseModel):
     kind: str = Field(max_length=10)
+    # teacher code only: also take the class away from teachers who joined
+    disconnect_teachers: bool = False
+
+
+class JoinDecisionBody(BaseModel):
+    action: Literal["approve", "decline"]
 
 
 class SchoolStatusBody(BaseModel):
@@ -314,9 +320,38 @@ def school_delete_class(class_id: IdPath, ctx: Context = Depends(get_context)) -
 def school_reset_code(
     class_id: IdPath, payload: CodeResetBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
-    registration.reset_code(ctx.conn, ctx.user, ctx.settings, class_id, payload.kind)
+    registration.reset_code(
+        ctx.conn, ctx.user, ctx.settings, class_id, payload.kind, payload.disconnect_teachers
+    )
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/school/classes/{class_id}/teachers/{teacher_id}/disconnect")
+def school_disconnect_teacher(
+    class_id: IdPath, teacher_id: IdPath, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.disconnect_teacher(ctx.conn, ctx.user, ctx.settings, class_id, teacher_id)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/join-requests/cancel")
+def join_request_cancel(ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    joins.cancel_join_request(ctx.conn, ctx.user)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.post("/join-requests/{request_id}")
+def join_request_decide(
+    request_id: IdPath, payload: JoinDecisionBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    result = joins.decide_join_request(
+        ctx.conn, ctx.user, ctx.settings, request_id, payload.action
+    )
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings), "result": result}
 
 
 @router.post("/admin/schools/{school_id}/status")

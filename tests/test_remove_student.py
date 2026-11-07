@@ -113,11 +113,11 @@ def test_cannot_remove_staff_yourself_or_a_classless_user(client, school):
     assert remove(client, TEACHER_A, sid).status_code == 400       # already out
 
 
-def test_removed_student_cannot_return_to_the_same_class(client, school):
+def test_removed_student_cannot_return_to_the_school(client, school):
     sid = pupil_id(client)
     remove(client, TEACHER_A, sid)
     cid = school["8А"]["id"]
-    message = "Вы отчислены из этого класса"
+    message = "Вы отчислены из класса этой школы"
 
     by_list = client.post("/api/school/join", json={"class_id": cid}, headers=hdr(PUPIL))
     assert by_list.status_code == 403 and message in by_list.json()["detail"]
@@ -137,27 +137,44 @@ def test_removed_student_cannot_return_to_the_same_class(client, school):
     assert onboarding_code.status_code == 403
     check = client.post("/api/school/check-code", json={"code": school['8А']['invite_code']}, headers=hdr(PUPIL)).json()
     assert check["valid"] is False and message in check["detail"]
+    # the ban covers every class of the school: no request, no code
+    other_list = client.post("/api/school/join", json={"class_id": school["8Б"]["id"]}, headers=hdr(PUPIL))
+    assert other_list.status_code == 403
+    other_code = client.post("/api/school/join", json={"invite_code": school["8Б"]["invite_code"]}, headers=hdr(PUPIL))
+    assert other_code.status_code == 403
     assert state(client, PUPIL)["viewer"]["class_id"] is None
-    # the class is still listed for him; others can still pick it
+    # the classes are still listed; others can still use the code
     listed = client.get("/api/school/catalog?city=Тула", headers=hdr(PUPIL)).json()
     assert cid in [c["id"] for c in listed["classes"]]
     other = client.post("/api/school/check-code", json={"code": school['8А']['invite_code']}, headers=hdr(PUPIL2)).json()
     assert other["valid"] is True
 
 
-def test_removed_student_can_join_another_class_and_restore_lifts_the_ban(client, school):
+def test_removed_student_can_join_another_school_and_restore_lifts_the_ban(client, school):
     sid = pupil_id(client)
     remove(client, TEACHER_A, sid)
-    other = client.post("/api/school/join", json={"class_id": school["8Б"]["id"]}, headers=hdr(PUPIL))
-    assert other.status_code == 200 and other.json()["state"]["viewer"]["class_name"] == "8Б"
+    create_school(client, 300, name="Соседняя школа", city="Тула", classes=("5А",))
+    neighbour = class_codes(client, 300)["5А"]
+    other = client.post("/api/school/join", json={"invite_code": neighbour["invite_code"]}, headers=hdr(PUPIL))
+    assert other.status_code == 200 and other.json()["state"]["viewer"]["class_name"] == "5А"
     assert other.json()["state"]["viewer"]["removed_from"] is None
 
     assert restore(client, TEACHER_A, sid).status_code == 200
     assert state(client, TEACHER_A)["teacher"]["excluded"] == []
-    back = client.post("/api/school/join", json={"class_id": school["8А"]["id"]}, headers=hdr(PUPIL))
+    back = client.post("/api/school/join", json={"invite_code": school["8А"]["invite_code"]}, headers=hdr(PUPIL))
     assert back.status_code == 200 and back.json()["state"]["viewer"]["class_name"] == "8А"
     # restore did not move anybody by itself
     assert restore(client, TEACHER_A, sid).status_code == 404
+
+
+def test_removal_declines_an_open_request_to_the_same_school(client, school):
+    sid = pupil_id(client)
+    r = client.post("/api/school/join", json={"class_id": school["8Б"]["id"]}, headers=hdr(PUPIL))
+    assert r.status_code == 200 and r.json()["status"] == "requested"
+    assert len(state(client, TEACHER_B)["teacher"]["join_requests"]) == 1
+    remove(client, TEACHER_A, sid)
+    assert state(client, TEACHER_B)["teacher"]["join_requests"] == []
+    assert state(client, PUPIL)["viewer"]["join_request"]["status"] == "declined"
 
 
 def test_teacher_code_is_not_affected_by_an_exclusion(client, school):

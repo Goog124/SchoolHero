@@ -164,7 +164,11 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
             # registration must not be demoted by TEACHER_MAX_IDS.
             if ROLE_RANK.get(identity.role_hint, 0) > ROLE_RANK.get(row["role"], 0):
                 updates["role"] = identity.role_hint
-            if identity.role_hint == "teacher" and row["role"] != "director":
+            if (
+                identity.role_hint == "teacher"
+                and row["role"] != "director"
+                and not row["staff_detached"]
+            ):
                 staff_class = _staff_class_id(conn, identity, settings)
                 in_catalog = bool(
                     identity.max_user_id
@@ -830,8 +834,11 @@ def _teacher_data(
     code_row = conn.execute("SELECT invite_code FROM classes WHERE id = ?", (class_id,)).fetchone()
     teacher_invite_code = code_row["invite_code"] if code_row and code_row["invite_code"] else ""
 
+    from .joins import pending_requests
+
     return {
         "excluded": _excluded_list(conn, class_id),
+        "join_requests": pending_requests(conn, [class_id]),
         "invite_code": teacher_invite_code,
         "pending": pending,
         "students": student_rows,
@@ -1065,6 +1072,7 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
 
 
 def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]:
+    from .joins import viewer_join_request
     from .registration import is_platform_admin, platform_admin_data, school_admin_data
 
     viewer = conn.execute("SELECT * FROM users WHERE id = ?", (viewer["id"],)).fetchone()
@@ -1144,6 +1152,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "invite_code": (class_row["invite_code"] or "") if class_row else "",
         "is_platform_admin": is_platform_admin(viewer, settings),
         "removed_from": _removed_from(conn, viewer) if class_id is None else None,
+        "join_request": viewer_join_request(conn, viewer) if role == "student" else None,
         # Teachers and directors are asked for a name when they have none.
         "needs_name": role in {"teacher", "director"}
         and not viewer["name_locked"]
@@ -1377,14 +1386,25 @@ def get_school_catalog(
     }
 
 
-EXCLUDED_MESSAGE = "Вы отчислены из этого класса. Обратитесь к педагогу."
+EXCLUDED_MESSAGE = "Вы отчислены из класса этой школы. Обратитесь к педагогу."
 
 
 def is_excluded(conn, user_id: int, class_id: int) -> bool:
+    """Excluded from any class of the school of ``class_id``.
+
+    An exclusion works for the whole school: otherwise a removed student
+    would simply move into the next class of the same school.
+    """
     return bool(
         conn.execute(
-            "SELECT 1 FROM class_exclusions WHERE user_id = ? AND class_id = ?",
-            (user_id, class_id),
+            """
+            SELECT 1 FROM class_exclusions e
+            JOIN classes ce ON ce.id = e.class_id
+            JOIN classes ct ON ct.id = ?
+            WHERE e.user_id = ? AND ce.school_id = ct.school_id
+            LIMIT 1
+            """,
+            (class_id, user_id),
         ).fetchone()
     )
 
@@ -1445,12 +1465,26 @@ def remove_student(
         raise GameError("Ученик уже не состоит в классе")
     if not can_manage_class(conn, viewer, settings, student["class_id"]):
         raise GameError("Ученик из другого класса", 403)
-    conn.execute(
-        "INSERT OR REPLACE INTO class_exclusions (user_id, class_id, removed_by, reason, created_at) "
-        "VALUES (?, ?, ?, ?, datetime('now'))",
-        (student_id, student["class_id"], viewer["id"], str(reason or "").strip()[:120]),
-    )
-    conn.execute("UPDATE users SET class_id = NULL WHERE id = ?", (student_id,))
+    with immediate(conn):
+        conn.execute(
+            "INSERT OR REPLACE INTO class_exclusions (user_id, class_id, removed_by, reason, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (student_id, student["class_id"], viewer["id"], str(reason or "").strip()[:120]),
+        )
+        conn.execute(
+            "UPDATE users SET class_id = NULL, class_since = NULL WHERE id = ?", (student_id,)
+        )
+        # The ban covers the school: an open request to another class of it goes.
+        conn.execute(
+            """
+            UPDATE join_requests SET status = 'declined', decided_at = datetime('now'),
+                   decided_by = ?
+            WHERE user_id = ? AND status = 'pending' AND class_id IN (
+                SELECT id FROM classes WHERE school_id =
+                    (SELECT school_id FROM classes WHERE id = ?))
+            """,
+            (viewer["id"], student_id, student["class_id"]),
+        )
 
 
 def restore_student(conn, viewer: sqlite3.Row, settings: Settings, student_id: int) -> None:
@@ -1503,10 +1537,33 @@ def _check_can_become_teacher(viewer: sqlite3.Row) -> None:
 
 def _become_teacher(conn, viewer: sqlite3.Row, class_id: int) -> None:
     _check_can_become_teacher(viewer)
-    conn.execute(
-        "UPDATE users SET role = 'teacher', class_id = ?, onboarded = 1 WHERE id = ?",
-        (class_id, viewer["id"]),
-    )
+    with immediate(conn):
+        conn.execute(
+            "UPDATE users SET role = 'teacher', class_id = ?, class_since = datetime('now'), "
+            "onboarded = 1 WHERE id = ?",
+            (class_id, viewer["id"]),
+        )
+        # A request filed earlier as a student is no longer needed.
+        conn.execute(
+            "UPDATE join_requests SET status = 'cancelled', decided_at = datetime('now') "
+            "WHERE user_id = ? AND status = 'pending'",
+            (viewer["id"],),
+        )
+
+
+def _join_by_student_code(conn, viewer: sqlite3.Row, class_id: int) -> None:
+    """A student code joins at once (and closes an open request)."""
+    from .joins import cancel_pending
+
+    if viewer["role"] != "student":
+        raise GameError("Вступить в класс по коду ученика может только ученик", 403)
+    check_not_excluded(conn, int(viewer["id"]), class_id)
+    with immediate(conn):
+        conn.execute(
+            "UPDATE users SET class_id = ?, class_since = datetime('now') WHERE id = ?",
+            (class_id, viewer["id"]),
+        )
+        cancel_pending(conn, int(viewer["id"]), int(viewer["id"]))
 
 
 def join_school_class(
@@ -1516,28 +1573,38 @@ def join_school_class(
     class_id: int | None = None,
     invite_code: str = "",
 ) -> dict[str, Any]:
+    """Join by code at once, or file a request for a class picked from the list.
+
+    ``status`` in the answer is ``joined`` or ``requested``; with a request the
+    student stays where they were until a teacher approves it.
+    """
+    from .joins import create_join_request
+
     if invite_code:
         info = _resolve_code(conn, viewer, settings, invite_code)
         target_class_id = int(info["class_id"])
         if info["kind"] == "teacher":
             _become_teacher(conn, viewer, target_class_id)
-            return {"class_id": target_class_id, "state": build_state(conn, viewer, settings)}
-    elif class_id:
-        target_class_id = int(_class_for_join(conn, int(class_id))["id"])
-    else:
-        raise GameError("Укажите код приглашения или идентификатор класса", 400)
-
-    if viewer["role"] != "student":
-        raise GameError("Вступить в класс по коду ученика может только ученик", 403)
-    check_not_excluded(conn, int(viewer["id"]), target_class_id)
-    conn.execute(
-        "UPDATE users SET class_id = ? WHERE id = ?",
-        (target_class_id, viewer["id"]),
-    )
-    return {
-        "class_id": target_class_id,
-        "state": build_state(conn, viewer, settings),
-    }
+            return {
+                "status": "joined",
+                "class_id": target_class_id,
+                "state": build_state(conn, viewer, settings),
+            }
+        _join_by_student_code(conn, viewer, target_class_id)
+        return {
+            "status": "joined",
+            "class_id": target_class_id,
+            "state": build_state(conn, viewer, settings),
+        }
+    if class_id:
+        request = create_join_request(conn, viewer, settings, int(class_id))
+        return {
+            "status": "requested",
+            "class_id": None,
+            "request": request,
+            "state": build_state(conn, viewer, settings),
+        }
+    raise GameError("Укажите код приглашения или идентификатор класса", 400)
 
 
 _NAME_RE = re.compile(r"[^\W\d_](?:[^\W\d_]|[ .'\u2019\-])*")
@@ -1574,22 +1641,14 @@ def set_profile_name(conn, viewer: sqlite3.Row, payload: dict[str, Any]) -> None
 
 
 def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict[str, Any]) -> None:
-    first_name, last_name = _parse_name(viewer, payload)
+    """Name, hero and class of a new student.
 
-    target_class_id = viewer["class_id"]
-    new_role = viewer["role"]
-    if payload.get("class_id"):
-        target_class_id = int(_class_for_join(conn, int(payload["class_id"]))["id"])
-    elif payload.get("invite_code"):
-        info = _resolve_code(conn, viewer, settings, str(payload["invite_code"]))
-        target_class_id = int(info["class_id"])
-        if info["kind"] == "teacher":
-            _check_can_become_teacher(viewer)
-            new_role = "teacher"
-    if viewer["role"] != "student" and new_role == viewer["role"]:
-        target_class_id = viewer["class_id"]
-    elif new_role == "student" and target_class_id is not None and target_class_id != viewer["class_id"]:
-        check_not_excluded(conn, int(viewer["id"]), int(target_class_id))
+    A class picked from the list becomes a join request (the student stays
+    without a class until it is approved); a code joins at once.
+    """
+    from .joins import cancel_pending, create_join_request
+
+    first_name, last_name = _parse_name(viewer, payload)
 
     avatar = dict(load_avatar(viewer["avatar"]))
     patch = payload.get("avatar") or {}
@@ -1604,11 +1663,45 @@ def save_onboarding(conn, viewer: sqlite3.Row, settings: Settings, payload: dict
     except ValueError as exc:
         raise GameError(str(exc)) from exc
     avatar.update(allowed)
-    conn.execute(
-        "UPDATE users SET first_name = ?, last_name = ?, class_id = ?, role = ?, avatar = ?, "
-        "onboarded = 1, name_locked = 1 WHERE id = ?",
-        (first_name, last_name, target_class_id, new_role, dump_avatar(avatar), viewer["id"]),
-    )
+
+    code_info = None
+    if not payload.get("class_id") and payload.get("invite_code"):
+        code_info = _resolve_code(conn, viewer, settings, str(payload["invite_code"]))
+        if code_info["kind"] == "teacher":
+            _check_can_become_teacher(viewer)
+        elif viewer["role"] == "student":
+            check_not_excluded(conn, int(viewer["id"]), int(code_info["class_id"]))
+
+    with immediate(conn):
+        target_class_id = viewer["class_id"]
+        new_role = viewer["role"]
+        joined = False
+        if payload.get("class_id") and viewer["role"] == "student":
+            create_join_request(conn, viewer, settings, int(payload["class_id"]))
+        elif code_info is not None:
+            if code_info["kind"] == "teacher":
+                new_role = "teacher"
+                target_class_id = int(code_info["class_id"])
+                joined = True
+            elif viewer["role"] == "student":
+                target_class_id = int(code_info["class_id"])
+                joined = True
+        if joined:
+            cancel_pending(conn, int(viewer["id"]), int(viewer["id"]))
+        conn.execute(
+            "UPDATE users SET first_name = ?, last_name = ?, class_id = ?, role = ?, avatar = ?, "
+            "onboarded = 1, name_locked = 1, "
+            "class_since = CASE WHEN ? THEN datetime('now') ELSE class_since END WHERE id = ?",
+            (
+                first_name,
+                last_name,
+                target_class_id,
+                new_role,
+                dump_avatar(avatar),
+                1 if joined else 0,
+                viewer["id"],
+            ),
+        )
 
 
 def _require_student_hero(viewer: sqlite3.Row) -> None:

@@ -3,6 +3,7 @@
     python tools/package.py              # zip + sha256, образ — если доступен docker
     python tools/package.py --no-image   # только исходники
     python tools/package.py --version 1.0.0
+    python tools/package.py --network host   # если в контейнерах сборки не работает DNS (часто в WSL)
 
 Результат в dist/:
     school-hero-<версия>.zip            исходники из `git archive HEAD`
@@ -112,7 +113,7 @@ def docker_available() -> str | None:
     return exe
 
 
-def build_image(zip_path: Path, version: str, docker: str) -> Path:
+def build_image(zip_path: Path, version: str, docker: str, network: str | None = None) -> Path:
     """Собирает образ из того же содержимого, что и zip (а не из рабочей папки)."""
     tag = f"{NAME}:{version}"
     out = DIST / f"{NAME}-image-{version}.tar.gz"
@@ -120,8 +121,12 @@ def build_image(zip_path: Path, version: str, docker: str) -> Path:
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(tmp)
         context = Path(tmp) / f"{NAME}-{version}"
-        print(f"docker build -t {tag} … (несколько минут)")
-        subprocess.run([docker, "build", "-t", tag, str(context)], check=True)
+        cmd = [docker, "build", "-t", tag]
+        if network:
+            cmd += ["--network", network]
+        cmd.append(str(context))
+        print(f"{' '.join(cmd[1:-1])} … (несколько минут)")
+        subprocess.run(cmd, check=True)
     print(f"docker save {tag} | gzip > {out.name}")
     proc = subprocess.Popen([docker, "save", tag], stdout=subprocess.PIPE)
     assert proc.stdout is not None
@@ -152,6 +157,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Собрать архив на сдачу в dist/")
     parser.add_argument("--version", help="версия в именах файлов (по умолчанию тег или дата-хеш)")
     parser.add_argument("--no-image", action="store_true", help="не собирать Docker-образ")
+    parser.add_argument(
+        "--network",
+        help="сеть для docker build, например host: если pip в сборке не может найти pypi.org "
+        "(Temporary failure in name resolution)",
+    )
     args = parser.parse_args()
 
     try:
@@ -180,7 +190,7 @@ def main() -> None:
             print("Образ: пропущен — docker не найден или демон не запущен. "
                   "Соберите позже на машине с Docker: python tools/package.py")
         else:
-            image = build_image(zip_path, version, docker)
+            image = build_image(zip_path, version, docker, args.network)
             produced += [image, sha256_file(image)]
 
     print("\nГотово, файлы в dist/:")

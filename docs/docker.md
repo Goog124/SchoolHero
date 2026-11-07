@@ -338,6 +338,7 @@ FROM python:3.12.10-slim-bookworm@sha256:<64 hex> AS runtime
 | `docker compose up` падает с «Задайте MAX_BOT_TOKEN в .env» | В `.env` нет токена или пустой. |
 | Контейнер `unhealthy` или перезапускается | `docker compose logs app`. Частая причина: нет токена, либо `.env` испорчен. |
 | `port is already allocated` (8000) | Порт занят systemd-сервисом `school-hero` или другим процессом. |
+| `pip install` при сборке: `Temporary failure in name resolution` | В контейнерах сборки не работает DNS (часто WSL или VPN). Соберите с сетью хоста: `docker build --network=host -t school-hero:latest .` или `python tools/package.py --network host`. Постоянно: задайте DNS Docker в `/etc/docker/daemon.json` (`{"dns": ["1.1.1.1", "8.8.8.8"]}`) и перезапустите Docker. |
 | `/portal` отдаёт 404 | Образ собран из старой версии без каталога `landing/`: пересоберите `docker compose build --no-cache app`. |
 | `Read-only file system` в логах `app` | Приложение пытается писать вне `/data` и `/tmp`. Временно уберите `read_only: true` в `docker-compose.override.yml` и сообщите разработчику, какой путь нужен |
 | `docker compose cp ... app:/data/...` падает с `container rootfs is marked read-only` | Корневая ФС только для чтения; копируйте в том через `docker run --rm -v school-hero_school_hero_data:/data ...` (см. «Данные») |

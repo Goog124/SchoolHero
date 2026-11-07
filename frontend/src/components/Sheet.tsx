@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 
 // Открытые окна друг над другом: Escape закрывает только верхнее.
@@ -58,7 +59,9 @@ export function Sheet({
 
   if (!open) return null;
 
-  return (
+  // Каждое окно монтируется в конец <body>: открытое позже (например,
+  // подтверждение поверх карточки ученика) всегда оказывается сверху.
+  return createPortal(
     <div className="sheet-layer">
       <button
         type="button"
@@ -89,6 +92,7 @@ export function Sheet({
         <div className="sheet__body">{children}</div>
         {footer ? <div className="sheet__footer">{footer}</div> : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -8,11 +8,13 @@ import { PrintHint, PrintSheet, formatPrintDate, printDocument } from '../compon
 import '../styles/teacher.css';
 
 type DirectorTab = 'summary' | 'classes' | 'directions';
+/** Раздел нижнего меню: «Школа» (сводка, параллели, направления) или «Классы» (сравнение классов). */
+export type DirectorSection = 'school' | 'classes';
 type ClassSort = 'rank' | 'name' | 'members' | 'xp' | 'weekly_xp' | 'progress';
 
+// Внутренние вкладки раздела «Школа». Сравнение классов — отдельный раздел меню.
 const TABS: { id: DirectorTab; label: string }[] = [
-  { id: 'summary', label: 'Сводка' },
-  { id: 'classes', label: 'Классы' },
+  { id: 'summary', label: 'Параллели' },
   { id: 'directions', label: 'Направления' },
 ];
 
@@ -21,6 +23,7 @@ const LOW_ENGAGEMENT = 40;
 type DirectorScreenProps = {
   state: GameState;
   director: DirectorData;
+  section?: DirectorSection;
 };
 
 function formatReportDate(iso: string | undefined): string {
@@ -35,25 +38,16 @@ function formatReportDate(iso: string | undefined): string {
   }).format(d);
 }
 
-export function DirectorScreen({ state, director }: DirectorScreenProps) {
+export function DirectorScreen({ state, director, section = 'school' }: DirectorScreenProps) {
   const uid = useId();
   const { viewer } = state;
   const { kpi, grades, directions } = director;
-  // director.classes с бэкенда приходит без members/xp/weekly_xp — дополняем из рейтинга классов.
-  const classes = useMemo<ClassEntry[]>(() => {
-    const board = new Map((state.leaderboard?.classes ?? []).map((c) => [c.id, c]));
-    return (director.classes ?? []).map((c) => ({ ...board.get(c.id), ...c }) as ClassEntry).map((c, i) => ({
-      ...c,
-      members: c.members ?? 0,
-      xp: c.xp ?? 0,
-      weekly_xp: c.weekly_xp ?? 0,
-      goal: c.goal ?? 0,
-      rank: c.rank ?? i + 1,
-      progress: c.progress ?? 0,
-    }));
-  }, [director.classes, state.leaderboard]);
+  // director.classes приходит с сервера полным: members, xp, weekly_xp, goal, rank, progress
+  // посчитаны по классам этой школы (XP, заработанный в классе).
+  const classes = useMemo<ClassEntry[]>(() => director.classes ?? [], [director.classes]);
   const goalPercent = (c: ClassEntry) => (c.goal > 0 ? Math.round((c.weekly_xp / c.goal) * 100) : null);
-  const [tab, setTab] = useState<DirectorTab>('summary');
+  const [innerTab, setTab] = useState<DirectorTab>('summary');
+  const tab: DirectorTab = section === 'classes' ? 'classes' : innerTab;
   const [sortKey, setSortKey] = useState<ClassSort>('rank');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [copied, setCopied] = useState(false);
@@ -143,7 +137,7 @@ export function DirectorScreen({ state, director }: DirectorScreenProps) {
   return (
     <div className="screen tc-page">
       <ScreenTitle
-        title="Школа"
+        title={section === 'classes' ? 'Классы' : 'Школа'}
         subtitle={subtitle}
         action={
           <div className="tc-toolbar">
@@ -160,6 +154,7 @@ export function DirectorScreen({ state, director }: DirectorScreenProps) {
       />
       <PrintHint />
 
+      {section === 'school' ? (
       <div className="tc-stats">
         <div className="tc-stat">
           <span className="tc-stat__label">Активны за неделю</span>
@@ -195,7 +190,9 @@ export function DirectorScreen({ state, director }: DirectorScreenProps) {
           </div>
         ) : null}
       </div>
+      ) : null}
 
+      {section === 'school' ? (
       <div className="tc-tabs" role="tablist" aria-label="Разделы">
         {TABS.map((t) => (
           <button
@@ -220,8 +217,14 @@ export function DirectorScreen({ state, director }: DirectorScreenProps) {
           </button>
         ))}
       </div>
+      ) : null}
 
-      <div role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-tab-${tab}`} className="tc-section">
+      <div
+        role={section === 'school' ? 'tabpanel' : undefined}
+        id={`${uid}-panel`}
+        aria-labelledby={section === 'school' ? `${uid}-tab-${tab}` : undefined}
+        className="tc-section"
+      >
         {tab === 'summary' ? (
           grades.length > 0 ? (
             <div className="tc-panel tc-panel--flush">

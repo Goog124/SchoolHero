@@ -9,10 +9,22 @@ type AppHeaderProps = {
   onProfile: () => void;
   /** Плашка «Демо»: только при state.mode === 'demo'. */
   demo?: boolean;
+  /** Администратор платформы без роли: героя и баллов у него нет. */
+  hideHero?: boolean;
+  /** Ручное обновление данных (кнопка в шапке). */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 };
 
-export function AppHeader({ viewer, onProfile, demo = false }: AppHeaderProps) {
-  const isStudent = viewer.role === 'student';
+export function AppHeader({
+  viewer,
+  onProfile,
+  demo = false,
+  hideHero = false,
+  onRefresh,
+  refreshing = false,
+}: AppHeaderProps) {
+  const isStudent = viewer.role === 'student' && !hideHero;
   const roleName =
     viewer.role === 'director' ? 'Администрация' : viewer.role === 'teacher' ? 'Педагог' : '';
   const subtitle = [viewer.class_name, roleName].filter(Boolean).join(' · ');
@@ -22,6 +34,7 @@ export function AppHeader({ viewer, onProfile, demo = false }: AppHeaderProps) {
       <BrandLogo size="md" subtitle={subtitle || undefined} />
       <div className="topbar__right">
         {demo ? <span className="badge-demo">Демо</span> : null}
+        {onRefresh ? <RefreshButton onClick={onRefresh} busy={refreshing} /> : null}
         {isStudent ? (
           <span className="topbar__sparks" aria-label={`Баллы: ${viewer.sparks}`}>
             <Icon name="spark" size={14} filled />
@@ -40,5 +53,26 @@ export function AppHeader({ viewer, onProfile, demo = false }: AppHeaderProps) {
         ) : null}
       </div>
     </header>
+  );
+}
+
+type RefreshButtonProps = { onClick: () => void; busy?: boolean; className?: string };
+
+/** Кнопка «Обновить»: перечитывает данные, не сбрасывая открытый экран. */
+export function RefreshButton({ onClick, busy = false, className = '' }: RefreshButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`refresh-btn ${className}`.trim()}
+      onClick={onClick}
+      disabled={busy}
+      aria-busy={busy}
+      aria-label={busy ? 'Обновляем данные' : 'Обновить данные'}
+      title="Обновить"
+    >
+      <span className={busy ? 'refresh-btn__icon refresh-btn__icon--spin' : 'refresh-btn__icon'}>
+        <Icon name="refresh" size={18} />
+      </span>
+    </button>
   );
 }

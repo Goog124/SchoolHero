@@ -24,6 +24,8 @@ type CityInputProps = {
   invalid?: boolean;
   describedBy?: string;
   maxLength?: number;
+  /** 'all': справочник городов России (форма директора); иначе города с активными школами. */
+  scope?: '' | 'all';
 };
 
 /** Поле города с подсказками с сервера: role=combobox, стрелки, Enter, Escape. */
@@ -38,6 +40,7 @@ export function CityInput({
   invalid,
   describedBy,
   maxLength = 60,
+  scope = '',
 }: CityInputProps) {
   const listId = useId();
   const [items, setItems] = useState<CitySuggestion[]>([]);
@@ -52,7 +55,7 @@ export function CityInput({
     statusRef.current?.({ status: 'loading', total: -1, query, names: [] });
     const timer = window.setTimeout(() => {
       api
-        .searchCities(query, 10)
+        .searchCities(query, 10, scope)
         .then((res) => {
           if (!alive) return;
           setItems(res.cities);
@@ -74,7 +77,7 @@ export function CityInput({
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [value, refreshKey]);
+  }, [value, refreshKey, scope]);
 
   const pick = (name: string) => {
     setOpen(false);

@@ -167,7 +167,11 @@ docker compose restart app
 
 Каталог применяется при старте. Образец: `catalog.example.json`.
 
+Фото-подтверждения хранятся в `/data/uploads` (в том же томе, `DATA_DIR/uploads`). Лимит одного фото 5 МБ.
+
 ### Резервная копия
+
+Резервная копия должна включать и базу, и каталог `/data/uploads`; без него в работах пропадут фото.
 
 Копия через API SQLite корректна и при работающем приложении:
 
@@ -181,6 +185,12 @@ docker compose cp app:/data/backup.db ./backup-$(date +%F).db
 
 ```bash
 docker compose exec app rm /data/backup.db
+```
+
+Каталог фото копируется целиком:
+
+```bash
+docker compose cp app:/data/uploads ./uploads-$(date +%F)
 ```
 
 Храните копии вне сервера.

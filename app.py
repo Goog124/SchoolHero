@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.api import router as api_router
+from backend.uploads import cleanup_orphan_uploads, router as uploads_router
 from backend.maxbot import router as maxbot_router
 from backend.config import Settings
 from backend.db import connect, init_db
@@ -92,6 +93,7 @@ async def lifespan(_: FastAPI):
                     settings.default_class_id,
                 )
                 object.__setattr__(settings, "default_class_id", None)
+        cleanup_orphan_uploads(conn, settings)
     finally:
         conn.close()
     yield
@@ -127,7 +129,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "default-src 'self'",
         "script-src 'self' https://st.max.ru",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https:",
+        "img-src 'self' data: blob: https:",
         "font-src 'self'",
         "connect-src 'self'",
         "object-src 'none'",
@@ -156,12 +158,15 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
     if request.url.path.startswith("/assets/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.url.path.startswith("/api/uploads/"):
+        response.headers["Cache-Control"] = "private, no-store"
     elif request.url.path == "/" or request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
 
 
 app.include_router(api_router)
+app.include_router(uploads_router)
 app.include_router(maxbot_router)
 
 

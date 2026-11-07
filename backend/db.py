@@ -2,39 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+log = logging.getLogger("uvicorn.error")
 
-SCHEMA = """
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS schools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    city TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_by INTEGER REFERENCES users(id),
-    created_at TEXT,
-    norm_key TEXT,
-    UNIQUE(name, city)
-);
-
-CREATE TABLE IF NOT EXISTS classes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    school_id INTEGER NOT NULL REFERENCES schools(id),
-    name TEXT NOT NULL,
-    weekly_goal INTEGER NOT NULL DEFAULT 1600,
-    invite_code TEXT,
-    teacher_code TEXT,
-    UNIQUE(school_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+# Column list of ``users``: shared by SCHEMA and the table rebuild that
+# replaces an old CHECK(role IN ('student', 'teacher')) without 'director'.
+USERS_COLUMNS = """    id INTEGER PRIMARY KEY AUTOINCREMENT,
     max_user_id TEXT UNIQUE,
     client_id TEXT UNIQUE,
     first_name TEXT NOT NULL,
@@ -50,6 +29,8 @@ CREATE TABLE IF NOT EXISTS users (
     class_since TEXT,
     -- 1 = a director disconnected this teacher: env lists must not reattach them
     staff_detached INTEGER NOT NULL DEFAULT 0,
+    -- sandbox only: the test user acts as platform admin (ignored in prod/demo)
+    sandbox_admin INTEGER NOT NULL DEFAULT 0,
     xp INTEGER NOT NULL DEFAULT 0 CHECK(xp >= 0),
     sparks INTEGER NOT NULL DEFAULT 0 CHECK(sparks >= 0),
     streak INTEGER NOT NULL DEFAULT 0,
@@ -58,7 +39,39 @@ CREATE TABLE IF NOT EXISTS users (
     owned TEXT NOT NULL DEFAULT '[]',
     onboarded INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+"""
+
+SCHOOLS_COLUMNS = """    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT,
+    norm_key TEXT,
+    -- IANA zone of the school: "today", weeks, deadlines, daily limits
+    timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
+    UNIQUE(name, city)
+"""
+
+SCHEMA = """
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS schools (
+{SCHOOLS_COLUMNS});
+
+CREATE TABLE IF NOT EXISTS classes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    school_id INTEGER NOT NULL REFERENCES schools(id),
+    name TEXT NOT NULL,
+    weekly_goal INTEGER NOT NULL DEFAULT 1600,
+    invite_code TEXT,
+    teacher_code TEXT,
+    UNIQUE(school_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS users (
+{USERS_COLUMNS});
 
 CREATE INDEX IF NOT EXISTS idx_users_class ON users(class_id);
 CREATE INDEX IF NOT EXISTS idx_users_xp ON users(xp DESC);
@@ -93,8 +106,27 @@ CREATE TABLE IF NOT EXISTS completions (
     reviewed_at TEXT,
     reviewed_by INTEGER REFERENCES users(id),
     reject_reason TEXT NOT NULL DEFAULT '',
+    -- photo of the current submission (uploads.id), NULL without a photo
+    upload_id INTEGER REFERENCES uploads(id) ON DELETE SET NULL,
     UNIQUE(user_id, challenge_id)
 );
+
+-- Photos sent as proof. The file lives in the uploads directory next to the
+-- database (``path`` is the file name there); ``completion_id`` is set when
+-- the photo is attached to a submission. Unattached rows older than a day are
+-- removed at startup.
+CREATE TABLE IF NOT EXISTS uploads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    path TEXT NOT NULL UNIQUE,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completion_id INTEGER REFERENCES completions(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploads_user ON uploads(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_uploads_completion ON uploads(completion_id);
 
 CREATE INDEX IF NOT EXISTS idx_completions_status ON completions(status, created_at);
 
@@ -154,7 +186,7 @@ CREATE TABLE IF NOT EXISTS activity_days (
     day TEXT NOT NULL,
     PRIMARY KEY(user_id, day)
 );
-"""
+""".replace("{USERS_COLUMNS}", USERS_COLUMNS).replace("{SCHOOLS_COLUMNS}", SCHOOLS_COLUMNS)
 
 
 def school_key(name: str, city: str) -> str:
@@ -165,19 +197,40 @@ def school_key(name: str, city: str) -> str:
     return f"{norm(name)}|{norm(city)}"
 
 
-def backfill_school_keys(conn: sqlite3.Connection) -> None:
-    rows = conn.execute(
-        "SELECT id, name, city FROM schools WHERE norm_key IS NULL"
-    ).fetchall()
+def backfill_school_keys(conn: sqlite3.Connection) -> list[int]:
+    """Fill ``norm_key`` and make it unique, so the unique index can be built.
+
+    An old schema allowed schools whose names differ only in case or spaces
+    ("Школа 1" and "школа  1" in one city). Rows are walked in id order: the
+    oldest school keeps the key, every later duplicate gets ``<key>#<id>``.
+    The result is deterministic and idempotent (a suffixed key is unique and
+    stays as is). Returns the ids of schools whose key got a suffix.
+    """
+    rows = conn.execute("SELECT id, name, city, norm_key FROM schools ORDER BY id").fetchall()
+    seen: set[str] = set()
+    renamed: list[int] = []
+    updates: list[tuple[str, int]] = []
     for row in rows:
-        try:
-            conn.execute(
-                "UPDATE schools SET norm_key = ? WHERE id = ?",
-                (school_key(row["name"], row["city"]), row["id"]),
-            )
-        except sqlite3.IntegrityError:
-            pass  # legacy duplicate: leave NULL, the unique index skips NULLs
+        base = row["norm_key"] or school_key(row["name"], row["city"])
+        key = base
+        if key in seen:
+            key = f"{base}#{row['id']}"
+            renamed.append(int(row["id"]))
+        seen.add(key)
+        if key != row["norm_key"]:
+            updates.append((key, int(row["id"])))
+    # Suffixed keys first: they free the base key held by a later duplicate.
+    updates.sort(key=lambda item: "#" not in item[0])
+    for key, school_id in updates:
+        conn.execute("UPDATE schools SET norm_key = ? WHERE id = ?", (key, school_id))
     conn.commit()
+    if renamed:
+        log.warning(
+            "Школы с совпадающим названием и городом (без учёта регистра): id %s. "
+            "Их norm_key получил суффикс #id; объедините или переименуйте их вручную.",
+            ", ".join(str(i) for i in renamed),
+        )
+    return renamed
 
 
 def connect(db_path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
@@ -239,35 +292,107 @@ def _schools_name_is_unique(conn: sqlite3.Connection) -> bool:
     return False
 
 
-def _rebuild_schools(conn: sqlite3.Connection) -> None:
-    """Replace UNIQUE(name) with UNIQUE(name, city): schools of the same name
-    exist in different cities."""
+def _fk_violations(conn: sqlite3.Connection) -> int:
+    return len(conn.execute("PRAGMA foreign_key_check").fetchall())
+
+
+def _rebuild_table(
+    conn: sqlite3.Connection,
+    table: str,
+    columns_sql: str,
+    expressions: dict[str, str] | None = None,
+) -> None:
+    """Recreate ``table`` with a new definition (SQLite cannot ALTER a
+    constraint), following https://www.sqlite.org/lang_altertable.html#otheralter:
+
+    foreign keys off (outside a transaction), one transaction: new table,
+    copy of the common columns (``expressions`` may transform a column),
+    drop, rename, re-create the table's own indexes and triggers,
+    ``PRAGMA foreign_key_check``, commit, foreign keys back on. The copy must
+    not add foreign key violations; legacy ones that were already there do
+    not block startup.
+    """
     conn.commit()
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
-        conn.executescript(
-            """
-            BEGIN;
-            CREATE TABLE schools_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                city TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active',
-                created_by INTEGER REFERENCES users(id),
-                created_at TEXT,
-                norm_key TEXT,
-                UNIQUE(name, city)
-            );
-            INSERT INTO schools_new (id, name, city, status, created_by, created_at, norm_key)
-                SELECT id, name, city, COALESCE(status, 'active'), created_by, created_at, norm_key
-                FROM schools;
-            DROP TABLE schools;
-            ALTER TABLE schools_new RENAME TO schools;
-            COMMIT;
-            """
-        )
+        before = _fk_violations(conn)
+        conn.execute("BEGIN")
+        try:
+            extras = [
+                row["sql"]
+                for row in conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL",
+                    (table,),
+                ).fetchall()
+            ]
+            new = f"{table}__rebuild"
+            conn.execute(f"DROP TABLE IF EXISTS {new}")
+            conn.execute(f"CREATE TABLE {new} (\n{columns_sql})")
+            old_cols = _columns(conn, table)
+            common = [
+                row["name"]
+                for row in conn.execute(f"PRAGMA table_info({new})").fetchall()
+                if row["name"] in old_cols
+            ]
+            exprs = [(expressions or {}).get(col, col) for col in common]
+            conn.execute(
+                f"INSERT INTO {new} ({', '.join(common)}) "
+                f"SELECT {', '.join(exprs)} FROM {table}"
+            )
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {new} RENAME TO {table}")
+            for sql in extras:
+                conn.execute(sql)
+            after = _fk_violations(conn)
+            if after > before:
+                raise RuntimeError(
+                    f"Миграция таблицы {table}: foreign_key_check нашёл {after - before} "
+                    "новых нарушений, изменения отменены"
+                )
+        except BaseException:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _rebuild_schools(conn: sqlite3.Connection) -> None:
+    """Replace UNIQUE(name) with UNIQUE(name, city): schools of the same name
+    exist in different cities."""
+    _rebuild_table(
+        conn, "schools", SCHOOLS_COLUMNS, {"status": "COALESCE(status, 'active')"}
+    )
+
+
+_ROLE_CHECK_RE = re.compile(r"CHECK\s*\(\s*role\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+
+
+def _users_role_check_outdated(conn: sqlite3.Connection) -> bool:
+    """True for an old ``CHECK(role IN ('student', 'teacher'))`` without
+    'director': registering a school would fail with a constraint error."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    ).fetchone()
+    match = _ROLE_CHECK_RE.search(row["sql"] or "") if row else None
+    return bool(match) and "'director'" not in match.group(1)
+
+
+def _rebuild_users(conn: sqlite3.Connection) -> None:
+    _rebuild_table(
+        conn,
+        "users",
+        USERS_COLUMNS,
+        {
+            "role": "CASE WHEN role IN ('student', 'teacher', 'director') THEN role "
+            "ELSE 'student' END",
+            "xp": "MAX(COALESCE(xp, 0), 0)",
+            "sparks": "MAX(COALESCE(sparks, 0), 0)",
+            "avatar": "COALESCE(avatar, '{}')",
+        },
+    )
 
 
 def _migrate_columns(conn: sqlite3.Connection) -> None:
@@ -291,8 +416,14 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     if "awarded_by" not in event_cols:
         conn.execute("ALTER TABLE xp_events ADD COLUMN awarded_by INTEGER REFERENCES users(id)")
 
-    if "proof_url" not in _columns(conn, "completions"):
+    completion_cols = _columns(conn, "completions")
+    if "proof_url" not in completion_cols:
         conn.execute("ALTER TABLE completions ADD COLUMN proof_url TEXT NOT NULL DEFAULT ''")
+    if "upload_id" not in completion_cols:
+        conn.execute(
+            "ALTER TABLE completions ADD COLUMN upload_id INTEGER "
+            "REFERENCES uploads(id) ON DELETE SET NULL"
+        )
 
     class_cols = _columns(conn, "classes")
     if "invite_code" not in class_cols:
@@ -310,6 +441,8 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN class_since TEXT")
     if "staff_detached" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN staff_detached INTEGER NOT NULL DEFAULT 0")
+    if "sandbox_admin" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN sandbox_admin INTEGER NOT NULL DEFAULT 0")
 
     school_cols = _columns(conn, "schools")
     if "status" not in school_cols:
@@ -320,10 +453,16 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE schools ADD COLUMN created_at TEXT")
     if "norm_key" not in school_cols:
         conn.execute("ALTER TABLE schools ADD COLUMN norm_key TEXT")
+    if "timezone" not in school_cols:
+        conn.execute(
+            "ALTER TABLE schools ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Europe/Moscow'"
+        )
     conn.commit()
 
     if _schools_name_is_unique(conn):
         _rebuild_schools(conn)
+    if _users_role_check_outdated(conn):
+        _rebuild_users(conn)
 
     backfill_school_keys(conn)
     _create_indexes(conn)
@@ -348,20 +487,27 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
         # One active request per student.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_join_requests_one_pending ON join_requests(user_id) "
         "WHERE status = 'pending'",
-        # Codes must be unambiguous. Legacy data with duplicates must not
-        # block startup, so these are best-effort.
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_invite_code ON classes(invite_code) "
-        "WHERE invite_code IS NOT NULL",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_teacher_code ON classes(teacher_code) "
-        "WHERE teacher_code IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_completions_upload ON completions(upload_id)",
+        # backfill_school_keys has made norm_key unique: a failure here is a
+        # real error and must not be hidden.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_norm_key ON schools(norm_key) "
         "WHERE norm_key IS NOT NULL",
     ]
     for statement in statements:
+        conn.execute(statement)
+    # Codes must be unambiguous. Legacy data with duplicate codes must not
+    # block startup, so these are best-effort (logged).
+    for name, column in (
+        ("idx_classes_invite_code", "invite_code"),
+        ("idx_classes_teacher_code", "teacher_code"),
+    ):
         try:
-            conn.execute(statement)
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON classes({column}) "
+                f"WHERE {column} IS NOT NULL"
+            )
         except sqlite3.IntegrityError:
-            pass
+            log.warning("Индекс %s не создан: в classes.%s есть повторы", name, column)
     conn.commit()
 
 

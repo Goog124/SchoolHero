@@ -51,6 +51,7 @@ import { TeacherReviewScreen } from './screens/TeacherReviewScreen';
 import { WardrobeScreen } from './screens/WardrobeScreen';
 import type {
   AvatarConfig,
+  BatchReviewResult,
   GameState,
   LevelInfo,
   MutationResponse,
@@ -120,21 +121,42 @@ function pathForTab(tab: TabId, role: 'student' | 'teacher' | 'director' = 'stud
     'director-classes': '/director/classes',
     'director-setup': '/director/setup',
     'admin-schools': '/admin/schools',
-    'director-reports': '/director/reports',
   };
   return routes[tab] || '/';
 }
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => {
+  // Явный выбор пользователя хранится в localStorage; без него тема следует
+  // за системной (prefers-color-scheme) и меняется вместе с ней.
+  const [chosenTheme, setChosenTheme] = useState<Theme | null>(() => {
     try {
       const saved = localStorage.getItem('school-hero:theme');
       if (saved === 'light' || saved === 'dark') return saved;
     } catch {
-      // System default
+      // Storage unavailable
     }
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return null;
   });
+  const [systemTheme, setSystemTheme] = useState<Theme>(() =>
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  );
+  const theme: Theme = chosenTheme ?? systemTheme;
+  const setTheme = useCallback((next: Theme) => {
+    setChosenTheme(next);
+    try {
+      localStorage.setItem('school-hero:theme', next);
+    } catch {
+      // Storage unavailable: the choice lasts until reload
+    }
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return;
+    const onChange = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? 'dark' : 'light');
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
 
   const [state, setState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,6 +172,8 @@ export default function App() {
   const [codeInstead, setCodeInstead] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [sandboxReset, setSandboxReset] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [changingClass, setChangingClass] = useState(false);
   const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
@@ -178,6 +202,7 @@ export default function App() {
   }, []);
 
   const load = useCallback(async () => {
+    refreshRef.current.stopped = false;
     setLoading(true);
     setBootError('');
     setOutsideMax(false);
@@ -209,13 +234,56 @@ export default function App() {
     }
   }, [markExpired]);
 
+  // Тихое обновление данных: подменяет state, не трогая вкладку, шторки и прокрутку.
+  const refreshRef = useRef({ last: 0, failures: 0, nextAllowed: 0, inFlight: false, stopped: false });
+  const refresh = useCallback(
+    async (manual = false): Promise<void> => {
+      const r = refreshRef.current;
+      const now = Date.now();
+      if (r.inFlight || r.stopped) return;
+      if (!manual && (now - r.last < 10_000 || now < r.nextAllowed)) return;
+      r.inFlight = true;
+      r.last = now;
+      if (manual) setRefreshing(true);
+      try {
+        const data = await api.getState();
+        r.failures = 0;
+        r.nextAllowed = 0;
+        setState(data);
+      } catch (error) {
+        if (markExpired(error)) {
+          r.stopped = true;
+          return;
+        }
+        r.failures += 1;
+        r.nextAllowed = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(r.failures, 4));
+        if (manual) showToast('Не удалось обновить. Проверьте соединение.', 'error');
+      } finally {
+        r.inFlight = false;
+        if (manual) setRefreshing(false);
+      }
+    },
+    [markExpired, showToast],
+  );
+
+  const hasState = state !== null;
+  useEffect(() => {
+    if (!hasState) return;
+    const tick = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const timer = window.setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, [hasState, refresh]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem('school-hero:theme', theme);
-    } catch {
-      // Fallback
-    }
   }, [theme]);
 
   useEffect(() => {
@@ -383,10 +451,30 @@ export default function App() {
     return true;
   };
 
+  /** Тост пакетной проверки по фактическим счётчикам ответа сервера. */
+  const batchToast = (result: BatchReviewResult | undefined, fallbackTotal: number) => {
+    const approved = result?.counts?.approved ?? result?.approved ?? 0;
+    const rejected = result?.counts?.rejected ?? result?.rejected ?? 0;
+    const failed = result?.counts?.failed ?? result?.failed ?? 0;
+    if (!result) {
+      showToast(`Обработано работ: ${fallbackTotal}`, 'info', 'check');
+      return;
+    }
+    const parts: string[] = [];
+    if (approved) parts.push(`принято ${approved}`);
+    if (rejected) parts.push(`отклонено ${rejected}`);
+    if (failed) parts.push(`не удалось ${failed}`);
+    let message = parts.length ? parts.join(', ') : 'Ничего не изменилось';
+    message = message.charAt(0).toUpperCase() + message.slice(1);
+    const reason = result.errors?.[0]?.detail;
+    if (failed && reason) message += `. Причина: ${reason}`;
+    showToast(message, failed ? (approved || rejected ? 'info' : 'error') : 'success', failed ? 'edit' : 'check');
+  };
+
   const handleBatchApprove = async (completionIds: number[]): Promise<boolean> => {
     const response = await mutate('batch-review', () => api.batchReview(completionIds, 'approve'));
     if (!response) return false;
-    showToast(`Принято работ: ${completionIds.length}`, 'success', 'check');
+    batchToast(response.result as BatchReviewResult | undefined, completionIds.length);
     return true;
   };
 
@@ -395,7 +483,7 @@ export default function App() {
       api.batchReview(completionIds, 'reject', reason),
     );
     if (!response) return false;
-    showToast(`Возвращено на доработку: ${completionIds.length}`, 'info', 'edit');
+    batchToast(response.result as BatchReviewResult | undefined, completionIds.length);
     return true;
   };
 
@@ -416,6 +504,7 @@ export default function App() {
     kind: string;
     deadline: string;
     subject?: string;
+    subject_other?: string;
     proof_type?: 'text' | 'link' | 'photo';
   }): Promise<boolean> => {
     const response = await mutate('create', () => api.createChallenge(payload));
@@ -692,6 +781,9 @@ export default function App() {
     return true;
   };
 
+  const handleSetTimezone = async (schoolId: number, timezone: string): Promise<boolean> =>
+    Boolean(await mutate('school-timezone', () => api.setSchoolTimezone(schoolId, timezone)));
+
   const handleSelectSchool = async (schoolId: number): Promise<boolean> =>
     Boolean(await mutate('school-select', () => api.selectSchool(schoolId)));
 
@@ -774,6 +866,9 @@ export default function App() {
         onDismissNotice={() => setSandboxReset(false)}
         onSwitch={(id) => switchSandbox(() => switchSandboxUser(id))}
         onNew={() => switchSandbox(() => addSandboxUser())}
+        isAdmin={state.viewer.is_platform_admin}
+        adminBusy={busy !== null}
+        onToggleAdmin={(enabled) => void mutate('sandbox-admin', () => api.setSandboxAdmin(enabled))}
       />
     ) : null;
 
@@ -829,6 +924,7 @@ export default function App() {
           {chosen === 'school' ? (
             <SchoolRegisterScreen
               busy={busy !== null}
+              timezones={state.timezones}
               onBack={() => setAudience(null)}
               onCreate={handleCreateSchool}
               onJoinTeacher={handleJoinTeacher}
@@ -855,6 +951,28 @@ export default function App() {
               onSchool={() => setAudience('school')}
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (changingClass && state.viewer.role === 'student' && !adminOnly) {
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          <OnboardingScreen
+            state={state}
+            onComplete={handleOnboarding}
+            joinOnly
+            onJoin={async (classId, inviteCode) => {
+              const error = await handleJoinClass(classId, inviteCode);
+              if (!error) setChangingClass(false);
+              return error;
+            }}
+            notice="Рейтинг класса не переносится: в новом классе набранные в прежнем классе очки в его рейтинг не войдут."
+            onBack={() => setChangingClass(false)}
+          />
         </div>
       </div>
     );
@@ -952,10 +1070,18 @@ export default function App() {
         theme={theme}
         onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         onProfile={() => navigate('profile')}
+        hideHero={adminOnly}
       />
 
       <div className="shell">
-        <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} demo={isDemo} />
+        <AppHeader
+          viewer={state.viewer}
+          onProfile={() => navigate('profile')}
+          demo={isDemo}
+          hideHero={adminOnly}
+          onRefresh={() => void refresh(true)}
+          refreshing={refreshing}
+        />
 
         <header className="desk-head">
           <div className="desk-head__crumbs">
@@ -1026,6 +1152,8 @@ export default function App() {
               onChangeName={handleSetName}
               theme={theme}
               onThemeChange={setTheme}
+              adminOnly={adminOnly}
+              onChangeClass={state.mode === 'demo' ? undefined : () => setChangingClass(true)}
             />
           ) : null}
 
@@ -1062,7 +1190,11 @@ export default function App() {
           ) : null}
 
           {(tab === 'director-overview' || tab === 'director-classes') && isDirector && director ? (
-            <DirectorScreen state={state} director={director} />
+            <DirectorScreen
+              state={state}
+              director={director}
+              section={tab === 'director-classes' ? 'classes' : 'school'}
+            />
           ) : null}
 
           {tab === 'director-setup' && isDirector && state.school_admin ? (
@@ -1078,6 +1210,7 @@ export default function App() {
               onDisconnectTeacher={handleDisconnectTeacher}
               onDecideJoin={handleDecideJoin}
               onSelectSchool={handleSelectSchool}
+              onSetTimezone={handleSetTimezone}
               onCreateSchool={handleCreateSchool}
             />
           ) : null}
@@ -1091,7 +1224,7 @@ export default function App() {
           ) : null}
 
           {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (
-            <DirectorNoSchoolScreen busy={busy !== null} onCreate={handleCreateSchool} />
+            <DirectorNoSchoolScreen busy={busy !== null} timezones={state.timezones} onCreate={handleCreateSchool} />
           ) : null}
 
           {isTeacher && !teacher && tab.startsWith('teacher-') ? (

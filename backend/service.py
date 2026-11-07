@@ -20,7 +20,11 @@ from .game import (
     award_xp,
     cosmetic_state,
     current_streak,
+    day_start_utc_sql,
+    DEFAULT_TIMEZONE,
+    normalize_timezone,
     deadline_in,
+    deadline_on,
     dump_avatar,
     dump_owned,
     is_past,
@@ -29,15 +33,47 @@ from .game import (
     load_avatar,
     load_owned,
     mark_active,
-    now_local,
+    get_tz,
     streak_days,
     today_local,
     utc_sql,
+    timezone_options,
     validate_avatar_patch,
     week_days,
     week_start_utc_sql,
 )
 from .security import DEFAULT_FIRST_NAME, DEMO_FIRST_NAME, DEMO_LAST_NAME, DEMO_USERNAME, Identity
+from .game import SUBJECT_NONE, SUBJECT_OTHER, SUBJECTS
+
+
+def school_timezone(conn, school_id: int | None) -> str:
+    """IANA zone of a school (Moscow without a school)."""
+    if school_id is None:
+        return DEFAULT_TIMEZONE
+    row = conn.execute("SELECT timezone FROM schools WHERE id = ?", (school_id,)).fetchone()
+    return normalize_timezone(row["timezone"] if row else None)
+
+
+def class_timezone(conn, class_id: int | None) -> str:
+    if class_id is None:
+        return DEFAULT_TIMEZONE
+    row = conn.execute(
+        "SELECT s.timezone FROM classes c JOIN schools s ON s.id = c.school_id WHERE c.id = ?",
+        (class_id,),
+    ).fetchone()
+    return normalize_timezone(row["timezone"] if row else None)
+
+
+def user_timezone(conn, user: sqlite3.Row) -> str:
+    """Zone of the user's school: by class, else by the school they manage."""
+    if user["class_id"] is not None:
+        return class_timezone(conn, int(user["class_id"]))
+    row = conn.execute(
+        "SELECT s.timezone FROM school_staff st JOIN schools s ON s.id = st.school_id "
+        "WHERE st.user_id = ? ORDER BY st.school_id LIMIT 1",
+        (user["id"],),
+    ).fetchone()
+    return normalize_timezone(row["timezone"] if row else None)
 
 
 class GameError(Exception):
@@ -49,7 +85,7 @@ class GameError(Exception):
 
 REVIEW_ACTIONS = ("approve", "reject")
 
-# Manual XP from staff (POST /api/teacher/reward), per local (MSK) day.
+# Manual XP from staff (POST /api/teacher/reward), per local day of the school zone.
 MANUAL_XP_PER_STUDENT_DAY = 300  # from all teachers together
 MANUAL_XP_PER_TEACHER_DAY = 3000  # given by one teacher/director
 
@@ -276,7 +312,7 @@ def ensure_user(conn, identity: Identity, settings: Settings) -> sqlite3.Row:
 LEADERBOARD_CAP = 100
 
 
-def _weekly_map(conn, *, class_id: int | None = None) -> dict[int, int]:
+def _weekly_map(conn, *, class_id: int | None = None, tz: str | None = None) -> dict[int, int]:
     """Weekly XP per user earned in one class (empty when there is no class).
 
     Only events recorded for this class count: XP earned in another class
@@ -287,7 +323,7 @@ def _weekly_map(conn, *, class_id: int | None = None) -> dict[int, int]:
     rows = conn.execute(
         "SELECT e.user_id, SUM(e.amount) AS xp FROM xp_events e "
         "WHERE e.class_id = ? AND e.created_at >= ? GROUP BY e.user_id",
-        (class_id, week_start_utc_sql()),
+        (class_id, week_start_utc_sql(tz)),
     ).fetchall()
     return {int(row["user_id"]): int(row["xp"] or 0) for row in rows}
 
@@ -302,7 +338,9 @@ def _class_students(conn, class_id: int | None) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def _class_aggregates(conn, visible_school_id: int | None) -> list[sqlite3.Row]:
+def _class_aggregates(
+    conn, visible_school_id: int | None, tz: str | None = None
+) -> list[sqlite3.Row]:
     """XP, weekly XP and head count per class, computed by SQL aggregates.
 
     Class XP is the XP earned *in that class* (``xp_events.class_id``), so a
@@ -332,11 +370,13 @@ def _class_aggregates(conn, visible_school_id: int | None) -> list[sqlite3.Row]:
         WHERE s.status = 'active' OR s.id = ?
         ORDER BY c.id
         """,
-        (week_start_utc_sql(), visible_school_id if visible_school_id is not None else -1),
+        (week_start_utc_sql(tz), visible_school_id if visible_school_id is not None else -1),
     ).fetchall()
 
 
-def _student_public(row: sqlite3.Row, week_xp: int, viewer_id: int) -> dict[str, Any]:
+def _student_public(
+    row: sqlite3.Row, week_xp: int, viewer_id: int, tz: str | None = None
+) -> dict[str, Any]:
     info = level_info(int(row["xp"]))
     return {
         "id": int(row["id"]),
@@ -348,7 +388,7 @@ def _student_public(row: sqlite3.Row, week_xp: int, viewer_id: int) -> dict[str,
         "weekly_xp": int(week_xp),
         "level": info["level"],
         "level_title": info["title"],
-        "streak": current_streak(row["streak"], row["last_active_date"]),
+        "streak": current_streak(row["streak"], row["last_active_date"], tz),
         "is_viewer": int(row["id"]) == viewer_id,
     }
 
@@ -361,7 +401,8 @@ def _build_leaderboards(
     viewer_school_id: int | None,
 ) -> tuple[dict[str, Any], int, int, int]:
     viewer_class_id = viewer["class_id"]
-    classes = _class_aggregates(conn, viewer_school_id)
+    tz = user_timezone(conn, viewer)
+    classes = _class_aggregates(conn, viewer_school_id, tz)
 
     class_entries: list[dict[str, Any]] = []
     for item in classes:
@@ -418,7 +459,7 @@ def _build_leaderboards(
 
     personal = []
     for rank, member in enumerate(class_students, start=1):
-        entry = _student_public(member, week.get(int(member["id"]), 0), int(viewer["id"]))
+        entry = _student_public(member, week.get(int(member["id"]), 0), int(viewer["id"]), tz)
         entry["rank"] = rank
         personal.append(entry)
 
@@ -511,7 +552,8 @@ def _challenge_list(conn, viewer: sqlite3.Row) -> list[dict[str, Any]]:
                 "category_label": CATEGORIES.get(row["category"], row["category"]),
                 "xp": int(row["xp"]),
                 "kind": row["kind"],
-                "kind_label": KINDS.get(row["kind"], row["kind"]),
+                # Kind is not a repetition schedule: the label follows the deadline.
+                "kind_label": term_label(row["deadline"]),
                 "deadline": row["deadline"],
                 "status": status,
                 "proof": completion["proof"] if completion else "",
@@ -603,10 +645,11 @@ def _teacher_data(
     leaderboard: dict[str, Any],
 ) -> dict[str, Any]:
     class_id = int(viewer["class_id"])
+    tz = class_timezone(conn, class_id)
     class_students = sorted(students, key=lambda row: -int(row["xp"]))
     pending_rows = conn.execute(
         """
-        SELECT cp.id, cp.proof, cp.proof_url, cp.created_at, cp.user_id,
+        SELECT cp.id, cp.proof, cp.proof_url, cp.upload_id, cp.created_at, cp.user_id,
                c.title, c.category, c.xp, c.kind, c.subject, c.proof_type,
                u.first_name, u.last_name, u.avatar, u.xp AS user_xp, u.id AS student_id
         FROM completions cp
@@ -638,6 +681,7 @@ def _teacher_data(
                 "xp": int(row["xp"]),
                 "proof": row["proof"],
                 "proof_url": row["proof_url"] or "",
+                "upload_id": int(row["upload_id"]) if row["upload_id"] else None,
                 "subject": row["subject"] or "Общее",
                 "proof_type": row["proof_type"] or "text",
                 "created_at": iso_utc(row["created_at"]),
@@ -678,7 +722,7 @@ def _teacher_data(
         uid = int(comp["user_id"])
         user_completions.setdefault(uid, []).append(comp)
 
-    today = today_local()
+    today = today_local(tz)
     student_rows = []
     for rank, student in enumerate(class_students, start=1):
         last_active = student["last_active_date"]
@@ -753,7 +797,7 @@ def _teacher_data(
                 "weekly_xp": week.get(uid, 0),
                 "level": info["level"],
                 "level_title": info["title"],
-                "streak": current_streak(student["streak"], student["last_active_date"]),
+                "streak": current_streak(student["streak"], student["last_active_date"], tz),
                 "pending_count": pending_counts.get(uid, 0),
                 "approved_count": len(approved_comps),
                 "rejected_count": len(rejected_comps),
@@ -770,7 +814,7 @@ def _teacher_data(
     # Activity by weekday for the current week.
     chart = [
         {"date": item["date"], "label": item["label"], "xp": 0}
-        for item in week_days()
+        for item in week_days(tz)
     ]
     day_index = {item["date"]: index for index, item in enumerate(chart)}
     event_rows = conn.execute(
@@ -779,7 +823,7 @@ def _teacher_data(
         FROM xp_events e
         WHERE e.class_id = ? AND e.created_at >= ?
         """,
-        (class_id, week_start_utc_sql()),
+        (class_id, week_start_utc_sql(tz)),
     ).fetchall()
     for event in event_rows:
         moment = event["created_at"]
@@ -789,7 +833,7 @@ def _teacher_data(
             )
         except (TypeError, ValueError):
             continue
-        local = parsed.astimezone(now_local().tzinfo).date().isoformat()
+        local = parsed.astimezone(get_tz(tz)).date().isoformat()
         if local in day_index:
             chart[day_index[local]]["xp"] += int(event["amount"])
 
@@ -900,7 +944,7 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
     """Figures for one school, computed with SQL aggregates scoped to it."""
     # XP of a class is the XP earned in it (xp_events.class_id); "active" is a
     # current member who earned XP in this class this week.
-    week_start = week_start_utc_sql()
+    week_start = week_start_utc_sql(school_timezone(conn, school_id))
     class_rows = conn.execute(
         """
         SELECT c.id, c.name, c.weekly_goal, s.name AS school_name, s.city,
@@ -1099,12 +1143,13 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
             (view_school_id,),
         ).fetchone()
 
-    week = _weekly_map(conn, class_id=class_id)
+    tz = user_timezone(conn, viewer)
+    week = _weekly_map(conn, class_id=class_id, tz=tz)
     class_students = _class_students(conn, class_id)
     leaderboard, class_rank, school_rank, personal_rank = _build_leaderboards(
         conn, viewer, class_students, week, view_school_id
     )
-    achievements = achievements_for(conn, viewer, class_rank or None)
+    achievements = achievements_for(conn, viewer, class_rank or None, tz)
     challenges = _challenge_list(conn, viewer)
     feed = _feed(conn, viewer)
     viewer_week_xp = week.get(int(viewer["id"]), 0)
@@ -1160,7 +1205,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "xp": int(viewer["xp"]),
         "level": level,
         "sparks": int(viewer["sparks"]),
-        "streak": current_streak(viewer["streak"], viewer["last_active_date"]),
+        "streak": current_streak(viewer["streak"], viewer["last_active_date"], tz),
         "avatar": avatar,
         "owned": owned,
         "onboarded": bool(viewer["onboarded"]),
@@ -1181,7 +1226,12 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
     return {
         "mode": settings.app_mode,
         "verified": not (settings.demo_mode or settings.sandbox_mode),
-        "today": today_local().isoformat(),
+        "today": today_local(tz).isoformat(),
+        "timezone": tz,
+        "timezones": timezone_options(),
+        "timezone_label": next(
+            (o["label"] for o in timezone_options() if o["id"] == tz), tz
+        ),
         "viewer": viewer_public,
         "class_sprint": {
             "name": class_row["name"] if class_row else "",
@@ -1206,7 +1256,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "challenges": challenges,
         "leaderboard": leaderboard,
         "feed": feed,
-        "week": streak_days(conn, int(viewer["id"])),
+        "week": streak_days(conn, int(viewer["id"]), tz=tz),
         "achievements": achievements,
         "cosmetics": cosmetics,
         "teacher": teacher,
@@ -1215,6 +1265,8 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "platform_admin": platform_admin_data(conn, viewer, settings),
         "demo_teacher_available": settings.demo_mode,
         "demo_director_available": settings.demo_mode,
+        # Subjects for the challenge form: the server validates against the same list.
+        "subjects": list(SUBJECTS) if role in {"teacher", "director"} else [],
     }
 
 
@@ -1295,14 +1347,43 @@ def _natural_key(name: str) -> tuple[int, str]:
     return (int(digits) if digits else 999, name)
 
 
-def search_cities(conn, query: str = "", limit: int = 10) -> dict[str, Any]:
-    """Cities that have active schools, for suggestions while typing.
+def search_cities(
+    conn, query: str = "", limit: int = 10, scope: str = ""
+) -> dict[str, Any]:
+    """Cities for suggestions while typing.
 
-    Substring match without regard to case; cities starting with the text come
-    first, then the ones with more schools. Only a handful of rows is read.
+    By default only cities with active schools (what a pupil may pick).
+    ``scope="all"`` (director registering a school) adds the built-in
+    directory of Russian cities. Substring match ignoring case and "ё";
+    cities starting with the text come first.
     """
+    from .cities import directory, fold, search_directory
+
     needle = query.strip().casefold()[:60]
     limit = max(1, min(int(limit), 20))
+    if scope == "all":
+        counts = {
+            fold(r["city"]): (r["city"], int(r["n"]))
+            for r in conn.execute(
+                "SELECT city, COUNT(*) AS n FROM schools WHERE status = 'active' GROUP BY city"
+            )
+        }
+        key = fold(needle)
+        names = search_directory(needle, len(directory()))
+        shown = {fold(n) for n in names}
+        extra = [
+            name
+            for k, (name, _) in counts.items()
+            if k not in shown and (not key or key in k)
+        ]
+        names = names + extra
+        names.sort(key=lambda n: (0 if (not key or fold(n).startswith(key)) else 1))
+        return {
+            "cities": [
+                {"name": n, "schools": counts.get(fold(n), ("", 0))[1]} for n in names[:limit]
+            ],
+            "total": len(names),
+        }
     rows = conn.execute(
         """
         SELECT city, COUNT(*) AS n FROM schools
@@ -1802,6 +1883,7 @@ def submit_challenge(
     challenge_id: int,
     proof: str,
     proof_url: str = "",
+    upload_id: int | None = None,
 ) -> dict[str, Any]:
     if effective_role(viewer, settings) != "student":
         raise GameError("Отправлять задания может только ученик", 403)
@@ -1820,6 +1902,15 @@ def submit_challenge(
         if is_past(challenge["deadline"]):
             raise GameError("Срок выполнения уже истёк")
         proof, proof_url = _clean_proof(proof, proof_url, challenge["proof_type"] or "text")
+        upload = None
+        if upload_id is not None:
+            # Only the student's own photo that is not attached to any work yet.
+            upload = conn.execute(
+                "SELECT * FROM uploads WHERE id = ? AND user_id = ? AND completion_id IS NULL",
+                (upload_id, viewer["id"]),
+            ).fetchone()
+            if upload is None:
+                raise GameError("Фото не найдено или уже использовано. Загрузите его снова.")
         existing = conn.execute(
             "SELECT * FROM completions WHERE user_id = ? AND challenge_id = ?",
             (viewer["id"], challenge_id),
@@ -1828,6 +1919,8 @@ def submit_challenge(
             raise GameError(
                 "Задание уже на проверке" if existing["status"] == "pending" else "Задание уже выполнено"
             )
+        if upload is None and (challenge["proof_type"] or "text") == "photo":
+            raise GameError("Для этого задания нужно приложить фото")
         if existing:
             cursor = conn.execute(
                 """
@@ -1840,17 +1933,36 @@ def submit_challenge(
             )
             if cursor.rowcount != 1:
                 raise GameError("Задание уже на проверке")
+            completion_id = int(existing["id"])
+            # The earlier photo is detached; startup removes unattached files.
+            conn.execute(
+                "UPDATE uploads SET completion_id = NULL WHERE completion_id = ?",
+                (completion_id,),
+            )
+            conn.execute("UPDATE completions SET upload_id = NULL WHERE id = ?", (completion_id,))
         else:
             try:
-                conn.execute(
+                cursor = conn.execute(
                     "INSERT INTO completions (user_id, challenge_id, status, proof, proof_url, created_at) "
                     "VALUES (?, ?, 'pending', ?, ?, ?)",
                     (viewer["id"], challenge_id, proof, proof_url, utc_sql()),
                 )
             except sqlite3.IntegrityError:
                 raise GameError("Задание уже отправлено на проверку") from None
+            completion_id = int(cursor.lastrowid)
+        if upload is not None:
+            bound = conn.execute(
+                "UPDATE uploads SET completion_id = ? WHERE id = ? AND completion_id IS NULL",
+                (completion_id, upload["id"]),
+            )
+            if bound.rowcount != 1:
+                raise GameError("Фото уже использовано. Загрузите его снова.")
+            conn.execute(
+                "UPDATE completions SET upload_id = ? WHERE id = ?",
+                (upload["id"], completion_id),
+            )
         # Sending own work is the student's activity for the day (streak).
-        mark_active(conn, int(viewer["id"]))
+        mark_active(conn, int(viewer["id"]), class_timezone(conn, int(user["class_id"])))
     return {"status": "pending", "challenge_title": challenge["title"]}
 
 
@@ -1934,6 +2046,54 @@ def review_completion(
     }
 
 
+_MONTHS_GENITIVE = (
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+)
+
+
+def term_label(deadline: str | None) -> str:
+    """Card label of a challenge by its deadline: today, this week or a date.
+
+    The deadline is stored as local time with an offset, so its own date is
+    the day the teacher picked.
+    """
+    if not deadline:
+        return ""
+    try:
+        day = datetime.fromisoformat(str(deadline).replace("Z", "+00:00")).date()
+    except ValueError:
+        return ""
+    today = today_local()
+    if day < today:
+        return "Срок прошёл"
+    if day == today:
+        return "На сегодня"
+    if (day - today).days <= 6 - today.weekday():
+        return "До конца недели"
+    return f"До {day.day} {_MONTHS_GENITIVE[day.month - 1]}"
+
+
+def clean_subject(subject: Any, other: Any = "") -> str:
+    """Subject of a new challenge: one of SUBJECTS, or "Другое" with own text.
+
+    Empty means no subject (SUBJECT_NONE). Own text that matches a listed
+    subject (any case) is stored as the listed one, so statistics group well.
+    """
+    value = " ".join(str(subject or "").split())
+    if not value or value == SUBJECT_NONE:
+        return SUBJECT_NONE
+    by_lower = {item.casefold(): item for item in SUBJECTS}
+    if value == SUBJECT_OTHER:
+        text = " ".join(str(other or "").split())
+        if not 2 <= len(text) <= 40:
+            raise GameError("Название предмета: от 2 до 40 символов")
+        return by_lower.get(text.casefold(), text)
+    if value.casefold() in by_lower:
+        return by_lower[value.casefold()]
+    raise GameError("Выберите предмет из списка или «Другое»")
+
+
 def create_challenge(
     conn,
     viewer: sqlite3.Row,
@@ -1954,7 +2114,7 @@ def create_challenge(
     category = str(payload.get("category", ""))
     kind = str(payload.get("kind", ""))
     xp = int(payload.get("xp", 0))
-    subject = str(payload.get("subject", "Общее")).strip() or "Общее"
+    subject = clean_subject(payload.get("subject"), payload.get("subject_other"))
     proof_type = str(payload.get("proof_type", "text")).strip()
     if proof_type not in {"text", "link", "photo"}:
         proof_type = "text"
@@ -1968,17 +2128,24 @@ def create_challenge(
         raise GameError("Неизвестный тип задания")
     if not 10 <= xp <= 300:
         raise GameError("Награда: целое число от 10 до 300 XP")
+    tz = class_timezone(conn, target_class)
     deadline_raw = str(payload.get("deadline", "")).strip()
     if deadline_raw:
         try:
             day = date.fromisoformat(deadline_raw)
         except ValueError as exc:
             raise GameError("Некорректная дата") from exc
-        if day < today_local():
+        if day < today_local(tz):
             raise GameError("Дата уже прошла")
-        deadline = datetime.combine(day, time(23, 59), tzinfo=now_local().tzinfo).isoformat()
+        deadline = deadline_on(day, tz)
     else:
-        deadline = deadline_in(2)
+        # No date given: "today" and "until the end of the week" follow the kind.
+        if kind == "daily":
+            deadline = deadline_in(0, tz)
+        elif kind == "weekly":
+            deadline = deadline_in(6 - today_local(tz).weekday(), tz)
+        else:
+            deadline = deadline_in(2, tz)
     conn.execute(
         """
         INSERT INTO challenges
@@ -1988,10 +2155,6 @@ def create_challenge(
         """,
         (target_class, title, description, category, xp, kind, deadline, subject, proof_type, viewer["id"]),
     )
-
-
-def _local_day_start_sql() -> str:
-    return utc_sql(datetime.combine(today_local(), time.min, tzinfo=now_local().tzinfo))
 
 
 def award_student_by_teacher(
@@ -2020,7 +2183,7 @@ def award_student_by_teacher(
         if not can_manage_class(conn, viewer, settings, student["class_id"]):
             raise GameError("Ученик из другого класса", 403)
         _require_school_open(conn, int(student["class_id"]))
-        day_start = _local_day_start_sql()
+        day_start = day_start_utc_sql(class_timezone(conn, int(student["class_id"])))
         to_student = conn.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM xp_events "
             "WHERE user_id = ? AND source = 'manual' AND created_at >= ?",
@@ -2078,14 +2241,22 @@ def switch_role(conn, viewer: sqlite3.Row, settings: Settings, role: str) -> Non
 def reset_demo(conn, viewer: sqlite3.Row, settings: Settings) -> None:
     if not settings.demo_mode:
         raise GameError("Сброс доступен только в демо-режиме", 403)
+    class_id = _demo_class_id(conn, settings)
+    if class_id is None:
+        raise GameError("В демо-базе нет классов", 409)
     conn.execute("DELETE FROM completions WHERE user_id = ?", (viewer["id"],))
     conn.execute("DELETE FROM xp_events WHERE user_id = ?", (viewer["id"],))
     conn.execute("DELETE FROM activity_days WHERE user_id = ?", (viewer["id"],))
+    # The viewer may have left the demo class (joined another by code, was
+    # removed, filed a request): the reset brings them back to the default one.
+    conn.execute("DELETE FROM class_exclusions WHERE user_id = ?", (viewer["id"],))
+    conn.execute("DELETE FROM join_requests WHERE user_id = ?", (viewer["id"],))
     conn.execute(
         """
         UPDATE users SET first_name = ?, last_name = ?, username = ?,
             xp = 0, sparks = 0, streak = 0, last_active_date = NULL,
-            avatar = ?, owned = '[]', onboarded = 0, preview_role = NULL
+            avatar = ?, owned = '[]', onboarded = 0, preview_role = NULL,
+            class_id = ?
         WHERE id = ?
         """,
         (
@@ -2093,12 +2264,25 @@ def reset_demo(conn, viewer: sqlite3.Row, settings: Settings) -> None:
             DEMO_LAST_NAME,
             DEMO_USERNAME,
             dump_avatar(BASIC_AVATAR),
+            class_id,
             viewer["id"],
         ),
     )
     from .demo_seed import seed_demo_progress
 
-    seed_demo_progress(conn, int(viewer["id"]), int(viewer["class_id"]))
+    seed_demo_progress(conn, int(viewer["id"]), class_id)
+
+
+def _demo_class_id(conn, settings: Settings) -> int | None:
+    """Default demo class: DEFAULT_CLASS_ID when it exists, else the first class."""
+    if settings.default_class_id is not None:
+        row = conn.execute(
+            "SELECT id FROM classes WHERE id = ?", (settings.default_class_id,)
+        ).fetchone()
+        if row:
+            return int(row["id"])
+    row = conn.execute("SELECT id FROM classes ORDER BY id LIMIT 1").fetchone()
+    return int(row["id"]) if row else None
 
 
 

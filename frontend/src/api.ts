@@ -1,3 +1,4 @@
+import { setSchoolTimezone } from './game';
 import { getClientId, getInitData } from './max';
 import { activeSandboxClientId } from './sandbox';
 import type {
@@ -109,7 +110,62 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, response.status);
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  // The state (own or inside a mutation answer) carries the school zone:
+  // "today" and deadlines on screen follow it, not the device clock.
+  const state = (data as { state?: { timezone?: unknown }; timezone?: unknown } | null) ?? {};
+  const zone = typeof state.timezone === 'string' ? state.timezone : state.state?.timezone;
+  if (typeof zone === 'string') setSchoolTimezone(zone);
+  return data;
+}
+
+/**
+ * Photo chosen in the challenge sheet, per challenge. submit() sends it as
+ * upload_id when the caller does not pass one explicitly.
+ */
+const stagedUploads = new Map<number, number>();
+
+export function stageUpload(challengeId: number, uploadId: number | null): void {
+  if (uploadId) stagedUploads.set(challengeId, uploadId);
+  else stagedUploads.delete(challengeId);
+}
+
+/** Photo proof: raw image bytes (no multipart); returns the upload id. */
+export async function uploadPhoto(blob: Blob): Promise<number> {
+  let response: Response;
+  try {
+    response = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': blob.type || 'image/jpeg' },
+      body: blob,
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw new ApiError('Нет связи с сервером. Проверь соединение и попробуй ещё раз.', 0);
+  }
+  if (!response.ok) {
+    let message = response.status === 413 ? 'Файл больше 5 МБ.' : statusFallback(response.status);
+    try {
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === 'string' && body.detail.trim()) message = body.detail;
+    } catch {
+      // keep fallback
+    }
+    throw new ApiError(message, response.status);
+  }
+  return ((await response.json()) as { id: number }).id;
+}
+
+/** Photo of a submission as a Blob (the file is behind authorization headers). */
+export async function getUploadBlob(id: number): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/uploads/${id}`, { headers: headers(), credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('Нет связи с сервером. Проверь соединение и попробуй ещё раз.', 0);
+  }
+  if (!response.ok) throw new ApiError(statusFallback(response.status), response.status);
+  return response.blob();
 }
 
 export const api = {
@@ -144,8 +200,13 @@ export const api = {
     return request<SchoolCatalog>(`/api/school/catalog${suffix ? `?${suffix}` : ''}`);
   },
 
-  searchCities(q: string, limit = 10): Promise<{ cities: CitySuggestion[]; total: number }> {
+  searchCities(
+    q: string,
+    limit = 10,
+    scope: '' | 'all' = '',
+  ): Promise<{ cities: CitySuggestion[]; total: number }> {
     const query = new URLSearchParams({ q, limit: String(limit) });
+    if (scope) query.set('scope', scope);
     return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
   },
 
@@ -226,6 +287,21 @@ export const api = {
     });
   },
 
+  setSchoolTimezone(schoolId: number, timezone: string): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/school/${schoolId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ timezone }),
+    });
+  },
+
+  /** Только в песочнице: текущий тестовый пользователь становится администратором платформы. */
+  setSandboxAdmin(enabled: boolean): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/sandbox/admin', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   selectSchool(schoolId: number): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/school/${schoolId}/select`, { method: 'POST' });
   },
@@ -281,10 +357,23 @@ export const api = {
     });
   },
 
-  submit(challengeId: number, proof: string, proofUrl = ''): Promise<MutationResponse<SubmitResult>> {
+  submit(
+    challengeId: number,
+    proof: string,
+    proofUrl = '',
+    uploadId: number | null = null,
+  ): Promise<MutationResponse<SubmitResult>> {
+    const attached = uploadId ?? stagedUploads.get(challengeId) ?? null;
     return request<MutationResponse<SubmitResult>>(`/api/challenges/${challengeId}/submit`, {
       method: 'POST',
-      body: JSON.stringify({ proof, proof_url: proofUrl }),
+      body: JSON.stringify({
+        proof,
+        proof_url: proofUrl,
+        ...(attached ? { upload_id: attached } : {}),
+      }),
+    }).then((result) => {
+      stagedUploads.delete(challengeId);
+      return result;
     });
   },
 
@@ -296,6 +385,7 @@ export const api = {
     kind: string;
     deadline: string;
     subject?: string;
+    subject_other?: string;
     proof_type?: 'text' | 'link' | 'photo';
     class_id?: number;
   }): Promise<MutationResponse> {

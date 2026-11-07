@@ -519,7 +519,7 @@ def test_content_security_policy(env):
     headers = env["c"].get("/api/health").headers
     csp = headers["Content-Security-Policy"]
     for part in ("default-src 'self'", "script-src 'self' https://st.max.ru", "object-src 'none'",
-                 "base-uri 'self'", "img-src 'self' data: https:", "frame-ancestors 'self' https://max.ru"):
+                 "base-uri 'self'", "img-src 'self' data: blob: https:", "frame-ancestors 'self' https://max.ru"):
         assert part in csp
     assert "X-Frame-Options" not in headers
     assert "camera=()" in headers["Permissions-Policy"]

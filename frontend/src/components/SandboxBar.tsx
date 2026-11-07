@@ -8,6 +8,9 @@ type SandboxBarProps = {
   onDismissNotice?: () => void;
   onSwitch: (clientId: string) => void;
   onNew: () => void;
+  isAdmin: boolean;
+  adminBusy?: boolean;
+  onToggleAdmin: (enabled: boolean) => void;
 };
 
 export function SandboxBar({
@@ -17,6 +20,9 @@ export function SandboxBar({
   onDismissNotice,
   onSwitch,
   onNew,
+  isAdmin,
+  adminBusy,
+  onToggleAdmin,
 }: SandboxBarProps) {
   return (
     <div className="sb-bar" role="group" aria-label="Песочница">
@@ -39,6 +45,15 @@ export function SandboxBar({
         <Icon name="plus" size={16} />
         Новый пользователь
       </button>
+      <label className="sb-bar__admin">
+        <input
+          type="checkbox"
+          checked={isAdmin}
+          disabled={adminBusy}
+          onChange={(e) => onToggleAdmin(e.target.checked)}
+        />
+        <span>Администратор платформы</span>
+      </label>
       {notice ? (
         <div className="sb-bar__notice" role="status">
           <span>{notice}</span>

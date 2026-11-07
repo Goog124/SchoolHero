@@ -57,6 +57,8 @@ class SubmitBody(BaseModel):
     # in service.submit_challenge with readable 400 messages; these are caps.
     proof: str = Field(default="", max_length=4000)
     proof_url: str = Field(default="", max_length=2000)
+    # Photo uploaded earlier with POST /api/uploads (required for photo tasks).
+    upload_id: int | None = Field(default=None, ge=1, le=2**62)
 
 
 class BatchReviewBody(BaseModel):
@@ -82,6 +84,8 @@ class ChallengeBody(BaseModel):
     kind: str
     deadline: str = ""
     subject: str = Field(default="Общее", max_length=60)
+    # Own subject name when ``subject`` is "Другое".
+    subject_other: str = Field(default="", max_length=40)
     proof_type: str = Field(default="text", max_length=20)
     class_id: OptionalClassId = None
 
@@ -119,7 +123,13 @@ class UpdateClassBody(BaseModel):
 class NewSchoolBody(BaseModel):
     name: str = Field(min_length=3, max_length=80)
     city: str = Field(min_length=2, max_length=60)
+    # IANA zone from the supported list (state.timezones); empty: Moscow.
+    timezone: str = Field(default="", max_length=40)
     classes: list[NewClassBody] = Field(min_length=1, max_length=40)
+
+
+class SchoolTimezoneBody(BaseModel):
+    timezone: str = Field(max_length=40)
 
 
 class CodeResetBody(BaseModel):
@@ -249,9 +259,27 @@ def school_catalog(
 
 @router.get("/school/cities")
 def school_cities(
-    q: str = "", limit: Annotated[int, Query(ge=-1000, le=1000)] = 10, ctx: Context = Depends(get_context)
+    q: str = "",
+    limit: Annotated[int, Query(ge=-1000, le=1000)] = 10,
+    scope: Annotated[str, Query(max_length=10)] = "",
+    ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
-    return search_cities(ctx.conn, q, limit)
+    return search_cities(ctx.conn, q, limit, scope)
+
+
+class SandboxAdminBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/sandbox/admin")
+def sandbox_admin(
+    payload: SandboxAdminBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    """Sandbox only: toggle the platform admin role of the test user."""
+    registration.set_sandbox_admin(ctx.conn, ctx.user, ctx.settings, payload.enabled)
+    ctx.conn.commit()
+    ctx.user = ctx.conn.execute("SELECT * FROM users WHERE id = ?", (ctx.user["id"],)).fetchone()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
 @router.post("/school/join")
@@ -286,6 +314,17 @@ def school_add_class(
 ) -> dict[str, Any]:
     registration.add_class(
         ctx.conn, ctx.user, ctx.settings, school_id, payload.name, payload.weekly_goal
+    )
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.patch("/school/{school_id}")
+def school_update(
+    school_id: IdPath, payload: SchoolTimezoneBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.set_school_timezone(
+        ctx.conn, ctx.user, ctx.settings, school_id, payload.timezone
     )
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
@@ -417,6 +456,7 @@ def submit(
         challenge_id,
         payload.proof,
         payload.proof_url,
+        payload.upload_id,
     )
     ctx.conn.commit()
     return {

@@ -238,6 +238,8 @@ export type ReviewItem = {
   proof_url?: string;
   subject?: string;
   proof_type?: 'text' | 'link' | 'photo';
+  /** Фото работы (GET /api/uploads/{id}) или null. */
+  upload_id?: number | null;
   created_at: string;
   is_self: boolean;
 };
@@ -367,6 +369,8 @@ export type ManagedSchool = {
   name: string;
   city: string;
   status: 'active' | 'pending' | 'rejected';
+  /** IANA-пояс школы. */
+  timezone: string;
   classes: ManagedClass[];
 };
 
@@ -426,7 +430,17 @@ export type PlatformAdminData = {
 export type NewSchoolPayload = {
   name: string;
   city: string;
+  /** IANA-пояс из state.timezones; пусто: Москва. */
+  timezone?: string;
   classes: Array<{ name: string; weekly_goal?: number }>;
+};
+
+export type TimezoneOption = {
+  id: string;
+  label: string;
+  city: string;
+  msk: string;
+  utc_offset: number;
 };
 
 export type GradeEntry = {
@@ -473,7 +487,12 @@ export type DirectorData = {
 export type GameState = {
   mode: 'demo' | 'prod' | 'sandbox';
   verified: boolean;
+  /** Сегодняшняя дата школы (YYYY-MM-DD). */
   today: string;
+  /** IANA-пояс школы пользователя. */
+  timezone: string;
+  timezone_label: string;
+  timezones: TimezoneOption[];
   viewer: Viewer;
   class_sprint: ClassSprint;
   challenges: Challenge[];
@@ -488,6 +507,8 @@ export type GameState = {
   platform_admin?: PlatformAdminData | null;
   demo_teacher_available: boolean;
   demo_director_available?: boolean;
+  /** Предметы для формы задания (педагогу и директору); сервер проверяет по этому же списку. */
+  subjects?: string[];
 };
 
 export type ReviewResult = {
@@ -530,5 +551,4 @@ export type TabId =
   | 'director-overview'
   | 'director-classes'
   | 'director-setup'
-  | 'admin-schools'
-  | 'director-reports';
+  | 'admin-schools';

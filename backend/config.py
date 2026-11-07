@@ -84,10 +84,21 @@ class Settings:
     bot_reply_interval: int = 60
     # demo binds only to loopback unless explicitly allowed (ALLOW_PUBLIC_DEMO=1)
     allow_public_demo: bool = False
+    # Photos sent as proof. Empty: the "uploads" directory next to the database
+    # (DATA_DIR/uploads; in Docker /data/uploads in the volume). demo and sandbox
+    # use their own directory so they never mix with production files.
+    uploads_dir: Path | None = None
 
     def __post_init__(self) -> None:
         if self.db_path == BASE_DIR / "data" / PROD_DB_NAME:
             object.__setattr__(self, "db_path", mode_db_path(self.app_mode, self.db_path))
+
+    @property
+    def upload_dir(self) -> Path:
+        if self.uploads_dir is not None:
+            return self.uploads_dir
+        name = "uploads" if self.app_mode == "prod" else f"uploads_{self.app_mode}"
+        return self.db_path.parent / name
 
     @property
     def demo_mode(self) -> bool:
@@ -178,4 +189,9 @@ class Settings:
             ),
             bot_reply_interval=_int_env("BOT_REPLY_INTERVAL", 60),
             allow_public_demo=_bool_env("ALLOW_PUBLIC_DEMO", False),
+            uploads_dir=(
+                Path(os.environ["UPLOADS_DIR"].strip())
+                if os.getenv("UPLOADS_DIR", "").strip()
+                else None
+            ),
         )

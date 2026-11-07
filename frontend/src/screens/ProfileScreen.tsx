@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AvatarFrame } from '../components/AvatarFrame';
 import { NameForm } from '../components/NameScreen';
+import { useConfirm } from '../components/ConfirmDialog';
 import { Sheet } from '../components/Sheet';
 import { Icon } from '../components/Icon';
 import { ScreenTitle } from '../components/ScreenTitle';
@@ -17,6 +18,10 @@ type ProfileScreenProps = {
   onChangeName?: (firstName: string, lastName: string) => Promise<string | null>;
   theme?: 'light' | 'dark';
   onThemeChange?: (theme: 'light' | 'dark') => void;
+  /** Администратор платформы без роли: профиль без героя и показателей. */
+  adminOnly?: boolean;
+  /** Открывает экран выбора другого класса (ученик в классе). */
+  onChangeClass?: () => void;
   // Демо-переключатели рисует оболочка; экран их не использует.
   onSwitchRole?: (role: 'student' | 'teacher' | 'director') => Promise<boolean>;
   onResetDemo?: () => Promise<boolean>;
@@ -34,10 +39,14 @@ export function ProfileScreen({
   onChangeName,
   theme,
   onThemeChange,
+  adminOnly = false,
+  onChangeClass,
 }: ProfileScreenProps) {
+  const { confirm, dialog } = useConfirm();
   const [nameOpen, setNameOpen] = useState(false);
   const { viewer, achievements } = state;
-  const isStudent = viewer.role === 'student';
+  const isStudent = viewer.role === 'student' && !adminOnly;
+  const canChangeClass = isStudent && Boolean(onChangeClass) && Boolean(viewer.class_id);
   const unlocked = achievements.filter((a) => a.unlocked).length;
 
   const place = [viewer.class_name ? `${viewer.class_name} класс` : '', viewer.school_name, viewer.city]
@@ -59,7 +68,7 @@ export function ProfileScreen({
           )}
           <div className="pf-head__text">
             <h2 className="pf-name">{viewer.name}</h2>
-            <div className="pf-muted">{ROLE_LABEL[viewer.role] ?? ''}</div>
+            <div className="pf-muted">{adminOnly ? 'Администратор платформы' : ROLE_LABEL[viewer.role] ?? ''}</div>
             <div className="pf-muted">{place || (isStudent ? 'Класс не выбран' : '')}</div>
           </div>
         </div>
@@ -117,6 +126,25 @@ export function ProfileScreen({
               Изменить имя
             </button>
           )}
+          {canChangeClass && (
+            <button
+              type="button"
+              className="pf-btn"
+              onClick={async () => {
+                tapHaptic();
+                const ok = await confirm({
+                  title: 'Сменить класс?',
+                  message:
+                    'Рейтинг класса не переносится: очки, набранные в этом классе, останутся в нём. Вы войдёте в другой класс по коду или отправите заявку педагогу.',
+                  confirmLabel: 'Продолжить',
+                });
+                if (ok) onChangeClass?.();
+              }}
+            >
+              <Icon name="users" size={16} />
+              Сменить класс
+            </button>
+          )}
           {theme && onThemeChange && (
             <button
               type="button"
@@ -131,6 +159,8 @@ export function ProfileScreen({
           )}
         </div>
       </section>
+
+      {dialog}
 
       {!isStudent && onChangeName && (
         <Sheet open={nameOpen} onClose={() => setNameOpen(false)} title="Изменить имя">

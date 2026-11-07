@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { api } from '../api';
 import { CityInput } from '../components/CityInput';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
@@ -12,6 +13,7 @@ import type {
   NewSchoolPayload,
   PlatformAdminData,
   SchoolAdminData,
+  TimezoneOption,
 } from '../types';
 import '../styles/onboarding.css';
 import '../styles/setup.css';
@@ -132,19 +134,27 @@ function Chip({
   );
 }
 
+const DEFAULT_ZONE = 'Europe/Moscow';
+
+const foldCity = (text: string) => text.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
 export function NewSchoolForm({
   busy,
+  timezones,
   onSubmit,
   onCancel,
   onUseTeacherCode,
   submitLabel = 'Создать школу',
 }: {
   busy: boolean;
+  timezones: TimezoneOption[];
   onSubmit: (payload: NewSchoolPayload) => ActionResult;
   onCancel?: () => void;
   onUseTeacherCode?: () => void;
   submitLabel?: string;
 }) {
+  const { confirm, dialog } = useConfirm();
+  const [zone, setZone] = useState(DEFAULT_ZONE);
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [grades, setGrades] = useState<number[]>([]);
@@ -247,9 +257,24 @@ export function NewSchoolForm({
       return;
     }
     setFormError(null);
+    const cityName = cleanName(city);
+    // Города нет ни в справочнике, ни среди школ платформы: спрашиваем, прежде чем создавать.
+    const known = await api
+      .searchCities(cityName, 20, 'all')
+      .then((res) => res.cities.some((c) => foldCity(c.name) === foldCity(cityName)))
+      .catch(() => true);
+    if (!known) {
+      const ok = await confirm({
+        title: 'Такого города нет в справочнике',
+        message: `Такого города нет в справочнике — использовать «${cityName}» как есть?`,
+        confirmLabel: 'Использовать',
+      });
+      if (!ok) return;
+    }
     const error = await onSubmit({
       name: cleanName(name),
-      city: cleanName(city),
+      city: cityName,
+      timezone: zone,
       classes: classNames.map((n) => ({ name: n })),
     });
     if (error) {
@@ -285,6 +310,7 @@ export function NewSchoolForm({
           value={city}
           onChange={setCity}
           placeholder="Начните вводить"
+          scope="all"
           invalid={Boolean(errors.city)}
           describedBy={errors.city ? 'su-city-err' : 'su-city-hint'}
         />
@@ -292,9 +318,22 @@ export function NewSchoolForm({
           <span id="su-city-err" className="ob-error">{errors.city}</span>
         ) : (
           <span id="su-city-hint" className="ob-hint">
-            Если город уже есть в списке подсказок, выберите его оттуда.
+            Выберите город из подсказок. Если вашего населённого пункта нет в списке, введите его
+            название вручную.
           </span>
         )}
+      </div>
+
+      <div className="ob-field">
+        <label className="ob-label" htmlFor="su-tz">Часовой пояс</label>
+        <select id="su-tz" className="ob-select" value={zone} onChange={(e) => setZone(e.target.value)}>
+          {timezones.map((tz) => (
+            <option key={tz.id} value={tz.id}>{tz.label}</option>
+          ))}
+        </select>
+        <span className="ob-hint">
+          По нему считаются «сегодня», недели и сроки заданий. Позже пояс можно сменить в управлении школой.
+        </span>
       </div>
 
       <fieldset className="su-classes" aria-describedby={errors.classes ? 'su-classes-err' : undefined}>
@@ -429,6 +468,7 @@ export function NewSchoolForm({
           {busy ? 'Создаём…' : submitLabel}
         </button>
       </div>
+      {dialog}
     </form>
   );
 }
@@ -495,11 +535,13 @@ export function TeacherCodeForm({
 
 export function SchoolRegisterScreen({
   busy,
+  timezones,
   onBack,
   onCreate,
   onJoinTeacher,
 }: {
   busy: boolean;
+  timezones: TimezoneOption[];
   onBack: () => void;
   onCreate: (payload: NewSchoolPayload) => ActionResult;
   onJoinTeacher: (code: string) => ActionResult;
@@ -530,7 +572,7 @@ export function SchoolRegisterScreen({
           </div>
 
           {mode === 'new' ? (
-            <NewSchoolForm busy={busy} onSubmit={onCreate} onUseTeacherCode={() => setMode('code')} />
+            <NewSchoolForm busy={busy} timezones={timezones} onSubmit={onCreate} onUseTeacherCode={() => setMode('code')} />
           ) : (
             <TeacherCodeForm busy={busy} onJoinTeacher={onJoinTeacher} />
           )}
@@ -573,9 +615,11 @@ export function TeacherNoClassScreen({
 /** Директор без школы (например, из списка DIRECTOR_MAX_IDS): регистрация школы. */
 export function DirectorNoSchoolScreen({
   busy,
+  timezones,
   onCreate,
 }: {
   busy: boolean;
+  timezones: TimezoneOption[];
   onCreate: (payload: NewSchoolPayload) => ActionResult;
 }) {
   return (
@@ -588,7 +632,7 @@ export function DirectorNoSchoolScreen({
             созданы коды ученика и педагога.
           </p>
         </div>
-        <NewSchoolForm busy={busy} onSubmit={onCreate} />
+        <NewSchoolForm busy={busy} timezones={timezones} onSubmit={onCreate} />
       </section>
     </div>
   );
@@ -837,6 +881,7 @@ function ClassCard({
 }
 
 export function SchoolSetupScreen({
+  state,
   admin,
   busy,
   notify,
@@ -847,6 +892,7 @@ export function SchoolSetupScreen({
   onDisconnectTeacher,
   onDecideJoin,
   onSelectSchool,
+  onSetTimezone,
   onCreateSchool,
 }: {
   state: GameState;
@@ -860,6 +906,7 @@ export function SchoolSetupScreen({
   onDisconnectTeacher: (classId: number, teacherId: number) => Promise<boolean>;
   onDecideJoin: (requestId: number, action: 'approve' | 'decline') => Promise<boolean>;
   onSelectSchool: (schoolId: number) => Promise<boolean>;
+  onSetTimezone: (schoolId: number, timezone: string) => Promise<boolean>;
   onCreateSchool: (payload: NewSchoolPayload) => ActionResult;
 }) {
   const school: ManagedSchool | undefined =
@@ -921,6 +968,30 @@ export function SchoolSetupScreen({
         onDecide={onDecideJoin}
       />
 
+      <section className="ob-card" aria-labelledby="su-tz-h">
+        <div>
+          <h2 className="su-h2" id="su-tz-h">Часовой пояс школы</h2>
+          <p className="ob-lead">
+            Сейчас: {state.timezones.find((t) => t.id === school.timezone)?.label ?? state.timezone_label}.
+            По поясу считаются «сегодня», недели и сроки заданий.
+          </p>
+        </div>
+        <div className="ob-field">
+          <label className="ob-label" htmlFor="su-tz-edit">Сменить пояс</label>
+          <select
+            id="su-tz-edit"
+            className="ob-select"
+            value={school.timezone}
+            disabled={busy}
+            onChange={(e) => void onSetTimezone(school.id, e.target.value)}
+          >
+            {state.timezones.map((tz) => (
+              <option key={tz.id} value={tz.id}>{tz.label}</option>
+            ))}
+          </select>
+        </div>
+      </section>
+
       <section className="ob-card" aria-labelledby="su-codes-h">
         <div>
           <h2 className="su-h2" id="su-codes-h">Классы и коды</h2>
@@ -978,6 +1049,7 @@ export function SchoolSetupScreen({
           {creating ? (
             <NewSchoolForm
               busy={busy}
+              timezones={state.timezones}
               onCancel={() => setCreating(false)}
               onSubmit={async (payload) => {
                 const problem = await onCreateSchool(payload);

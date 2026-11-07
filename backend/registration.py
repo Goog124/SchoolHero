@@ -8,9 +8,10 @@ import secrets
 import sqlite3
 from typing import Any
 
+from .cities import canonical_city
 from .config import Settings
 from .db import immediate, school_key
-from .game import iso_utc, utc_sql
+from .game import DEFAULT_TIMEZONE, TIMEZONE_NAMES, iso_utc, normalize_timezone, utc_sql
 from .joins import pending_requests
 from .ratelimit import limiter
 from .service import GameError, director_school_ids
@@ -48,12 +49,13 @@ def is_platform_admin(viewer: sqlite3.Row, settings: Settings) -> bool:
     max_id = viewer["max_user_id"]
     if max_id and str(max_id) in settings.platform_admin_max_ids:
         return True
+    if not settings.sandbox_mode:
+        return False
     client_id = viewer["client_id"]
-    return bool(
-        settings.sandbox_mode
-        and client_id
-        and str(client_id) in settings.platform_admin_client_ids
-    )
+    if client_id and str(client_id) in settings.platform_admin_client_ids:
+        return True
+    # Switch in the sandbox panel; the column is ignored in prod and demo.
+    return bool(viewer["sandbox_admin"]) if "sandbox_admin" in viewer.keys() else False
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +99,26 @@ def _check_school_fields(name: Any, city: Any) -> tuple[str, str]:
         raise GameError("Название школы: от 3 до 80 символов, должно содержать буквы")
     if not 2 <= len(city) <= 60 or not CITY_RE.fullmatch(city):
         raise GameError("Город: от 2 до 60 символов, только буквы, пробел, дефис и точка")
-    return name, city
+    # Same spelling as in the directory when it matches ignoring case.
+    return name, canonical_city(city) or city
+
+
+def _check_timezone(value: Any) -> str:
+    """Zone from the supported list; empty means Moscow."""
+    name = str(value or "").strip() or DEFAULT_TIMEZONE
+    if name not in TIMEZONE_NAMES:
+        raise GameError("Выберите часовой пояс из списка")
+    return name
+
+
+def set_school_timezone(
+    conn, viewer: sqlite3.Row, settings: Settings, school_id: int, value: Any
+) -> None:
+    """The director changes the school zone; the database stays in UTC."""
+    _require_director_of(conn, viewer, settings, school_id)
+    conn.execute(
+        "UPDATE schools SET timezone = ? WHERE id = ?", (_check_timezone(value), school_id)
+    )
 
 
 def _check_class_fields(name: Any, goal: Any) -> tuple[str, int]:
@@ -137,6 +158,7 @@ def create_school(
     if viewer["role"] != "director" and viewer["class_id"] is not None:
         raise GameError("Вы уже состоите в классе. Школу может зарегистрировать только пользователь без класса.", 403)
     name, city = _check_school_fields(payload.get("name"), payload.get("city"))
+    tz = _check_timezone(payload.get("timezone"))
     raw_classes = payload.get("classes") or []
     if not 1 <= len(raw_classes) <= 40:
         raise GameError("Добавьте от 1 до 40 классов")
@@ -171,9 +193,9 @@ def create_school(
     status = "pending" if settings.school_approval == "manual" else "active"
     try:
         cursor = conn.execute(
-            "INSERT INTO schools (name, city, status, created_by, created_at, norm_key) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, city, status, viewer["id"], utc_sql(), key),
+            "INSERT INTO schools (name, city, status, created_by, created_at, norm_key, timezone) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, city, status, viewer["id"], utc_sql(), key, tz),
         )
     except sqlite3.IntegrityError:
         raise GameError("Школа с таким названием в этом городе уже зарегистрирована") from None
@@ -461,6 +483,7 @@ def school_admin_data(
                 "name": s["name"],
                 "city": s["city"],
                 "status": s["status"],
+                "timezone": normalize_timezone(s["timezone"]),
                 "classes": sorted(by_school.get(int(s["id"]), []), key=_class_sort_key),
             }
             for s in schools
@@ -510,3 +533,12 @@ def set_school_status(
     cursor = conn.execute("UPDATE schools SET status = ? WHERE id = ?", (status, school_id))
     if cursor.rowcount == 0:
         raise GameError("Школа не найдена", 404)
+
+
+def set_sandbox_admin(conn, viewer: sqlite3.Row, settings: Settings, enabled: bool) -> None:
+    """Sandbox only: make the current test user a platform admin (or not)."""
+    if not settings.sandbox_mode:
+        raise GameError("Не найдено", 404)
+    conn.execute(
+        "UPDATE users SET sandbox_admin = ? WHERE id = ?", (1 if enabled else 0, viewer["id"])
+    )

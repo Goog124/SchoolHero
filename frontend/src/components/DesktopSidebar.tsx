@@ -17,6 +17,8 @@ type DesktopSidebarProps = {
   onProfile: () => void;
   /** Переключатель ролей: передаётся только в демо-режиме. */
   onRoleSwitch?: (role: Role) => void;
+  /** Администратор платформы без роли: героя, ранга и баллов у него нет. */
+  hideHero?: boolean;
 };
 
 const ROLES: { id: Role; label: string }[] = [
@@ -34,10 +36,13 @@ export function DesktopSidebar({
   onThemeToggle,
   onProfile,
   onRoleSwitch,
+  hideHero = false,
 }: DesktopSidebarProps) {
-  const isStudent = viewer.role === 'student';
+  const isStudent = viewer.role === 'student' && !hideHero;
   const roleLabel =
-    viewer.role === 'director'
+    hideHero
+      ? 'Администратор платформы'
+      : viewer.role === 'director'
       ? 'Администрация'
       : viewer.role === 'teacher'
       ? 'Педагог'

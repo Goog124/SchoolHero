@@ -225,6 +225,8 @@ sudo chown schoolhero:schoolhero /var/lib/school-hero/school_hero.db
 sudo systemctl start school-hero
 ```
 
+Фото-подтверждения лежат в каталоге `uploads` рядом с базой (`/var/lib/school-hero/uploads`, то есть `DATA_DIR/uploads`); резервная копия должна включать и его, например `sudo tar -C /var/lib/school-hero -czf uploads-$(date +%F).tar.gz uploads`. Восстанавливайте каталог с владельцем `schoolhero`.
+
 Копии храните вне сервера. Расписания резервного копирования в проекте нет; настройте cron/systemd-timer сами. Сохраняйте также `.env` (там токен бота) и `catalog.json`, если используется.
 
 ## Бот MAX

@@ -82,13 +82,24 @@ def test_all_demo_visitors_share_one_profile(demo_client):
     assert first["viewer"]["name"] == second["viewer"]["name"]
 
 
+JPEG_BYTES = bytes([0xFF, 0xD8, 0xFF, 0xE0]) + b'0' * 64
+
+
 def test_submit_and_teacher_approve(demo_client):
     state = get_state(demo_client)
     challenge = challenge_by_title(state, "Домашнее задание по алгебре")
 
+    # The challenge asks for a photo: upload it first, then pass its id.
+    uploaded = demo_client.post(
+        "/api/uploads",
+        content=JPEG_BYTES,
+        headers={**DEMO_HEADERS, "Content-Type": "image/jpeg"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
     submitted = demo_client.post(
         f"/api/challenges/{challenge['id']}/submit",
-        json={"proof": "Решил все номера, проверь тетрадь."},
+        json={"proof": "Решил все номера, проверь тетрадь.", "upload_id": uploaded.json()["id"]},
         headers=DEMO_HEADERS,
     )
     assert submitted.status_code == 200, submitted.text

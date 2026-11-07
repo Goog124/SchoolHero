@@ -196,7 +196,7 @@ users 1---N join_requests N---1 classes,  users 1---N class_exclusions N---1 cla
 
 - Фото-подтверждения лежат файлами в `settings.upload_dir` (по умолчанию `uploads` рядом с базой, то есть `DATA_DIR/uploads`; в `demo` и `sandbox` отдельные каталоги `uploads_demo`, `uploads_sandbox`), под случайным именем, права 600. В таблице `uploads` хранятся автор, путь, тип, размер и привязка к выполнению. Читают файл автор, педагог класса задания и директор школы; остальным 404. Неприкреплённые фото удаляются через сутки.
 - В базе время хранится в UTC. У школы есть `schools.timezone` (IANA-зона из `game.TIMEZONES`, по умолчанию `Europe/Moscow`); «сегодня», границы недели, сроки заданий, серия дней и суточные лимиты считаются в поясе школы пользователя (`service.user_timezone`). Новая школа получает пояс по умолчанию; директор меняет его в блоке «Настройки школы» управления школой: `PATCH /api/school/{id}`.
-- `users.sandbox_admin` учитывается только в `sandbox` (`registration.is_platform_admin`); в остальных режимах столбец игнорируется.
+- `users.platform_admin` (бывший `sandbox_admin`, значения перенесены миграцией) учитывается в `registration.is_platform_admin` в любом режиме; в `prod` его ставит первый вход в пустую базу или другой администратор (`POST /api/admin/users/{id}/admin`).
 
 ## Состояние /api/state
 

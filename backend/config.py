@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
+log = logging.getLogger("uvicorn.error")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -75,6 +78,8 @@ class Settings:
     school_approval: str = "auto"  # auto | manual
     platform_admin_max_ids: set[str] = field(default_factory=set)
     max_schools_per_user: int = 3
+    # prod: the first MAX user of an empty database becomes a platform admin
+    bootstrap_first_admin: bool = True
     # MAX bot (webhook + приветствие)
     max_api_base: str = "https://platform-api2.max.ru"
     max_webhook_secret: str = ""
@@ -144,6 +149,12 @@ class Settings:
                 f"MAX_WEBHOOK_SECRET: {WEBHOOK_SECRET_MIN}-256 символов, только латиница, "
                 "цифры, - и _ (например: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
             )
+        if self.app_mode == "prod" and self.bootstrap_first_admin and not self.platform_admin_max_ids:
+            log.warning(
+                "BOOTSTRAP_FIRST_ADMIN=1: первый пользователь пустой базы станет "
+                "администратором платформы. Откройте приложение первым или задайте "
+                "PLATFORM_ADMIN_MAX_IDS"
+            )
         if self.app_mode == "prod" and not self.bot_token:
             raise RuntimeError("APP_MODE=prod требует MAX_BOT_TOKEN")
 
@@ -175,6 +186,7 @@ class Settings:
             ),
             school_approval=os.getenv("SCHOOL_APPROVAL", "auto").strip().lower() or "auto",
             platform_admin_max_ids=_ids_env("PLATFORM_ADMIN_MAX_IDS"),
+            bootstrap_first_admin=_bool_env("BOOTSTRAP_FIRST_ADMIN", True),
             serve_frontend=_bool_env("SERVE_FRONTEND", False),
             max_api_base=(
                 os.getenv("MAX_API_BASE", "").strip().rstrip("/")

@@ -1269,7 +1269,7 @@ export default function App() {
           ) : null}
 
           {tab === 'admin-users' && state.platform_admin ? (
-            <AdminUsersScreen notify={showToast} />
+            <AdminUsersScreen notify={showToast} onStateChange={setState} />
           ) : null}
 
           {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (

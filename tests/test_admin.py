@@ -512,3 +512,182 @@ def test_migration_adds_columns_to_old_database(tmp_path):
         assert {"blocked_at", "blocked_reason"} <= cols
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# First admin bootstrap and several admins
+# ---------------------------------------------------------------------------
+
+
+def bootstrap_client(tmp_path, **overrides):
+    settings = make_settings(
+        tmp_path, app_mode="prod", bot_token=MAX_TOKEN, default_class_id=None, **overrides
+    )
+    init_db(settings.db_path)
+    app.state.settings = settings
+    return TestClient(app)
+
+
+def is_admin(c, uid):
+    return state(c, uid)["viewer"]["is_platform_admin"]
+
+
+def test_first_user_of_empty_prod_becomes_admin(tmp_path):
+    c = bootstrap_client(tmp_path)
+    try:
+        assert is_admin(c, 1) is True
+        assert is_admin(c, 2) is False
+        assert is_admin(c, 1) is True
+        assert c.get("/api/admin/users", headers=hdr(2)).status_code == 404
+        assert state(c, 1)["viewer"]["role"] in ("student", "teacher", "director")
+    finally:
+        c.close()
+
+
+def test_no_bootstrap_with_env_admins_or_switch_off(tmp_path):
+    c = bootstrap_client(tmp_path / "a", platform_admin_max_ids={"777"})
+    try:
+        assert is_admin(c, 1) is False
+        assert is_admin(c, 777) is True
+    finally:
+        c.close()
+    c = bootstrap_client(tmp_path / "b", bootstrap_first_admin=False)
+    try:
+        assert is_admin(c, 1) is False
+    finally:
+        c.close()
+
+
+def test_bootstrap_not_in_demo_or_sandbox(tmp_path):
+    from test_stage4 import make_sandbox, sandbox_state
+
+    c = make_sandbox(tmp_path)
+    try:
+        assert sandbox_state(c, "sandbox-first")["viewer"]["is_platform_admin"] is False
+    finally:
+        c.close()
+
+
+def test_simultaneous_first_logins_give_one_admin(tmp_path):
+    import threading
+
+    c = bootstrap_client(tmp_path)
+    try:
+        results = {}
+
+        def go(uid):
+            with TestClient(app) as cc:
+                results[uid] = cc.get("/api/state", headers=hdr(uid)).json()["viewer"][
+                    "is_platform_admin"
+                ]
+
+        threads = [threading.Thread(target=go, args=(uid,)) for uid in range(1, 7)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        conn = db(c)
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM users WHERE platform_admin = 1").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        finally:
+            conn.close()
+        assert total == 6 and n == 1
+        assert sum(1 for v in results.values() if v) == 1
+    finally:
+        c.close()
+
+
+def uid_of(c, max_id):
+    conn = db(c)
+    try:
+        return conn.execute("SELECT id FROM users WHERE max_user_id = ?", (str(max_id),)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_grant_and_revoke_admin(tmp_path):
+    c = bootstrap_client(tmp_path)
+    try:
+        assert is_admin(c, 1) and not is_admin(c, 2) and not is_admin(c, 3)
+        u2, u3 = uid_of(c, 2), uid_of(c, 3)
+        r = c.post(f"/api/admin/users/{u2}/admin", json={"enabled": True}, headers=hdr(1))
+        assert r.status_code == 200 and r.json()["user"]["is_admin"] is True
+        assert is_admin(c, 2) is True
+        assert c.get("/api/admin/users", headers=hdr(2)).json()["summary"]["admins"] == 2
+        # the new admin can act and remove themselves while another admin stays
+        r = c.post(f"/api/admin/users/{u3}/admin", json={"enabled": True}, headers=hdr(2))
+        assert r.status_code == 200
+        r = c.post(f"/api/admin/users/{u2}/admin", json={"enabled": False}, headers=hdr(2))
+        assert r.status_code == 200 and r.json()["state"]["viewer"]["is_platform_admin"] is False
+        assert c.get("/api/admin/users", headers=hdr(2)).status_code == 404
+        # school role is unchanged
+        assert state(c, 3)["viewer"]["is_platform_admin"] is True
+    finally:
+        c.close()
+
+
+def test_cannot_remove_last_admin_or_env_admin(tmp_path):
+    c = bootstrap_client(tmp_path, platform_admin_max_ids={"900"})
+    try:
+        assert is_admin(c, 900) and not is_admin(c, 1)
+        u900, u1 = uid_of(c, 900), uid_of(c, 1)
+        r = c.post(f"/api/admin/users/{u900}/admin", json={"enabled": False}, headers=hdr(900))
+        assert r.status_code == 400 and "настройках" in r.json()["detail"]
+        items = c.get("/api/admin/users", headers=hdr(900)).json()["items"]
+        assert [i for i in items if i["id"] == u900][0]["admin_from_env"] is True
+        assert c.post(f"/api/admin/users/{u1}/admin", json={"enabled": True}, headers=hdr(900)).status_code == 200
+        # u1 is the only db admin, but the env admin remains: removal is fine
+        assert c.post(f"/api/admin/users/{u1}/admin", json={"enabled": False}, headers=hdr(900)).status_code == 200
+    finally:
+        c.close()
+    c = bootstrap_client(tmp_path / "x")
+    try:
+        assert is_admin(c, 1)
+        r = c.post(f"/api/admin/users/{uid_of(c, 1)}/admin", json={"enabled": False}, headers=hdr(1))
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Нельзя снять права у последнего администратора"
+        assert is_admin(c, 1) is True
+    finally:
+        c.close()
+
+
+def test_blocked_cannot_become_admin_and_non_admin_gets_404(tmp_path):
+    c = bootstrap_client(tmp_path)
+    try:
+        assert is_admin(c, 1) and not is_admin(c, 2)
+        u2 = uid_of(c, 2)
+        assert c.post(f"/api/admin/users/{u2}/block", json={"reason": "спам"}, headers=hdr(1)).status_code == 200
+        r = c.post(f"/api/admin/users/{u2}/admin", json={"enabled": True}, headers=hdr(1))
+        assert r.status_code == 400
+        assert c.post(f"/api/admin/users/{u2}/unblock", headers=hdr(1)).status_code == 200
+        assert c.post(f"/api/admin/users/{uid_of(c, 1)}/admin", json={"enabled": True}, headers=hdr(2)).status_code == 404
+        assert c.post(f"/api/admin/users/{u2}/admin", json={"enabled": True}, headers=hdr(2)).status_code == 404
+        # an admin cannot be blocked
+        c.post(f"/api/admin/users/{u2}/admin", json={"enabled": True}, headers=hdr(1))
+        assert c.post(f"/api/admin/users/{u2}/block", json={"reason": "спам"}, headers=hdr(1)).status_code == 400
+    finally:
+        c.close()
+
+
+def test_migration_adds_platform_admin_from_sandbox_admin(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    init_db(path)
+    raw = sqlite3.connect(path)
+    raw.execute("ALTER TABLE users DROP COLUMN platform_admin")
+    raw.execute("ALTER TABLE users ADD COLUMN sandbox_admin INTEGER NOT NULL DEFAULT 0")
+    raw.execute(
+        "INSERT INTO users (client_id, first_name, avatar, sandbox_admin) VALUES ('a', 'A', '{}', 1)"
+    )
+    raw.execute("INSERT INTO users (client_id, first_name, avatar) VALUES ('b', 'B', '{}')")
+    raw.commit()
+    raw.close()
+    init_db(path)
+    conn = connect(path)
+    try:
+        rows = {r["client_id"]: r["platform_admin"] for r in conn.execute("SELECT * FROM users")}
+    finally:
+        conn.close()
+    assert rows == {"a": 1, "b": 0}

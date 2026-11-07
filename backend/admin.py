@@ -47,7 +47,24 @@ def _page(offset: int, limit: int) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 
-def platform_summary(conn) -> dict[str, Any]:
+def _env_admin_ids(settings: Settings) -> list[str]:
+    return sorted(settings.platform_admin_max_ids)
+
+
+def _admin_count(conn, settings: Settings) -> int:
+    """Env admins (even those who never logged in) plus flagged users."""
+    ids = _env_admin_ids(settings)
+    marks = ", ".join("?" for _ in ids)
+    clause = f" AND (max_user_id IS NULL OR max_user_id NOT IN ({marks}))" if ids else ""
+    flagged = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM users WHERE platform_admin = 1{clause}", ids
+        ).fetchone()[0]
+    )
+    return len(ids) + flagged
+
+
+def platform_summary(conn, settings: Settings | None = None) -> dict[str, Any]:
     schools = {"pending": 0, "active": 0, "rejected": 0}
     for row in conn.execute("SELECT status, COUNT(*) AS n FROM schools GROUP BY status"):
         schools[row["status"]] = schools.get(row["status"], 0) + int(row["n"])
@@ -71,6 +88,7 @@ def platform_summary(conn) -> dict[str, Any]:
         "active_students_week": int(extra["active_students"]),
         "pending_works": int(extra["pending_works"]),
         "blocked_users": int(extra["blocked"]),
+        "admins": _admin_count(conn, settings) if settings is not None else 0,
     }
 
 
@@ -146,7 +164,7 @@ def list_schools(
         "offset": offset,
         "limit": limit,
         "has_more": offset + len(rows) < total,
-        "summary": platform_summary(conn),
+        "summary": platform_summary(conn, settings),
     }
 
 
@@ -365,6 +383,10 @@ def _user_item(row: sqlite3.Row, settings: Settings, viewer_id: int) -> dict[str
         "blocked_at": iso_utc(row["blocked_at"]) if row["blocked_at"] else "",
         "blocked_reason": row["blocked_reason"] or "",
         "is_admin": is_platform_admin(row, settings),
+        # set in PLATFORM_ADMIN_MAX_IDS: cannot be removed from the interface
+        "admin_from_env": bool(
+            row["max_user_id"] and str(row["max_user_id"]) in settings.platform_admin_max_ids
+        ),
         "is_self": int(row["id"]) == viewer_id,
     }
 
@@ -416,7 +438,7 @@ def list_users(
         "offset": offset,
         "limit": limit,
         "has_more": offset + len(rows) < total,
-        "summary": platform_summary(conn),
+        "summary": platform_summary(conn, settings),
     }
 
 
@@ -466,6 +488,41 @@ def unblock_user(
     log.warning(
         "Администратор платформы user_id=%s разблокировал пользователя id=%s",
         viewer["id"], user_id,
+    )
+    return _load_user_item(conn, user_id, settings, int(viewer["id"]))
+
+
+def set_admin(
+    conn, viewer: sqlite3.Row, settings: Settings, user_id: int, enabled: bool
+) -> dict[str, Any]:
+    """Grant or take away the platform admin right. The school role of the
+    user is not touched."""
+    require_admin(viewer, settings)
+    with immediate(conn):
+        target = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if target is None:
+            raise GameError("Пользователь не найден", 404)
+        if enabled:
+            if target["blocked_at"] is not None:
+                raise GameError("Заблокированного пользователя нельзя сделать администратором")
+            conn.execute("UPDATE users SET platform_admin = 1 WHERE id = ?", (user_id,))
+        else:
+            from_env = bool(
+                target["max_user_id"]
+                and str(target["max_user_id"]) in settings.platform_admin_max_ids
+            )
+            if from_env:
+                raise GameError(
+                    "Этот администратор задан в настройках сервера (PLATFORM_ADMIN_MAX_IDS), "
+                    "снять права можно только там"
+                )
+            if is_platform_admin(target, settings):
+                if _admin_count(conn, settings) <= 1:
+                    raise GameError("Нельзя снять права у последнего администратора")
+                conn.execute("UPDATE users SET platform_admin = 0 WHERE id = ?", (user_id,))
+    log.warning(
+        "Администратор платформы user_id=%s %s права администратора у пользователя id=%s",
+        viewer["id"], "выдал" if enabled else "снял", user_id,
     )
     return _load_user_item(conn, user_id, settings, int(viewer["id"]))
 

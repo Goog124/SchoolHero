@@ -564,6 +564,7 @@ export type AdminSummary = {
   active_students_week: number;
   pending_works: number;
   blocked_users: number;
+  admins: number;
 };
 
 export type AdminSchoolItem = {
@@ -614,6 +615,8 @@ export type AdminUserItem = {
   blocked_at: string;
   blocked_reason: string;
   is_admin: boolean;
+  /** Задан в PLATFORM_ADMIN_MAX_IDS: из интерфейса права не снять. */
+  admin_from_env: boolean;
   is_self: boolean;
 };
 

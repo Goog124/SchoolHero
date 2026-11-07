@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from datetime import date, datetime, time, timezone
@@ -236,14 +237,30 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
     role = identity.role_hint if identity.kind == "max" else "student"
     onboarded = 0 if role == "student" else 1
 
+    bootstrap = (
+        identity.kind == "max"
+        and settings.app_mode == "prod"
+        and settings.bootstrap_first_admin
+        and not settings.platform_admin_max_ids
+    )
+    first_admin = 0
     try:
+        if bootstrap:
+            # Check "the database is empty" and insert in one write transaction:
+            # two simultaneous first logins cannot both become admins.
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            if (
+                conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+            ):
+                first_admin = 1
         cursor = conn.execute(
             """
             INSERT INTO users
                 (max_user_id, client_id, first_name, last_name, username,
                  photo_url, role, class_id, xp, sparks, streak,
-                 last_active_date, avatar, owned, onboarded)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, NULL, ?, '[]', ?)
+                 last_active_date, avatar, owned, onboarded, platform_admin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, NULL, ?, '[]', ?, ?)
             """,
             (
                 identity.max_user_id,
@@ -259,10 +276,16 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 40 if not demo else 0,
                 dump_avatar(DEFAULT_AVATAR if not demo else BASIC_AVATAR),
                 onboarded,
+                first_admin,
             ),
         )
         user_id = int(cursor.lastrowid)
         conn.commit()
+        if first_admin:
+            logging.getLogger("uvicorn.error").warning(
+                "Первый пользователь %s назначен администратором платформы",
+                identity.max_user_id,
+            )
     except sqlite3.IntegrityError:
         conn.rollback()
         if identity.kind == "max":

@@ -48,13 +48,15 @@ def is_platform_admin(viewer: sqlite3.Row, settings: Settings) -> bool:
     max_id = viewer["max_user_id"]
     if max_id and str(max_id) in settings.platform_admin_max_ids:
         return True
+    # Granted by the first-user bootstrap, by another admin or the sandbox switch.
+    if "platform_admin" in viewer.keys() and viewer["platform_admin"]:
+        return True
     if not settings.sandbox_mode:
         return False
     client_id = viewer["client_id"]
     if client_id and str(client_id) in settings.platform_admin_client_ids:
         return True
-    # Switch in the sandbox panel; the column is ignored in prod and demo.
-    return bool(viewer["sandbox_admin"]) if "sandbox_admin" in viewer.keys() else False
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -551,5 +553,5 @@ def set_sandbox_admin(conn, viewer: sqlite3.Row, settings: Settings, enabled: bo
     if not settings.sandbox_mode:
         raise GameError("Не найдено", 404)
     conn.execute(
-        "UPDATE users SET sandbox_admin = ? WHERE id = ?", (1 if enabled else 0, viewer["id"])
+        "UPDATE users SET platform_admin = ? WHERE id = ?", (1 if enabled else 0, viewer["id"])
     )

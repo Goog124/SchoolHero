@@ -145,6 +145,8 @@ Caddy стартует после того, как `app` станет `healthy`.
 | `DATABASE_PATH` | `/data/school_hero.db` | база в томе |
 | `SERVE_FRONTEND` | `true` | отдавать фронтенд |
 
+> **Важно.** После выкладки на пустую базу сразу откройте приложение первым сами: администратором платформы станет тот, кто первым войдёт в пустую базу (`BOOTSTRAP_FIRST_ADMIN=1`). Либо заранее задайте `PLATFORM_ADMIN_MAX_IDS` (тогда первый вход админом не делает), либо отключите это поведение `BOOTSTRAP_FIRST_ADMIN=0`. Проверить, кто администратор: вкладка «Люди» (пометка «Администратор платформы», число в сводке) или запрос `sqlite3 school_hero.db "SELECT id, max_user_id, first_name FROM users WHERE platform_admin = 1"`.
+
 Остальные переменные (`INIT_DATA_MAX_AGE`, `TEACHER_MAX_IDS`, `DIRECTOR_MAX_IDS`, `SCHOOL_APPROVAL`, `PLATFORM_ADMIN_MAX_IDS`, переменные бота и другие) берутся из `.env`; полный список с умолчаниями в [configuration.md](configuration.md). После изменения `.env` пересоздайте контейнер:
 
 ```bash

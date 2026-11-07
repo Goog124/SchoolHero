@@ -157,6 +157,10 @@ class BlockUserBody(BaseModel):
     reason: str = Field(default="", max_length=200)
 
 
+class SetAdminBody(BaseModel):
+    enabled: bool
+
+
 class RemoveStudentBody(BaseModel):
     reason: str = Field(default="", max_length=120)
 
@@ -462,6 +466,15 @@ def admin_user_block(
     user_id: IdPath, payload: BlockUserBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
     return {"user": admin.block_user(ctx.conn, ctx.user, ctx.settings, user_id, payload.reason)}
+
+
+@router.post("/admin/users/{user_id}/admin")
+def admin_user_admin(
+    user_id: IdPath, payload: SetAdminBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    user = admin.set_admin(ctx.conn, ctx.user, ctx.settings, user_id, payload.enabled)
+    ctx.user = ctx.conn.execute("SELECT * FROM users WHERE id = ?", (ctx.user["id"],)).fetchone()
+    return {"user": user, "state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
 @router.post("/admin/users/{user_id}/unblock")

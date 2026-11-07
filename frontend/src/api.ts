@@ -369,6 +369,16 @@ export const api = {
     });
   },
 
+  adminSetAdmin(
+    userId: number,
+    enabled: boolean,
+  ): Promise<{ user: AdminUserItem; state: GameState }> {
+    return request<{ user: AdminUserItem; state: GameState }>(`/api/admin/users/${userId}/admin`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   adminUnblockUser(userId: number): Promise<{ user: AdminUserItem }> {
     return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/unblock`, {
       method: 'POST',

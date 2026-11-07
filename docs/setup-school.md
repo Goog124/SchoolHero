@@ -96,7 +96,13 @@ cd /opt/school-hero
 sudo -u schoolhero env DATA_DIR=/var/lib/school-hero .venv/bin/python tools/list_max_users.py
 ```
 
-Скрипт читает базу из настроек (`DATABASE_PATH`/`DATA_DIR`) и печатает MAX id, имя, username и роль (подписывает «педагог» или «ученик»; директоров показывает как «ученик»). Изменение `.env` требует перезапуска: `sudo systemctl restart school-hero`.
+В Docker:
+
+```bash
+docker compose exec app python tools/list_max_users.py
+```
+
+Скрипт открывает базу только для чтения, берёт её из настроек (`APP_MODE`, `DATABASE_PATH`/`DATA_DIR`) или из `--db путь/к/school_hero.db` и печатает MAX id, имя, username, роль (ученик, педагог, директор), школу и класс, а также отметки «админ», «админ (из настроек)» и «заблокирован». Поиск: `--find текст` (имя, username или id, без учёта регистра). Если в `.env` стоит `APP_MODE=sandbox` или `demo`, скрипт смотрит в базу этого режима, где пользователей MAX нет, и подсказывает указать боевую базу через `--db`. Изменение `.env` требует перезапуска: `sudo systemctl restart school-hero`.
 
 ## Коды и вход учеников и педагогов
 

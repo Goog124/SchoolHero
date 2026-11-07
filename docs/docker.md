@@ -54,7 +54,7 @@ Windows без WSL (Docker Desktop с Hyper-V, команды PowerShell): [dock
 cp .env.example .env
 ```
 
-В `.env` задайте `MAX_BOT_TOKEN` (без него `docker compose` отказывается запускать `app`). Остальные переменные описаны в [configuration.md](configuration.md).
+В `.env` задайте `MAX_BOT_TOKEN`: без него контейнер `app` не стартует (причина в `docker compose logs app`). Остальные переменные описаны в [configuration.md](configuration.md).
 
 ```bash
 docker compose up -d --build
@@ -138,7 +138,7 @@ Caddy стартует после того, как `app` станет `healthy`.
 | Переменная | Значение | Зачем |
 | --- | --- | --- |
 | `APP_MODE` | `prod` | `.env` не может включить `demo` или `sandbox` в боевом контейнере |
-| `MAX_BOT_TOKEN` | из `.env`, обязательна | сборка падает с понятным сообщением, если токена нет |
+| `MAX_BOT_TOKEN` | из `.env` (`env_file`), обязательна для prod | без токена приложение не стартует и пишет причину в лог |
 | `CATALOG_FILE` | `/data/catalog.json` | необязательный начальный каталог школ |
 | `HOST`, `PORT` | `0.0.0.0`, `8000` | слушать внутри контейнера |
 | `STATIC_DIR` | `/app/static` | собранный фронтенд |
@@ -337,7 +337,7 @@ FROM python:3.12.10-slim-bookworm@sha256:<64 hex> AS runtime
 
 | Симптом | Причина и решение |
 | --- | --- |
-| `docker compose up` падает с «Задайте MAX_BOT_TOKEN в .env» | В `.env` нет токена или пустой. |
+| Контейнер `app` перезапускается, в логе «APP_MODE=prod требует MAX_BOT_TOKEN» | В `.env` нет токена или он пустой. |
 | Контейнер `unhealthy` или перезапускается | `docker compose logs app`. Частая причина: нет токена, либо `.env` испорчен. |
 | `port is already allocated` (8000) | Порт занят systemd-сервисом `school-hero` или другим процессом. |
 | `pip install` при сборке: `Temporary failure in name resolution` | В контейнерах сборки не работает DNS (часто WSL или VPN). Соберите с сетью хоста: `docker build --network=host -t school-hero:latest .` или `python tools/package.py --network host`. Постоянно: задайте DNS Docker в `/etc/docker/daemon.json` (`{"dns": ["1.1.1.1", "8.8.8.8"]}`) и перезапустите Docker. |

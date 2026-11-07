@@ -58,7 +58,7 @@ cd D:\path\to\schoolhero-custom
 Copy-Item .env.example .env
 ```
 
-Для демо `.env` не нужен, но файл должен существовать, иначе `docker compose` откажется работать с сервисом `app`. Для боевого режима откройте `.env` в редакторе и задайте `MAX_BOT_TOKEN` (остальные переменные — в [configuration.md](configuration.md)).
+Для демо токен не нужен, но файл `.env` должен существовать: на него ссылается сервис `app`. Для боевого режима откройте `.env` в редакторе и задайте `MAX_BOT_TOKEN` (остальные переменные — в [configuration.md](configuration.md)).
 
 Переносы строк: в репозитории есть `.gitattributes`, который держит `*.sh`, `*.service`, `*.conf` с LF. Если вы получили проект не через git, а архивом и редактировали скрипты в Windows-редакторе, проверьте, что редактор не заменил LF на CRLF — для Docker-сборки это не важно, а для деплой-скриптов на Linux-сервере важно.
 
@@ -168,7 +168,7 @@ docker compose --profile demo down -v
 | --- | --- |
 | Docker Desktop не запускается: «Hardware assisted virtualization… not enabled» | Виртуализация выключена в BIOS/UEFI. Включите Intel VT-x / AMD-V. |
 | В настройках нет переключателя WSL 2 / Hyper-V, Docker требует WSL | Редакция Windows Home: Hyper-V недоступен, нужен WSL 2. |
-| `docker compose up` падает с «Задайте MAX_BOT_TOKEN в .env» | Для боевого режима в `.env` нужен токен. Для показа используйте профиль `demo`. |
+| Контейнер `app` перезапускается, в `docker compose logs app` «APP_MODE=prod требует MAX_BOT_TOKEN» | Для боевого режима в `.env` нужен токен. Для показа используйте профиль `demo`. |
 | `env file ... .env not found` | Создайте `.env`: `Copy-Item .env.example .env`. |
 | `pip install` при сборке: `Temporary failure in name resolution` | В контейнерах сборки не работает DNS (часто из-за VPN или прокси). Выключите VPN и повторите. Если не помогло: Docker Desktop → Settings → Docker Engine, добавьте в JSON `"dns": ["1.1.1.1", "8.8.8.8"]`, Apply & restart. Разово: `docker build --network=host -t school-hero:latest .` или `python tools/package.py --network host`. |
 | `port is already allocated` (8000 или 8001) | Порт занят, например локально запущенным `python app.py`. Остановите его или смените порт в `docker-compose.yml` (левая часть `127.0.0.1:8000:8000`). |

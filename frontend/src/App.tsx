@@ -36,8 +36,8 @@ import { DirectorScreen } from './screens/DirectorScreen';
 import { HeroScreen } from './screens/HeroScreen';
 import { LeaderboardScreen } from './screens/LeaderboardScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
+import { AdminSchoolsScreen, AdminUsersScreen } from './screens/AdminScreens';
 import {
-  AdminSchoolsScreen,
   AudienceChoice,
   DirectorNoSchoolScreen,
   SchoolRegisterScreen,
@@ -52,6 +52,7 @@ import { WardrobeScreen } from './screens/WardrobeScreen';
 import type {
   AvatarConfig,
   BatchReviewResult,
+  DeletedSchoolSummary,
   GameState,
   LevelInfo,
   MutationResponse,
@@ -72,7 +73,8 @@ const STUDENT_TABS: TabId[] = ['hero', 'challenges', 'leaderboard', 'wardrobe', 
 const TEACHER_TABS: TabId[] = ['teacher-class', 'teacher-review', 'teacher-challenges', 'profile'];
 const DIRECTOR_TABS: TabId[] = ['director-overview', 'director-classes', 'director-setup', 'profile'];
 // Администратор платформы, не зарегистрированный ни учеником, ни сотрудником школы.
-const ADMIN_ONLY_TABS: TabId[] = ['admin-schools', 'profile'];
+const ADMIN_TABS: TabId[] = ['admin-schools', 'admin-users'];
+const ADMIN_ONLY_TABS: TabId[] = [...ADMIN_TABS, 'profile'];
 
 /** Админ платформы без класса и роли в школе: регистрация ученика ему не нужна. */
 function isAdminOnly(state: GameState): boolean {
@@ -102,6 +104,7 @@ function tabFromPath(pathname: string): TabId | null {
     '/director/classes': 'director-classes',
     '/director/setup': 'director-setup',
     '/admin/schools': 'admin-schools',
+    '/admin/users': 'admin-users',
     '/director/profile': 'profile',
   };
   return routes[route] ?? null;
@@ -121,6 +124,7 @@ function pathForTab(tab: TabId, role: 'student' | 'teacher' | 'director' = 'stud
     'director-classes': '/director/classes',
     'director-setup': '/director/setup',
     'admin-schools': '/admin/schools',
+    'admin-users': '/admin/users',
   };
   return routes[tab] || '/';
 }
@@ -171,6 +175,8 @@ export default function App() {
   // Ученик с заявкой решил войти по коду: показываем ввод кода вместо ожидания.
   const [codeInstead, setCodeInstead] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // Сервер ответил 403 «Доступ к приложению ограничен»: администратор заблокировал пользователя.
+  const [blocked, setBlocked] = useState(false);
   const [sandboxReset, setSandboxReset] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [changingClass, setChangingClass] = useState(false);
@@ -194,6 +200,10 @@ export default function App() {
 
   // 401 в боевом режиме: подпись MAX устарела. Повторные запросы не помогут.
   const markExpired = useCallback((error: unknown): boolean => {
+    if (error instanceof ApiError && error.blocked) {
+      setBlocked(true);
+      return true;
+    }
     if (error instanceof ApiError && error.status === 401 && activeSandboxClientId() === null) {
       setSessionExpired(true);
       return true;
@@ -305,7 +315,7 @@ export default function App() {
     const allowed: TabId[] = isAdminOnly(state)
       ? ADMIN_ONLY_TABS
       : state.platform_admin
-      ? [...base, 'admin-schools']
+      ? [...base, ...ADMIN_TABS]
       : base;
     if (!tabFromPath(window.location.pathname) || !allowed.includes(tab)) {
       const preferred = role === 'director' ? lastDirectorTab.current : role === 'teacher' ? lastTeacherTab.current : lastStudentTab.current;
@@ -790,12 +800,44 @@ export default function App() {
   const handleSchoolStatus = async (
     schoolId: number,
     status: 'active' | 'rejected',
+    reason = '',
   ): Promise<boolean> => {
-    const response = await mutate('school-status', () => api.setSchoolStatus(schoolId, status));
+    const response = await mutate('school-status', () =>
+      api.setSchoolStatus(schoolId, status, reason),
+    );
     if (!response) return false;
-    showToast(status === 'active' ? 'Школа подтверждена' : 'Заявка отклонена', 'info', 'check');
+    showToast(status === 'active' ? 'Школа активна' : 'Школа отклонена', 'info', 'check');
     return true;
   };
+
+  const handleDeleteSchool = async (
+    schoolId: number,
+    confirmName: string,
+  ): Promise<DeletedSchoolSummary | null> => {
+    let deleted: DeletedSchoolSummary | null = null;
+    const response = await mutate('school-delete', async () => {
+      const result = await api.adminDeleteSchool(schoolId, confirmName);
+      deleted = result.deleted;
+      return result;
+    });
+    return response ? deleted : null;
+  };
+
+  if (blocked) {
+    return (
+      <div className="app">
+        <div className="gate">
+          <div className="gate__box ad-blocked">
+            <EmptyState
+              icon="lock"
+              title="Доступ ограничен"
+              text="Доступ к приложению ограничен администратором платформы. Если вы считаете, что это ошибка, обратитесь в администрацию своей школы."
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (sessionExpired) {
     return (
@@ -1029,12 +1071,15 @@ export default function App() {
     { id: 'profile', label: 'Профиль', icon: 'user' },
   ];
 
-  const adminTab: TabItem = {
-    id: 'admin-schools',
-    label: 'Заявки',
-    icon: 'check',
-    badge: state.platform_admin?.pending.length ?? 0,
-  };
+  const adminTabs: TabItem[] = [
+    {
+      id: 'admin-schools',
+      label: 'Школы',
+      icon: 'shield',
+      badge: state.platform_admin?.pending.length ?? 0,
+    },
+    { id: 'admin-users', label: 'Люди', icon: 'users' },
+  ];
 
   const busyItem = busy?.startsWith('equip:')
     ? busy.slice(6)
@@ -1048,9 +1093,9 @@ export default function App() {
 
   const roleTabs = isDirector ? directorTabs : isTeacher ? teacherTabs : studentTabs;
   const currentTabs: TabItem[] = adminOnly
-    ? [adminTab, { id: 'profile', label: 'Профиль', icon: 'user' }]
+    ? [...adminTabs, { id: 'profile', label: 'Профиль', icon: 'user' }]
     : state.platform_admin
-    ? [...roleTabs, adminTab]
+    ? [...roleTabs, ...adminTabs]
     : roleTabs;
 
   const isDemo = state.mode === 'demo';
@@ -1217,10 +1262,15 @@ export default function App() {
 
           {tab === 'admin-schools' && state.platform_admin ? (
             <AdminSchoolsScreen
-              data={state.platform_admin}
               busy={busy !== null}
+              notify={showToast}
               onSetStatus={handleSchoolStatus}
+              onDelete={handleDeleteSchool}
             />
+          ) : null}
+
+          {tab === 'admin-users' && state.platform_admin ? (
+            <AdminUsersScreen notify={showToast} />
           ) : null}
 
           {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (

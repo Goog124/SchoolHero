@@ -11,7 +11,6 @@ import type {
   ManagedTeacher,
   ManagedSchool,
   NewSchoolPayload,
-  PlatformAdminData,
   SchoolAdminData,
   TimezoneOption,
 } from '../types';
@@ -958,6 +957,12 @@ export function SchoolSetupScreen({
             {school.status === 'pending'
               ? 'Пока школа не подтверждена администратором платформы, ученики не видят её в списке, а коды не работают.'
               : 'Ученики и педагоги не могут присоединиться к этой школе.'}
+            {school.status === 'rejected' && school.reject_reason ? (
+              <>
+                {' '}
+                Причина: {school.reject_reason}
+              </>
+            ) : null}
           </span>
         </div>
       )}
@@ -1065,89 +1070,6 @@ export function SchoolSetupScreen({
           )}
         </section>
       )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Подтверждение школ (администратор платформы)
-// ---------------------------------------------------------------------------
-
-export function AdminSchoolsScreen({
-  data,
-  busy,
-  onSetStatus,
-}: {
-  data: PlatformAdminData;
-  busy: boolean;
-  onSetStatus: (schoolId: number, status: 'active' | 'rejected') => Promise<boolean>;
-}) {
-  return (
-    <div className="su">
-      <header className="su-head">
-        <h1 className="su-title">Заявки школ</h1>
-        <p className="su-sub">
-          Режим регистрации: {data.approval_mode === 'manual' ? 'с подтверждением' : 'автоматический'}
-        </p>
-      </header>
-      {data.pending.length === 0 ? (
-        <div className="ob-notice" role="status">
-          <Icon name="info" size={16} />
-          <span>Новых заявок нет.</span>
-        </div>
-      ) : (
-        <ul className="su-classes-list">
-          {data.pending.map((item) => (
-            <li key={item.id} className="su-class">
-              <div className="su-class__head">
-                <h3 className="su-class__name">{item.name}</h3>
-                <span className="su-class__meta">
-                  {item.city} · классов: {item.classes}
-                  {item.created_by ? ` · ${item.created_by}` : ''}
-                </span>
-              </div>
-              <div className="su-actions">
-                <button type="button" className="ob-btn ob-btn--ghost" disabled={busy} onClick={() => void onSetStatus(item.id, 'rejected')}>
-                  Отклонить
-                </button>
-                <button type="button" className="ob-btn" disabled={busy} onClick={() => void onSetStatus(item.id, 'active')}>
-                  Подтвердить
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {(data.rejected ?? []).length > 0 ? (
-        <section className="su-head" aria-labelledby="su-rejected-h">
-          <h2 className="su-h2" id="su-rejected-h">
-            Отклонённые школы
-          </h2>
-          <p className="su-sub">
-            Ученики и педагоги не могут присоединиться к ним, директор не может менять классы.
-            «Вернуть» снова делает школу активной.
-          </p>
-          <ul className="su-classes-list">
-            {(data.rejected ?? []).map((item) => (
-              <li key={item.id} className="su-class">
-                <div className="su-class__head">
-                  <h3 className="su-class__name">{item.name}</h3>
-                  <span className="su-class__meta">
-                    {item.city} · классов: {item.classes}
-                    {item.created_by ? ` · ${item.created_by}` : ''}
-                  </span>
-                </div>
-                <div className="su-actions">
-                  <button type="button" className="ob-btn ob-btn--ghost" disabled={busy} onClick={() => void onSetStatus(item.id, 'active')}>
-                    Вернуть
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </div>
   );
 }

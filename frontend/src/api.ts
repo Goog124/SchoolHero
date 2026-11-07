@@ -2,7 +2,12 @@ import { setSchoolTimezone } from './game';
 import { getClientId, getInitData } from './max';
 import { activeSandboxClientId } from './sandbox';
 import type {
+  AdminPage,
+  AdminSchoolDetail,
+  AdminSchoolItem,
+  AdminUserItem,
   BatchReviewResult,
+  DeletedSchoolSummary,
   GameState,
   MutationResponse,
   NewSchoolPayload,
@@ -15,11 +20,14 @@ import type {
 
 export class ApiError extends Error {
   status: number;
+  /** Сервер заблокировал пользователя (403 + X-Access-Blocked). */
+  blocked: boolean;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, blocked = false) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.blocked = blocked;
   }
 }
 
@@ -50,6 +58,7 @@ const FIELD_MESSAGES: Record<string, string> = {
   invite_code: 'Проверьте код приглашения',
   reason: 'Причина слишком длинная',
   status: 'Неизвестный статус',
+  confirm_name: 'Название школы введено неверно',
   kind: 'Неизвестный тип',
 };
 
@@ -107,7 +116,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep generic error
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, response.headers.get('X-Access-Blocked') === '1');
   }
 
   const data = (await response.json()) as T;
@@ -306,10 +315,65 @@ export const api = {
     return request<MutationResponse>(`/api/school/${schoolId}/select`, { method: 'POST' });
   },
 
-  setSchoolStatus(schoolId: number, status: 'active' | 'rejected'): Promise<MutationResponse> {
+  setSchoolStatus(
+    schoolId: number,
+    status: 'active' | 'rejected',
+    reason = '',
+  ): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/admin/schools/${schoolId}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, reason }),
+    });
+  },
+
+  adminSchools(params: {
+    status?: string;
+    q?: string;
+    offset?: number;
+  }): Promise<AdminPage<AdminSchoolItem>> {
+    const query = new URLSearchParams();
+    if (params.status && params.status !== 'all') query.set('status', params.status);
+    if (params.q) query.set('q', params.q);
+    if (params.offset) query.set('offset', String(params.offset));
+    return request<AdminPage<AdminSchoolItem>>(`/api/admin/schools?${query.toString()}`);
+  },
+
+  adminSchoolDetail(schoolId: number): Promise<AdminSchoolDetail> {
+    return request<AdminSchoolDetail>(`/api/admin/schools/${schoolId}`);
+  },
+
+  adminDeleteSchool(
+    schoolId: number,
+    confirmName: string,
+  ): Promise<MutationResponse & { deleted: DeletedSchoolSummary }> {
+    return request<MutationResponse & { deleted: DeletedSchoolSummary }>(
+      `/api/admin/schools/${schoolId}/delete`,
+      { method: 'POST', body: JSON.stringify({ confirm_name: confirmName }) },
+    );
+  },
+
+  adminUsers(params: {
+    q?: string;
+    offset?: number;
+    blocked?: boolean;
+  }): Promise<AdminPage<AdminUserItem>> {
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (params.offset) query.set('offset', String(params.offset));
+    if (params.blocked) query.set('blocked', 'true');
+    return request<AdminPage<AdminUserItem>>(`/api/admin/users?${query.toString()}`);
+  },
+
+  adminBlockUser(userId: number, reason: string): Promise<{ user: AdminUserItem }> {
+    return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/block`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  adminUnblockUser(userId: number): Promise<{ user: AdminUserItem }> {
+    return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/unblock`, {
+      method: 'POST',
     });
   },
 

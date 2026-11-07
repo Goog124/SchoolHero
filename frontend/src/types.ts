@@ -371,6 +371,8 @@ export type ManagedSchool = {
   status: 'active' | 'pending' | 'rejected';
   /** IANA-пояс школы. */
   timezone: string;
+  /** Причина отклонения, которую указал администратор платформы. */
+  reject_reason?: string;
   classes: ManagedClass[];
 };
 
@@ -551,4 +553,80 @@ export type TabId =
   | 'director-overview'
   | 'director-classes'
   | 'director-setup'
-  | 'admin-schools';
+  | 'admin-schools'
+  | 'admin-users';
+
+export type SchoolStatus = 'pending' | 'active' | 'rejected';
+
+export type AdminSummary = {
+  schools: Record<SchoolStatus | 'total', number>;
+  users: { student: number; teacher: number; director: number; total: number };
+  active_students_week: number;
+  pending_works: number;
+  blocked_users: number;
+};
+
+export type AdminSchoolItem = {
+  id: number;
+  name: string;
+  city: string;
+  timezone: string;
+  status: SchoolStatus;
+  created_at: string;
+  director: string;
+  classes: number;
+  students: number;
+  teachers: number;
+  active_week: number;
+  reject_reason: string;
+};
+
+export type AdminPage<T> = {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+  summary: AdminSummary;
+};
+
+export type AdminSchoolDetail = {
+  school: AdminSchoolItem;
+  classes: Array<{
+    id: number;
+    name: string;
+    students: number;
+    teachers: number;
+    teacher_names: string[];
+  }>;
+};
+
+export type AdminUserItem = {
+  id: number;
+  name: string;
+  role: 'student' | 'teacher' | 'director';
+  external_id: string;
+  school: string;
+  class_name: string;
+  created_at: string;
+  last_active: string;
+  blocked: boolean;
+  blocked_at: string;
+  blocked_reason: string;
+  is_admin: boolean;
+  is_self: boolean;
+};
+
+export type DeletedSchoolSummary = {
+  classes: number;
+  challenges: number;
+  completions: number;
+  uploads: number;
+  students: number;
+  teachers: number;
+  directors: number;
+  xp_events: number;
+  join_requests: number;
+  exclusions: number;
+  files_removed: number;
+};

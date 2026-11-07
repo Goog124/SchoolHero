@@ -484,6 +484,7 @@ def school_admin_data(
                 "city": s["city"],
                 "status": s["status"],
                 "timezone": normalize_timezone(s["timezone"]),
+                "reject_reason": (s["reject_reason"] or "") if s["status"] == "rejected" else "",
                 "classes": sorted(by_school.get(int(s["id"]), []), key=_class_sort_key),
             }
             for s in schools
@@ -524,13 +525,25 @@ def platform_admin_data(conn, viewer: sqlite3.Row, settings: Settings) -> dict[s
 
 
 def set_school_status(
-    conn, viewer: sqlite3.Row, settings: Settings, school_id: int, status: str
+    conn,
+    viewer: sqlite3.Row,
+    settings: Settings,
+    school_id: int,
+    status: str,
+    reason: Any = "",
 ) -> None:
+    """Approve / return (active) or reject a school. The optional reason of a
+    rejection is shown to the director; it is cleared when the school is
+    activated again."""
     if not is_platform_admin(viewer, settings):
         raise GameError("Недостаточно прав", 403)
     if status not in {"active", "rejected"}:
         raise GameError("Неизвестный статус")
-    cursor = conn.execute("UPDATE schools SET status = ? WHERE id = ?", (status, school_id))
+    note = _clean(reason)[:200] if status == "rejected" else ""
+    cursor = conn.execute(
+        "UPDATE schools SET status = ?, reject_reason = ? WHERE id = ?",
+        (status, note, school_id),
+    )
     if cursor.rowcount == 0:
         raise GameError("Школа не найдена", 404)
 

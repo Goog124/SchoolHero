@@ -24,6 +24,7 @@
 | Авторизация | `backend/security.py` | Проверка подписи `initData`, формирование `Identity` |
 | Логика | `backend/service.py` | Пользователи, роли, сборка состояния, действия (задания, проверка, магазин) |
 | Регистрация школ | `backend/registration.py` | Школы, классы, коды, подтверждение школ, лимиты |
+| Панель администратора | `backend/admin.py` | Список школ и пользователей, сводка, удаление школы, блокировка |
 | Правила игры | `backend/game.py` | Уровни, категории, косметика, достижения, даты, начисление XP |
 | База | `backend/db.py` | Схема, подключение, миграции |
 | Лимиты | `backend/ratelimit.py` | Скользящее окно в памяти процесса |
@@ -112,9 +113,9 @@ users 1---N join_requests N---1 classes,  users 1---N class_exclusions N---1 cla
 
 | Таблица | Назначение | Основные поля и ограничения |
 | --- | --- | --- |
-| `schools` | Школы | `name`, `city`, `status` (`active`/`pending`/`rejected`), `created_by` -> users, `created_at`, `norm_key` (регистронезависимый ключ `название|город`). `UNIQUE(name, city)`, уникальный индекс по `norm_key` |
+| `schools` | Школы | `name`, `city`, `status` (`active`/`pending`/`rejected`), `created_by` -> users, `created_at`, `norm_key` (регистронезависимый ключ `название|город`), `reject_reason` (причина отклонения для директора). `UNIQUE(name, city)`, уникальный индекс по `norm_key` |
 | `classes` | Классы | `school_id`, `name`, `weekly_goal` (по умолчанию 1600), `invite_code` (код ученика), `teacher_code` (код педагога). `UNIQUE(school_id, name)`, уникальные частичные индексы по кодам |
-| `users` | Пользователи | `max_user_id` (уникален), `client_id` (уникален, demo/sandbox), имя, `role` (`student`/`teacher`/`director`), `preview_role` (демо), `class_id`, `school_id` (активная школа директора), `class_since` (когда занят текущий класс), `staff_detached` (педагог отключён директором), `name_locked`, `xp`, `sparks`, `streak`, `last_active_date`, `avatar` (JSON), `owned` (JSON-список купленных предметов), `onboarded` |
+| `users` | Пользователи | `max_user_id` (уникален), `client_id` (уникален, demo/sandbox), имя, `role` (`student`/`teacher`/`director`), `preview_role` (демо), `class_id`, `school_id` (активная школа директора), `class_since` (когда занят текущий класс), `staff_detached` (педагог отключён директором), `blocked_at` и `blocked_reason` (блокировка администратором платформы: 403 на все `/api/*`, кроме `/api/health`; проверка в `api._context`, администратор платформы не блокируется), `name_locked`, `xp`, `sparks`, `streak`, `last_active_date`, `avatar` (JSON), `owned` (JSON-список купленных предметов), `onboarded` |
 | `challenges` | Задания класса | `class_id`, `title`, `description`, `category`, `xp` (10..300 по API; в БД CHECK 1..500), `kind` (`daily`/`weekly`/`event`), `deadline`, `subject`, `proof_type` (`text`/`link`/`photo`), `created_by`, `active` (0 = в архиве) |
 | `completions` | Выполнения | `user_id`, `challenge_id`, `status` (`pending`/`approved`/`rejected`), `proof`, `proof_url`, `reviewed_at`, `reviewed_by`, `reject_reason`. `UNIQUE(user_id, challenge_id)` - одна запись на пару, повторная отправка после отклонения обновляет её |
 | `xp_events` | Журнал начисления XP | `user_id`, `amount`, `reason`, `category`, `created_at`, `class_id` (класс, в котором XP получен), `source` (`challenge`/`manual`, у старых записей NULL), `awarded_by` (кто начислил). Источник XP и недельного XP классов, ленты класса и суточных лимитов ручных начислений |
@@ -124,14 +125,16 @@ users 1---N join_requests N---1 classes,  users 1---N class_exclusions N---1 cla
 | `join_requests` | Заявки на вступление (выбор класса из списка) | `user_id`, `class_id`, `status` (`pending`/`approved`/`declined`/`cancelled`), `created_at`, `decided_at`, `decided_by`. Уникальный частичный индекс: одна заявка `pending` на пользователя; индексы `(class_id, status, created_at)`, `(user_id, created_at)` |
 | `activity_days` | Дни активности | `(user_id, day)` PK. Источник полоски серии за 7 дней |
 
-Прочее: пользователи и школы не удаляются ни одним маршрутом; класс можно удалить, только если в нём нет пользователей и заданий (включая архивные).
+Прочее: пользователи не удаляются ни одним маршрутом; класс директор может удалить, только если в нём нет пользователей и заданий (включая архивные).
+
+Каскад удаления школы (`admin.delete_school`, `POST /api/admin/schools/{id}/delete`, только администратор платформы), одна транзакция `BEGIN IMMEDIATE`: `uploads` работ школы -> `completions` -> `challenges` -> у пользователей классов `class_id = NULL` и `class_since = NULL` (педагогам ещё `staff_detached = 1`) -> `xp_events`, `join_requests`, `class_exclusions`, `class_staff` по `class_id` -> `classes` -> `school_staff` -> `users.school_id = NULL` -> `schools`. Пользователи, `users.xp`, `sparks`, `owned` сохраняются. Файлы фото удаляются после коммита; факт удаления пишется в лог.
 
 ## Миграции
 
 Системы версий миграций нет. При каждом старте `init_db`:
 
 1. Выполняет `SCHEMA` (`CREATE TABLE IF NOT EXISTS`, `PRAGMA journal_mode=WAL`).
-2. `_migrate_columns` добавляет недостающие колонки через `ALTER TABLE` (`subject`, `proof_type`, `proof_url`, коды классов, `school_id`, `name_locked`, `class_since`, `staff_detached`, поля школы, `xp_events.class_id/source/awarded_by`). Таблицы `class_exclusions` и `join_requests` создаются из `SCHEMA`. При добавлении `xp_events.class_id` старые события один раз относятся к текущему классу ученика.
+2. `_migrate_columns` добавляет недостающие колонки через `ALTER TABLE` (`subject`, `proof_type`, `proof_url`, коды классов, `school_id`, `name_locked`, `class_since`, `staff_detached`, `blocked_at`, `blocked_reason`, `schools.reject_reason`, поля школы, `xp_events.class_id/source/awarded_by`). Таблицы `class_exclusions` и `join_requests` создаются из `SCHEMA`. При добавлении `xp_events.class_id` старые события один раз относятся к текущему классу ученика.
 3. Если у `schools` старое ограничение `UNIQUE(name)`, таблица пересоздаётся с `UNIQUE(name, city)`.
 4. Заполняет `norm_key` для школ, где он пуст (дубликаты остаются с `NULL`).
 5. Создаёт индексы; уникальные индексы по кодам и `norm_key` создаются «по возможности»: при конфликте в старых данных индекс пропускается без ошибки.
@@ -164,8 +167,9 @@ users 1---N join_requests N---1 classes,  users 1---N class_exclusions N---1 cla
 | Отключить педагога от класса | нет | нет | свои школы | - |
 | Классы, коды, выбор школы | нет | нет | свои школы | - |
 | Подтвердить/отклонить/вернуть школу | нет | нет | нет | да |
+| Удалить школу, заблокировать пользователя | нет | нет | нет | да |
 
-«Админ платформы» - это не роль в `users.role`, а признак по MAX id из `PLATFORM_ADMIN_MAX_IDS` (в `sandbox` - по `PLATFORM_ADMIN_CLIENT_IDS`); к любой роли добавляет вкладку «Заявки».
+«Админ платформы» - это не роль в `users.role`, а признак по MAX id из `PLATFORM_ADMIN_MAX_IDS` (в `sandbox` - по `PLATFORM_ADMIN_CLIENT_IDS`); к любой роли добавляет вкладки «Школы» и «Люди» (панель администратора: все школы с фильтрами и поиском, удаление школы, поиск и блокировка пользователей; код в `backend/admin.py`, маршруты `/api/admin/*` отвечают 404 всем остальным).
 
 Пояснения:
 
@@ -211,7 +215,7 @@ users 1---N join_requests N---1 classes,  users 1---N class_exclusions N---1 cla
 | `teacher` | только для педагога с классом: очередь работ на проверку, заявки на вступление (`join_requests`), исключённые, ученики с рисками и историей, статистика, график недели, задания |
 | `director` | только для директора со школой: KPI, параллели, направления, таблица классов |
 | `school_admin` | для директора: школы, классы, коды, педагоги классов (`teachers: [{id, name, since}]`), заявки на вступление по всем его школам (`join_requests`), лимиты |
-| `platform_admin` | для админа платформы: режим подтверждения и до 100 ожидающих школ |
+| `platform_admin` | для админа платформы: режим подтверждения и до 100 ожидающих школ (для бейджа); списки панели грузятся отдельно через `/api/admin/*` |
 | `demo_teacher_available`, `demo_director_available` | `true` в `demo` |
 
 ## XP, уровни, искры

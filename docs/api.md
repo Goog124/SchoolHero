@@ -68,7 +68,24 @@
 | `DELETE /api/school/classes/{class_id}` | директор школы класса | - | `{state}` | 400 в классе есть ученики/педагоги, задания (и значит работы) или история XP; 403 школа отклонена; 404. Запреты на вступление (`class_exclusions`) и привязки каталога (`class_staff`) удаляются вместе с классом |
 | `POST /api/school/classes/{class_id}/codes` | директор школы класса | `{kind: "student"\|"teacher", disconnect_teachers?: bool}` | `{state}`; новый код вместо старого. С `disconnect_teachers` (только для кода педагога) все педагоги класса отключаются | 400 неизвестный тип; 404 |
 | `POST /api/school/classes/{class_id}/teachers/{teacher_id}/disconnect` | директор школы класса (в том числе отклонённой школы) | - | `{state}`; педагог остаётся `teacher`, но без класса; запись `class_staff` для класса удаляется, повторная автопривязка из `TEACHER_MAX_IDS` отключается | 404 класс, школа или педагог этого класса не найдены |
-| `POST /api/admin/schools/{school_id}/status` | администратор платформы | `{status: "active"\|"rejected"}` | `{state}` | 400 неизвестный статус; 403 не администратор; 404 нет школы. `active` возвращает и ранее отклонённую школу. Отклонённая школа: директор видит её, но не меняет классы и коды (403); её классы не принимают новых учеников и педагогов (код и `class_id` не находятся); в её классах нельзя создавать задания, сдавать, проверять работы и начислять XP (403 с пояснением) |
+| `POST /api/admin/schools/{school_id}/status` | администратор платформы | `{status: "active"\|"rejected", reason?: <=200}` | `{state}` | 400 неизвестный статус; 403 не администратор; 404 нет школы. `active` возвращает и ранее отклонённую школу и стирает причину. `reason` сохраняется в `schools.reject_reason` только при `rejected`, директор видит её в `state.school_admin.schools[].reject_reason`. Отклонённая школа: директор видит её, но не меняет классы и коды (403); её классы не принимают новых учеников и педагогов (код и `class_id` не находятся); в её классах нельзя создавать задания, сдавать, проверять работы и начислять XP (403 с пояснением) |
+
+### Панель администратора платформы
+
+Только администратор платформы (`PLATFORM_ADMIN_MAX_IDS`; в `sandbox` - флаг `sandbox_admin` или `PLATFORM_ADMIN_CLIENT_IDS`). Всем остальным эти маршруты отвечают `404`. В `demo` администраторов нет.
+
+| Маршрут | Параметры | Ответ | Ошибки |
+| --- | --- | --- | --- |
+| `GET /api/admin/schools` | `status`: `pending`/`active`/`rejected`/`all` (по умолчанию все), `q` (название или город, без учёта регистра, до 80 символов), `offset`, `limit` (не больше 50) | `{items: [{id, name, city, timezone, status, created_at, director, classes, students, teachers, active_week, reject_reason}], total, offset, limit, has_more, summary}` | 400 неизвестный `status`; 404 |
+| `GET /api/admin/schools/{id}` | - | `{school: {...как в списке}, classes: [{id, name, students, teachers, teacher_names}]}`; коды классов не отдаются | 404 |
+| `POST /api/admin/schools/{id}/delete` | `{confirm_name}` - точное название школы (пробелы по краям и повторные не важны) | `{state, deleted: {classes, challenges, completions, uploads, students, teachers, directors, xp_events, join_requests, exclusions, files_removed}}` | 400 название не совпало; 404 |
+| `GET /api/admin/users` | `q` (имя, username, MAX id или client id), `blocked=true` (только заблокированные), `offset`, `limit` (не больше 50) | `{items: [{id, name, role, external_id, school, class_name, created_at, last_active, blocked, blocked_at, blocked_reason, is_admin, is_self}], total, offset, limit, has_more, summary}` | 404 |
+| `POST /api/admin/users/{id}/block` | `{reason: 3..200}` | `{user}` | 400 нет причины, это администратор платформы или вы сами; 404 |
+| `POST /api/admin/users/{id}/unblock` | - | `{user}` | 404 |
+
+`summary`: `{schools: {pending, active, rejected, total}, users: {student, teacher, director, total}, active_students_week, pending_works, blocked_users}`. `active_students_week` - ученики с днём активности (`activity_days`) за последние 7 суток по UTC; `last_active` - последний такой день (`YYYY-MM-DD`) или пусто. Директор в карточке школы - создатель школы (если его нет, первая запись `school_staff`).
+
+Блокировка. Пользователь с `users.blocked_at` получает на любой `/api/*`, кроме `GET /api/health`, ответ `403` `{"detail": "Доступ к приложению ограничен"}` с заголовком `X-Access-Blocked: 1` (по нему интерфейс показывает экран «Доступ ограничен»). Платформенного администратора блокировка не ограничивает, даже если флаг стоит в базе. Webhook бота `POST /api/max/webhook` проверяет подпись и пользователей не авторизует.
 
 Замечания:
 

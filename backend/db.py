@@ -31,6 +31,9 @@ USERS_COLUMNS = """    id INTEGER PRIMARY KEY AUTOINCREMENT,
     staff_detached INTEGER NOT NULL DEFAULT 0,
     -- sandbox only: the test user acts as platform admin (ignored in prod/demo)
     sandbox_admin INTEGER NOT NULL DEFAULT 0,
+    -- set by a platform admin: the user gets 403 on every /api/* but /api/health
+    blocked_at TEXT,
+    blocked_reason TEXT NOT NULL DEFAULT '',
     xp INTEGER NOT NULL DEFAULT 0 CHECK(xp >= 0),
     sparks INTEGER NOT NULL DEFAULT 0 CHECK(sparks >= 0),
     streak INTEGER NOT NULL DEFAULT 0,
@@ -50,6 +53,8 @@ SCHOOLS_COLUMNS = """    id INTEGER PRIMARY KEY AUTOINCREMENT,
     norm_key TEXT,
     -- IANA zone of the school: "today", weeks, deadlines, daily limits
     timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
+    -- why the platform admin rejected the school (shown to its director)
+    reject_reason TEXT NOT NULL DEFAULT '',
     UNIQUE(name, city)
 """
 
@@ -443,6 +448,10 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN staff_detached INTEGER NOT NULL DEFAULT 0")
     if "sandbox_admin" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN sandbox_admin INTEGER NOT NULL DEFAULT 0")
+    if "blocked_at" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN blocked_at TEXT")
+    if "blocked_reason" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN blocked_reason TEXT NOT NULL DEFAULT ''")
 
     school_cols = _columns(conn, "schools")
     if "status" not in school_cols:
@@ -457,6 +466,8 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE schools ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Europe/Moscow'"
         )
+    if "reject_reason" not in school_cols:
+        conn.execute("ALTER TABLE schools ADD COLUMN reject_reason TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
     if _schools_name_is_unique(conn):
@@ -488,6 +499,7 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_join_requests_one_pending ON join_requests(user_id) "
         "WHERE status = 'pending'",
         "CREATE INDEX IF NOT EXISTS idx_completions_upload ON completions(upload_id)",
+        "CREATE INDEX IF NOT EXISTS idx_activity_days_day ON activity_days(day, user_id)",
         # backfill_school_keys has made norm_key unique: a failure here is a
         # real error and must not be hidden.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_norm_key ON schools(norm_key) "

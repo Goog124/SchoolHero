@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import connect
-from . import joins, registration
+from . import admin, joins, registration
 from .security import AuthError, Identity, identity_from_request
 from .service import (
     archive_challenge,
@@ -144,6 +144,17 @@ class JoinDecisionBody(BaseModel):
 
 class SchoolStatusBody(BaseModel):
     status: str = Field(max_length=10)
+    # Optional reason of a rejection; the school director sees it.
+    reason: str = Field(default="", max_length=200)
+
+
+class DeleteSchoolBody(BaseModel):
+    # The school name typed by the admin: must match exactly.
+    confirm_name: str = Field(max_length=120)
+
+
+class BlockUserBody(BaseModel):
+    reason: str = Field(default="", max_length=200)
 
 
 class RemoveStudentBody(BaseModel):
@@ -188,6 +199,12 @@ def _context(
         except AuthError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         user = ensure_user(conn, identity, settings)
+        if admin.is_blocked(user, settings):
+            raise HTTPException(
+                status_code=403,
+                detail=admin.BLOCKED_MESSAGE,
+                headers={"X-Access-Blocked": "1"},
+            )
         yield Context(conn=conn, settings=settings, identity=identity, user=user)
     finally:
         conn.close()
@@ -397,9 +414,60 @@ def join_request_decide(
 def admin_school_status(
     school_id: IdPath, payload: SchoolStatusBody, ctx: Context = Depends(get_context)
 ) -> dict[str, Any]:
-    registration.set_school_status(ctx.conn, ctx.user, ctx.settings, school_id, payload.status)
+    registration.set_school_status(
+        ctx.conn, ctx.user, ctx.settings, school_id, payload.status, payload.reason
+    )
     ctx.conn.commit()
     return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
+@router.get("/admin/schools")
+def admin_schools(
+    status: Annotated[str, Query(max_length=10)] = "",
+    q: Annotated[str, Query(max_length=80)] = "",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = admin.PAGE_LIMIT,
+    ctx: Context = Depends(get_context),
+) -> dict[str, Any]:
+    return admin.list_schools(ctx.conn, ctx.user, ctx.settings, status, q, offset, limit)
+
+
+@router.get("/admin/schools/{school_id}")
+def admin_school_detail(school_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    return admin.school_detail(ctx.conn, ctx.user, ctx.settings, school_id)
+
+
+@router.post("/admin/schools/{school_id}/delete")
+def admin_school_delete(
+    school_id: IdPath, payload: DeleteSchoolBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    deleted = admin.delete_school(
+        ctx.conn, ctx.user, ctx.settings, school_id, payload.confirm_name
+    )
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings), "deleted": deleted}
+
+
+@router.get("/admin/users")
+def admin_users(
+    q: Annotated[str, Query(max_length=80)] = "",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = admin.PAGE_LIMIT,
+    blocked: bool = False,
+    ctx: Context = Depends(get_context),
+) -> dict[str, Any]:
+    return admin.list_users(ctx.conn, ctx.user, ctx.settings, q, offset, limit, blocked)
+
+
+@router.post("/admin/users/{user_id}/block")
+def admin_user_block(
+    user_id: IdPath, payload: BlockUserBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    return {"user": admin.block_user(ctx.conn, ctx.user, ctx.settings, user_id, payload.reason)}
+
+
+@router.post("/admin/users/{user_id}/unblock")
+def admin_user_unblock(user_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    return {"user": admin.unblock_user(ctx.conn, ctx.user, ctx.settings, user_id)}
 
 
 @router.post("/profile/name")

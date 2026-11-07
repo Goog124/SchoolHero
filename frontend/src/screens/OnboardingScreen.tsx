@@ -16,10 +16,14 @@ type OnboardingScreenProps = {
     lastName?: string,
     classId?: number,
     inviteCode?: string,
-  ) => Promise<boolean>;
+  ) => Promise<string | null>;
   /** Ученик без класса: только выбор класса, без имени и героя. */
   joinOnly?: boolean;
-  onJoin?: (classId?: number, inviteCode?: string) => Promise<boolean>;
+  onJoin?: (classId?: number, inviteCode?: string) => Promise<string | null>;
+  /** Подсказка над выбором класса (например, об исключении). */
+  notice?: string;
+  /** Сразу открыть ввод кода (например, вместо ожидания заявки). */
+  initialMode?: 'code' | 'list';
   onBack?: () => void;
 };
 
@@ -65,7 +69,7 @@ function readCodeFromUrl(): string {
   }
 }
 
-export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, onBack }: OnboardingScreenProps) {
+export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, notice, initialMode, onBack }: OnboardingScreenProps) {
   const { viewer } = state;
   const firstStep = joinOnly ? 1 : 0;
   const lastStep = joinOnly ? 1 : TOTAL_STEPS - 1;
@@ -81,7 +85,9 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
   const [touched, setTouched] = useState({ first: false, last: false });
 
   // Шаг 2: класс
-  const [mode, setMode] = useState<'code' | 'list'>(readCodeFromUrl() ? 'code' : 'list');
+  const [mode, setMode] = useState<'code' | 'list'>(
+    initialMode ?? (readCodeFromUrl() ? 'code' : 'list'),
+  );
   const [code, setCode] = useState(readCodeFromUrl);
   const [checking, setChecking] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -280,12 +286,12 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
     if (!onJoin || !chosen) return;
     setBusy(true);
     setSubmitError(null);
-    const ok =
+    const problem =
       mode === 'code'
         ? await onJoin(undefined, chosen.invite_code)
         : await onJoin(chosen.class_id, undefined);
     setBusy(false);
-    if (!ok) setSubmitError('Не удалось присоединиться к классу. Попробуйте ещё раз.');
+    if (problem) setSubmitError(problem);
   };
 
   const finish = async () => {
@@ -298,7 +304,7 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
     setSubmitError(null);
     // По коду отправляем только код (сервер сам определит ученик или педагог),
     // из списка только идентификатор класса.
-    const ok = await onComplete(
+    const problem = await onComplete(
       firstName.trim(),
       avatar,
       lastName.trim(),
@@ -306,7 +312,11 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
       mode === 'code' ? chosen?.invite_code : undefined,
     );
     setBusy(false);
-    if (!ok) setSubmitError('Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.');
+    if (problem) {
+      setSubmitError(problem);
+      // Ошибка про класс (например, отчисление) показывается на шаге выбора класса.
+      if (/класс/i.test(problem)) setStep(1);
+    }
   };
 
   const summary = [chosen ? chosen.class_name : '', chosen ? chosen.school_name : '']
@@ -389,8 +399,18 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
           <section className="ob-card" aria-labelledby="ob-h-class">
             <div>
               <h1 className="ob-title" id="ob-h-class">Ваш класс</h1>
-              <p className="ob-lead">Найдите школу в списке или введите код приглашения.</p>
+              <p className="ob-lead">
+                По коду класса вы войдёте сразу. Из списка школ отправляется заявка: войти в класс
+                можно будет после того, как её примет педагог.
+              </p>
             </div>
+
+            {notice && (
+              <div className="ob-notice" role="status">
+                <Icon name="info" size={16} />
+                <span>{notice}</span>
+              </div>
+            )}
 
             <div className="ob-seg" role="group" aria-label="Способ выбора класса">
               <button type="button" className="ob-seg__btn" aria-pressed={mode === 'list'} onClick={() => setMode('list')}>
@@ -600,14 +620,18 @@ export function OnboardingScreen({ state, onComplete, joinOnly = false, onJoin, 
                 <span className="ob-found__meta">
                   {chosen.kind === 'teacher'
                     ? 'Код педагога: вы войдёте как педагог этого класса'
-                    : [chosen.city, chosen.teacher_name ? `Классный руководитель: ${chosen.teacher_name}` : '']
+                    : [
+                        chosen.city,
+                        chosen.teacher_name ? `Классный руководитель: ${chosen.teacher_name}` : '',
+                        mode === 'list' ? 'Будет отправлена заявка педагогу' : 'Вход сразу по коду',
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                 </span>
               </div>
             )}
 
-            {joinOnly && submitError && (
+            {submitError && (
               <div className="ob-notice ob-notice--error" role="alert">
                 <Icon name="alert" size={16} />
                 <span>{submitError}</span>

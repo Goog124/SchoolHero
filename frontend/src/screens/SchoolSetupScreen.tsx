@@ -1,14 +1,18 @@
 import { useState, type FormEvent } from 'react';
+import { api } from '../api';
 import { CityInput } from '../components/CityInput';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { JoinRequestsList } from '../components/JoinRequestsList';
+import { formatShortDate } from '../components/PrintReport';
 import type {
   GameState,
   ManagedClass,
+  ManagedTeacher,
   ManagedSchool,
   NewSchoolPayload,
-  PlatformAdminData,
   SchoolAdminData,
+  TimezoneOption,
 } from '../types';
 import '../styles/onboarding.css';
 import '../styles/setup.css';
@@ -129,19 +133,27 @@ function Chip({
   );
 }
 
+const DEFAULT_ZONE = 'Europe/Moscow';
+
+const foldCity = (text: string) => text.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
 export function NewSchoolForm({
   busy,
+  timezones,
   onSubmit,
   onCancel,
   onUseTeacherCode,
   submitLabel = 'Создать школу',
 }: {
   busy: boolean;
+  timezones: TimezoneOption[];
   onSubmit: (payload: NewSchoolPayload) => ActionResult;
   onCancel?: () => void;
   onUseTeacherCode?: () => void;
   submitLabel?: string;
 }) {
+  const { confirm, dialog } = useConfirm();
+  const [zone, setZone] = useState(DEFAULT_ZONE);
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [grades, setGrades] = useState<number[]>([]);
@@ -244,9 +256,24 @@ export function NewSchoolForm({
       return;
     }
     setFormError(null);
+    const cityName = cleanName(city);
+    // Города нет ни в справочнике, ни среди школ платформы: спрашиваем, прежде чем создавать.
+    const known = await api
+      .searchCities(cityName, 20, 'all')
+      .then((res) => res.cities.some((c) => foldCity(c.name) === foldCity(cityName)))
+      .catch(() => true);
+    if (!known) {
+      const ok = await confirm({
+        title: 'Такого города нет в справочнике',
+        message: `Такого города нет в справочнике — использовать «${cityName}» как есть?`,
+        confirmLabel: 'Использовать',
+      });
+      if (!ok) return;
+    }
     const error = await onSubmit({
       name: cleanName(name),
-      city: cleanName(city),
+      city: cityName,
+      timezone: zone,
       classes: classNames.map((n) => ({ name: n })),
     });
     if (error) {
@@ -282,6 +309,7 @@ export function NewSchoolForm({
           value={city}
           onChange={setCity}
           placeholder="Начните вводить"
+          scope="all"
           invalid={Boolean(errors.city)}
           describedBy={errors.city ? 'su-city-err' : 'su-city-hint'}
         />
@@ -289,9 +317,22 @@ export function NewSchoolForm({
           <span id="su-city-err" className="ob-error">{errors.city}</span>
         ) : (
           <span id="su-city-hint" className="ob-hint">
-            Если город уже есть в списке подсказок, выберите его оттуда.
+            Выберите город из подсказок. Если вашего населённого пункта нет в списке, введите его
+            название вручную.
           </span>
         )}
+      </div>
+
+      <div className="ob-field">
+        <label className="ob-label" htmlFor="su-tz">Часовой пояс</label>
+        <select id="su-tz" className="ob-select" value={zone} onChange={(e) => setZone(e.target.value)}>
+          {timezones.map((tz) => (
+            <option key={tz.id} value={tz.id}>{tz.label}</option>
+          ))}
+        </select>
+        <span className="ob-hint">
+          По нему считаются «сегодня», недели и сроки заданий. Позже пояс можно сменить в управлении школой.
+        </span>
       </div>
 
       <fieldset className="su-classes" aria-describedby={errors.classes ? 'su-classes-err' : undefined}>
@@ -426,6 +467,7 @@ export function NewSchoolForm({
           {busy ? 'Создаём…' : submitLabel}
         </button>
       </div>
+      {dialog}
     </form>
   );
 }
@@ -434,18 +476,14 @@ export function NewSchoolForm({
 // Регистрация представителя школы (до получения роли)
 // ---------------------------------------------------------------------------
 
-export function SchoolRegisterScreen({
+/** Поле кода педагога: регистрация представителя школы и педагог без класса. */
+export function TeacherCodeForm({
   busy,
-  onBack,
-  onCreate,
   onJoinTeacher,
 }: {
   busy: boolean;
-  onBack: () => void;
-  onCreate: (payload: NewSchoolPayload) => ActionResult;
   onJoinTeacher: (code: string) => ActionResult;
 }) {
-  const [mode, setMode] = useState<'new' | 'code'>('new');
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
 
@@ -458,6 +496,56 @@ export function SchoolRegisterScreen({
     const problem = await onJoinTeacher(code.trim());
     if (problem) setCodeError(problem);
   };
+
+  return (
+    <div className="ob-field">
+      <label className="ob-label" htmlFor="su-tcode">Код педагога</label>
+      <div className="ob-row">
+        <input
+          id="su-tcode"
+          className="ob-input ob-input--code"
+          autoCapitalize="characters"
+          autoComplete="off"
+          spellCheck={false}
+          value={code}
+          aria-invalid={!!codeError}
+          aria-describedby="su-tcode-msg"
+          onChange={(e) => {
+            setCode(e.target.value.toUpperCase());
+            setCodeError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void join();
+            }
+          }}
+        />
+        <button type="button" className="ob-btn" onClick={() => void join()} disabled={busy}>
+          {busy ? 'Проверяем…' : 'Войти'}
+        </button>
+      </div>
+      <span id="su-tcode-msg" className={codeError ? 'ob-error' : 'ob-hint'} role={codeError ? 'alert' : undefined}>
+        {codeError ?? 'Код педагога привязывает вас к одному классу. Его выдаёт директор школы.'}
+      </span>
+    </div>
+  );
+}
+
+export function SchoolRegisterScreen({
+  busy,
+  timezones,
+  onBack,
+  onCreate,
+  onJoinTeacher,
+}: {
+  busy: boolean;
+  timezones: TimezoneOption[];
+  onBack: () => void;
+  onCreate: (payload: NewSchoolPayload) => ActionResult;
+  onJoinTeacher: (code: string) => ActionResult;
+}) {
+  const [mode, setMode] = useState<'new' | 'code'>('new');
 
   return (
     <div className="ob">
@@ -483,39 +571,9 @@ export function SchoolRegisterScreen({
           </div>
 
           {mode === 'new' ? (
-            <NewSchoolForm busy={busy} onSubmit={onCreate} onUseTeacherCode={() => setMode('code')} />
+            <NewSchoolForm busy={busy} timezones={timezones} onSubmit={onCreate} onUseTeacherCode={() => setMode('code')} />
           ) : (
-            <div className="ob-field">
-              <label className="ob-label" htmlFor="su-tcode">Код педагога</label>
-              <div className="ob-row">
-                <input
-                  id="su-tcode"
-                  className="ob-input ob-input--code"
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={code}
-                  aria-invalid={!!codeError}
-                  aria-describedby="su-tcode-msg"
-                  onChange={(e) => {
-                    setCode(e.target.value.toUpperCase());
-                    setCodeError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void join();
-                    }
-                  }}
-                />
-                <button type="button" className="ob-btn" onClick={() => void join()} disabled={busy}>
-                  {busy ? 'Проверяем…' : 'Войти'}
-                </button>
-              </div>
-              <span id="su-tcode-msg" className={codeError ? 'ob-error' : 'ob-hint'} role={codeError ? 'alert' : undefined}>
-                {codeError ?? 'Код педагога привязывает вас к одному классу.'}
-              </span>
-            </div>
+            <TeacherCodeForm busy={busy} onJoinTeacher={onJoinTeacher} />
           )}
         </section>
       </main>
@@ -525,6 +583,56 @@ export function SchoolRegisterScreen({
           Назад
         </button>
       </footer>
+    </div>
+  );
+}
+
+/** Педагог без класса (отключён директором или из списка TEACHER_MAX_IDS без привязки). */
+export function TeacherNoClassScreen({
+  busy,
+  onJoinTeacher,
+}: {
+  busy: boolean;
+  onJoinTeacher: (code: string) => ActionResult;
+}) {
+  return (
+    <div className="su">
+      <section className="ob-card" aria-labelledby="su-nocls-h">
+        <div>
+          <h1 className="ob-title" id="su-nocls-h">Класс не назначен</h1>
+          <p className="ob-lead">
+            Аккаунт педагога не привязан к классу. Введите код педагога, который выдал директор
+            школы.
+          </p>
+        </div>
+        <TeacherCodeForm busy={busy} onJoinTeacher={onJoinTeacher} />
+      </section>
+    </div>
+  );
+}
+
+/** Директор без школы (например, из списка DIRECTOR_MAX_IDS): регистрация школы. */
+export function DirectorNoSchoolScreen({
+  busy,
+  timezones,
+  onCreate,
+}: {
+  busy: boolean;
+  timezones: TimezoneOption[];
+  onCreate: (payload: NewSchoolPayload) => ActionResult;
+}) {
+  return (
+    <div className="su">
+      <section className="ob-card" aria-labelledby="su-nosch-h">
+        <div>
+          <h1 className="ob-title" id="su-nosch-h">Школа не подключена</h1>
+          <p className="ob-lead">
+            Аккаунт директора не привязан к школе. Зарегистрируйте школу: для каждого класса будут
+            созданы коды ученика и педагога.
+          </p>
+        </div>
+        <NewSchoolForm busy={busy} timezones={timezones} onSubmit={onCreate} />
+      </section>
     </div>
   );
 }
@@ -573,13 +681,15 @@ function ClassCard({
   busy,
   notify,
   onReset,
+  onDisconnect,
   onDelete,
   onUpdate,
 }: {
   cls: ManagedClass;
   busy: boolean;
   notify: Notify;
-  onReset: (classId: number, kind: 'student' | 'teacher') => void;
+  onReset: (classId: number, kind: 'student' | 'teacher', disconnectTeachers: boolean) => void;
+  onDisconnect: (classId: number, teacherId: number) => void;
   onDelete: (classId: number) => void;
   onUpdate: (classId: number, patch: { name?: string; weekly_goal?: number }) => ActionResult;
 }) {
@@ -592,12 +702,41 @@ function ClassCard({
 
   const confirmReset = async (kind: 'student' | 'teacher') => {
     const what = kind === 'student' ? 'код ученика' : 'код педагога';
+    // Значение флажка читается после закрытия диалога.
+    let disconnect = false;
+    const withTeachers = kind === 'teacher' && cls.teachers.length > 0;
     const ok = await confirm({
       title: `Выпустить новый ${what}?`,
-      message: `Класс ${cls.name}. Старый код перестанет работать.`,
+      message: withTeachers ? (
+        <>
+          Класс {cls.name}. Старый код перестанет работать, но уже подключённые педагоги сохранят
+          доступ.
+          <label className="su-check">
+            <input
+              type="checkbox"
+              onChange={(e) => {
+                disconnect = e.target.checked;
+              }}
+            />
+            <span>Отключить всех текущих педагогов класса</span>
+          </label>
+        </>
+      ) : (
+        `Класс ${cls.name}. Старый код перестанет работать.`
+      ),
       confirmLabel: 'Выпустить',
     });
-    if (ok) onReset(cls.id, kind);
+    if (ok) onReset(cls.id, kind, withTeachers && disconnect);
+  };
+
+  const confirmDisconnect = async (teacher: ManagedTeacher) => {
+    const ok = await confirm({
+      title: `Отключить педагога ${teacher.name}?`,
+      message: `Педагог потеряет доступ к классу ${cls.name}: ученики, проверка работ и задания станут недоступны. Вернуться он сможет только по коду педагога; если код мог попасть к посторонним, выпустите новый.`,
+      confirmLabel: 'Отключить',
+      danger: true,
+    });
+    if (ok) onDisconnect(cls.id, teacher.id);
   };
 
   const confirmDelete = async () => {
@@ -706,9 +845,30 @@ function ClassCard({
         onCopy={() => void copyText(cls.teacher_code, notify)}
         onReset={() => void confirmReset('teacher')}
       />
-      <p className="su-class__teachers">
-        {cls.teachers.length > 0 ? `Педагог: ${cls.teachers.join(', ')}` : 'Педагог пока не подключён'}
-      </p>
+      {cls.teachers.length === 0 ? (
+        <p className="su-class__teachers">Педагог пока не подключён</p>
+      ) : (
+        <ul className="su-teachers" aria-label={`Педагоги класса ${cls.name}`}>
+          {cls.teachers.map((teacher) => (
+            <li key={teacher.id} className="su-teachers__item">
+              <div className="su-teachers__text">
+                <strong>{teacher.name || 'Педагог'}</strong>
+                <span className="su-class__meta">
+                  {teacher.since ? `подключён ${formatShortDate(teacher.since)}` : 'дата подключения неизвестна'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="su-link su-link--danger"
+                disabled={busy}
+                onClick={() => void confirmDisconnect(teacher)}
+              >
+                Отключить
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {cls.members === 0 && (
         <button type="button" className="su-link su-link--danger" onClick={() => void confirmDelete()} disabled={busy}>
           Удалить класс
@@ -720,6 +880,7 @@ function ClassCard({
 }
 
 export function SchoolSetupScreen({
+  state,
   admin,
   busy,
   notify,
@@ -727,7 +888,10 @@ export function SchoolSetupScreen({
   onUpdateClass,
   onDeleteClass,
   onResetCode,
+  onDisconnectTeacher,
+  onDecideJoin,
   onSelectSchool,
+  onSetTimezone,
   onCreateSchool,
 }: {
   state: GameState;
@@ -737,8 +901,11 @@ export function SchoolSetupScreen({
   onAddClass: (schoolId: number, name: string) => ActionResult;
   onUpdateClass: (classId: number, patch: { name?: string; weekly_goal?: number }) => ActionResult;
   onDeleteClass: (classId: number) => Promise<boolean>;
-  onResetCode: (classId: number, kind: 'student' | 'teacher') => Promise<boolean>;
+  onResetCode: (classId: number, kind: 'student' | 'teacher', disconnectTeachers: boolean) => Promise<boolean>;
+  onDisconnectTeacher: (classId: number, teacherId: number) => Promise<boolean>;
+  onDecideJoin: (requestId: number, action: 'approve' | 'decline') => Promise<boolean>;
   onSelectSchool: (schoolId: number) => Promise<boolean>;
+  onSetTimezone: (schoolId: number, timezone: string) => Promise<boolean>;
   onCreateSchool: (payload: NewSchoolPayload) => ActionResult;
 }) {
   const school: ManagedSchool | undefined =
@@ -790,9 +957,45 @@ export function SchoolSetupScreen({
             {school.status === 'pending'
               ? 'Пока школа не подтверждена администратором платформы, ученики не видят её в списке, а коды не работают.'
               : 'Ученики и педагоги не могут присоединиться к этой школе.'}
+            {school.status === 'rejected' && school.reject_reason ? (
+              <>
+                {' '}
+                Причина: {school.reject_reason}
+              </>
+            ) : null}
           </span>
         </div>
       )}
+
+      <JoinRequestsList
+        requests={admin.join_requests.filter((r) => r.school_id === school.id)}
+        showClass
+        onDecide={onDecideJoin}
+      />
+
+      <section className="ob-card" aria-labelledby="su-tz-h">
+        <div>
+          <h2 className="su-h2" id="su-tz-h">Часовой пояс школы</h2>
+          <p className="ob-lead">
+            Сейчас: {state.timezones.find((t) => t.id === school.timezone)?.label ?? state.timezone_label}.
+            По поясу считаются «сегодня», недели и сроки заданий.
+          </p>
+        </div>
+        <div className="ob-field">
+          <label className="ob-label" htmlFor="su-tz-edit">Сменить пояс</label>
+          <select
+            id="su-tz-edit"
+            className="ob-select"
+            value={school.timezone}
+            disabled={busy}
+            onChange={(e) => void onSetTimezone(school.id, e.target.value)}
+          >
+            {state.timezones.map((tz) => (
+              <option key={tz.id} value={tz.id}>{tz.label}</option>
+            ))}
+          </select>
+        </div>
+      </section>
 
       <section className="ob-card" aria-labelledby="su-codes-h">
         <div>
@@ -808,7 +1011,8 @@ export function SchoolSetupScreen({
               cls={cls}
               busy={busy}
               notify={notify}
-              onReset={(id, kind) => void onResetCode(id, kind)}
+              onReset={(id, kind, disconnect) => void onResetCode(id, kind, disconnect)}
+              onDisconnect={(id, teacherId) => void onDisconnectTeacher(id, teacherId)}
               onUpdate={onUpdateClass}
               onDelete={(id) => void onDeleteClass(id)}
             />
@@ -850,6 +1054,7 @@ export function SchoolSetupScreen({
           {creating ? (
             <NewSchoolForm
               busy={busy}
+              timezones={state.timezones}
               onCancel={() => setCreating(false)}
               onSubmit={async (payload) => {
                 const problem = await onCreateSchool(payload);
@@ -864,59 +1069,6 @@ export function SchoolSetupScreen({
             </button>
           )}
         </section>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Подтверждение школ (администратор платформы)
-// ---------------------------------------------------------------------------
-
-export function AdminSchoolsScreen({
-  data,
-  busy,
-  onSetStatus,
-}: {
-  data: PlatformAdminData;
-  busy: boolean;
-  onSetStatus: (schoolId: number, status: 'active' | 'rejected') => Promise<boolean>;
-}) {
-  return (
-    <div className="su">
-      <header className="su-head">
-        <h1 className="su-title">Заявки школ</h1>
-        <p className="su-sub">
-          Режим регистрации: {data.approval_mode === 'manual' ? 'с подтверждением' : 'автоматический'}
-        </p>
-      </header>
-      {data.pending.length === 0 ? (
-        <div className="ob-notice" role="status">
-          <Icon name="info" size={16} />
-          <span>Новых заявок нет.</span>
-        </div>
-      ) : (
-        <ul className="su-classes-list">
-          {data.pending.map((item) => (
-            <li key={item.id} className="su-class">
-              <div className="su-class__head">
-                <h3 className="su-class__name">{item.name}</h3>
-                <span className="su-class__meta">
-                  {item.city} · классов: {item.classes}
-                  {item.created_by ? ` · ${item.created_by}` : ''}
-                </span>
-              </div>
-              <div className="su-actions">
-                <button type="button" className="ob-btn ob-btn--ghost" disabled={busy} onClick={() => void onSetStatus(item.id, 'rejected')}>
-                  Отклонить
-                </button>
-                <button type="button" className="ob-btn" disabled={busy} onClick={() => void onSetStatus(item.id, 'active')}>
-                  Подтвердить
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

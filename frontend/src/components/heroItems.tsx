@@ -30,7 +30,7 @@ export function R({
 }
 
 /** Спрайт из строк: символ -> цвет по палитре, '.' прозрачный. mirror отражает относительно x=16. */
-function Sprite({
+export function Sprite({
   x,
   y,
   rows,
@@ -74,7 +74,7 @@ function Sprite({
 }
 
 /** Половина симметричного спрайта: строки прижаты к центру (последний символ = x15). */
-function Half({ w, y, rows, pal }: { w: number; y: number; rows: string[]; pal: Pal }) {
+export function Half({ w, y, rows, pal }: { w: number; y: number; rows: string[]; pal: Pal }) {
   return <Sprite x={16 - w} y={y} rows={rows.map((r) => r.padStart(w, '.'))} pal={pal} mirror />;
 }
 
@@ -398,6 +398,21 @@ const HATS: Record<string, HatDef> = {
     rows: ['....gld.', '..gglgd.', '.gldgg..', '.gdg....', 'gdl.....', 'gg......'],
     pal: { g: '#65a30d', l: '#a3e635', d: '#3f6212' },
   },
+};
+
+/** Область, где видны волосы под головным убором: [x0, y0, x1, y1]. Нет записи - не режем. */
+export const HAT_HAIR_CLIP: Record<string, [number, number, number, number]> = {
+  hat_cap: [0, 2, 32, 42],
+  hat_beanie: [0, 2, 32, 42],
+  hat_party: [0, 4, 32, 42],
+  hat_chef: [0, 1, 32, 42],
+  hat_cowboy: [0, 2, 32, 42],
+  hat_wizard: [0, 6, 32, 42],
+  hat_pirate: [0, 3, 32, 42],
+  hat_astro: [7, 1, 25, 42],
+  headphones: [0, 2, 32, 42],
+  cap: [0, 3, 32, 42],
+  crown: [0, 2, 32, 42],
 };
 
 const GLASS = 'rgba(255, 255, 255, 0.16)';

@@ -4,6 +4,7 @@ import { AppHeader } from './components/AppHeader';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
 import { DesktopSidebar } from './components/DesktopSidebar';
+import { JoinRequestScreen } from './components/JoinRequestScreen';
 import { NameScreen } from './components/NameScreen';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SandboxBar } from './components/SandboxBar';
@@ -35,11 +36,13 @@ import { DirectorScreen } from './screens/DirectorScreen';
 import { HeroScreen } from './screens/HeroScreen';
 import { LeaderboardScreen } from './screens/LeaderboardScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
+import { AdminSchoolsScreen, AdminUsersScreen } from './screens/AdminScreens';
 import {
-  AdminSchoolsScreen,
   AudienceChoice,
+  DirectorNoSchoolScreen,
   SchoolRegisterScreen,
   SchoolSetupScreen,
+  TeacherNoClassScreen,
 } from './screens/SchoolSetupScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { TeacherChallengesScreen } from './screens/TeacherChallengesScreen';
@@ -48,6 +51,8 @@ import { TeacherReviewScreen } from './screens/TeacherReviewScreen';
 import { WardrobeScreen } from './screens/WardrobeScreen';
 import type {
   AvatarConfig,
+  BatchReviewResult,
+  DeletedSchoolSummary,
   GameState,
   LevelInfo,
   MutationResponse,
@@ -67,6 +72,18 @@ type Theme = 'light' | 'dark';
 const STUDENT_TABS: TabId[] = ['hero', 'challenges', 'leaderboard', 'wardrobe', 'profile'];
 const TEACHER_TABS: TabId[] = ['teacher-class', 'teacher-review', 'teacher-challenges', 'profile'];
 const DIRECTOR_TABS: TabId[] = ['director-overview', 'director-classes', 'director-setup', 'profile'];
+// Администратор платформы, не зарегистрированный ни учеником, ни сотрудником школы.
+const ADMIN_TABS: TabId[] = ['admin-schools', 'admin-users'];
+const ADMIN_ONLY_TABS: TabId[] = [...ADMIN_TABS, 'profile'];
+
+/** Админ платформы без класса и роли в школе: регистрация ученика ему не нужна. */
+function isAdminOnly(state: GameState): boolean {
+  return (
+    Boolean(state.platform_admin) &&
+    state.viewer.role === 'student' &&
+    (!state.viewer.onboarded || !state.viewer.class_id)
+  );
+}
 
 function tabFromPath(pathname: string): TabId | null {
   const route = pathname.replace(/\/+$/, '') || '/';
@@ -87,6 +104,7 @@ function tabFromPath(pathname: string): TabId | null {
     '/director/classes': 'director-classes',
     '/director/setup': 'director-setup',
     '/admin/schools': 'admin-schools',
+    '/admin/users': 'admin-users',
     '/director/profile': 'profile',
   };
   return routes[route] ?? null;
@@ -106,21 +124,43 @@ function pathForTab(tab: TabId, role: 'student' | 'teacher' | 'director' = 'stud
     'director-classes': '/director/classes',
     'director-setup': '/director/setup',
     'admin-schools': '/admin/schools',
-    'director-reports': '/director/reports',
+    'admin-users': '/admin/users',
   };
   return routes[tab] || '/';
 }
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => {
+  // Явный выбор пользователя хранится в localStorage; без него тема следует
+  // за системной (prefers-color-scheme) и меняется вместе с ней.
+  const [chosenTheme, setChosenTheme] = useState<Theme | null>(() => {
     try {
       const saved = localStorage.getItem('school-hero:theme');
       if (saved === 'light' || saved === 'dark') return saved;
     } catch {
-      // System default
+      // Storage unavailable
     }
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return null;
   });
+  const [systemTheme, setSystemTheme] = useState<Theme>(() =>
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  );
+  const theme: Theme = chosenTheme ?? systemTheme;
+  const setTheme = useCallback((next: Theme) => {
+    setChosenTheme(next);
+    try {
+      localStorage.setItem('school-hero:theme', next);
+    } catch {
+      // Storage unavailable: the choice lasts until reload
+    }
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return;
+    const onChange = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? 'dark' : 'light');
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
 
   const [state, setState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,8 +172,14 @@ export default function App() {
   const [challengeId, setChallengeId] = useState<number | null>(null);
   const [levelUp, setLevelUp] = useState<LevelUpData | null>(null);
   const [audience, setAudience] = useState<'student' | 'school' | null>(null);
+  // Ученик с заявкой решил войти по коду: показываем ввод кода вместо ожидания.
+  const [codeInstead, setCodeInstead] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // Сервер ответил 403 «Доступ к приложению ограничен»: администратор заблокировал пользователя.
+  const [blocked, setBlocked] = useState(false);
   const [sandboxReset, setSandboxReset] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [changingClass, setChangingClass] = useState(false);
   const [sandbox, setSandbox] = useState<{ users: SandboxUser[]; active: string } | null>(null);
 
   const lastStudentTab = useRef<TabId>('hero');
@@ -154,6 +200,10 @@ export default function App() {
 
   // 401 в боевом режиме: подпись MAX устарела. Повторные запросы не помогут.
   const markExpired = useCallback((error: unknown): boolean => {
+    if (error instanceof ApiError && error.blocked) {
+      setBlocked(true);
+      return true;
+    }
     if (error instanceof ApiError && error.status === 401 && activeSandboxClientId() === null) {
       setSessionExpired(true);
       return true;
@@ -162,6 +212,7 @@ export default function App() {
   }, []);
 
   const load = useCallback(async () => {
+    refreshRef.current.stopped = false;
     setLoading(true);
     setBootError('');
     setOutsideMax(false);
@@ -193,13 +244,56 @@ export default function App() {
     }
   }, [markExpired]);
 
+  // Тихое обновление данных: подменяет state, не трогая вкладку, шторки и прокрутку.
+  const refreshRef = useRef({ last: 0, failures: 0, nextAllowed: 0, inFlight: false, stopped: false });
+  const refresh = useCallback(
+    async (manual = false): Promise<void> => {
+      const r = refreshRef.current;
+      const now = Date.now();
+      if (r.inFlight || r.stopped) return;
+      if (!manual && (now - r.last < 10_000 || now < r.nextAllowed)) return;
+      r.inFlight = true;
+      r.last = now;
+      if (manual) setRefreshing(true);
+      try {
+        const data = await api.getState();
+        r.failures = 0;
+        r.nextAllowed = 0;
+        setState(data);
+      } catch (error) {
+        if (markExpired(error)) {
+          r.stopped = true;
+          return;
+        }
+        r.failures += 1;
+        r.nextAllowed = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(r.failures, 4));
+        if (manual) showToast('Не удалось обновить. Проверьте соединение.', 'error');
+      } finally {
+        r.inFlight = false;
+        if (manual) setRefreshing(false);
+      }
+    },
+    [markExpired, showToast],
+  );
+
+  const hasState = state !== null;
+  useEffect(() => {
+    if (!hasState) return;
+    const tick = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const timer = window.setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, [hasState, refresh]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem('school-hero:theme', theme);
-    } catch {
-      // Fallback
-    }
   }, [theme]);
 
   useEffect(() => {
@@ -218,9 +312,14 @@ export default function App() {
     if (!state) return;
     const role = state.viewer.role;
     const base = role === 'director' ? DIRECTOR_TABS : role === 'teacher' ? TEACHER_TABS : STUDENT_TABS;
-    const allowed: TabId[] = state.platform_admin ? [...base, 'admin-schools'] : base;
+    const allowed: TabId[] = isAdminOnly(state)
+      ? ADMIN_ONLY_TABS
+      : state.platform_admin
+      ? [...base, ...ADMIN_TABS]
+      : base;
     if (!tabFromPath(window.location.pathname) || !allowed.includes(tab)) {
-      const next = role === 'director' ? lastDirectorTab.current : role === 'teacher' ? lastTeacherTab.current : lastStudentTab.current;
+      const preferred = role === 'director' ? lastDirectorTab.current : role === 'teacher' ? lastTeacherTab.current : lastStudentTab.current;
+      const next = allowed.includes(preferred) ? preferred : allowed[0];
       setTab(next);
       window.history.replaceState({}, '', pathForTab(next, role));
     }
@@ -362,10 +461,30 @@ export default function App() {
     return true;
   };
 
+  /** Тост пакетной проверки по фактическим счётчикам ответа сервера. */
+  const batchToast = (result: BatchReviewResult | undefined, fallbackTotal: number) => {
+    const approved = result?.counts?.approved ?? result?.approved ?? 0;
+    const rejected = result?.counts?.rejected ?? result?.rejected ?? 0;
+    const failed = result?.counts?.failed ?? result?.failed ?? 0;
+    if (!result) {
+      showToast(`Обработано работ: ${fallbackTotal}`, 'info', 'check');
+      return;
+    }
+    const parts: string[] = [];
+    if (approved) parts.push(`принято ${approved}`);
+    if (rejected) parts.push(`отклонено ${rejected}`);
+    if (failed) parts.push(`не удалось ${failed}`);
+    let message = parts.length ? parts.join(', ') : 'Ничего не изменилось';
+    message = message.charAt(0).toUpperCase() + message.slice(1);
+    const reason = result.errors?.[0]?.detail;
+    if (failed && reason) message += `. Причина: ${reason}`;
+    showToast(message, failed ? (approved || rejected ? 'info' : 'error') : 'success', failed ? 'edit' : 'check');
+  };
+
   const handleBatchApprove = async (completionIds: number[]): Promise<boolean> => {
     const response = await mutate('batch-review', () => api.batchReview(completionIds, 'approve'));
     if (!response) return false;
-    showToast(`Принято работ: ${completionIds.length}`, 'success', 'check');
+    batchToast(response.result as BatchReviewResult | undefined, completionIds.length);
     return true;
   };
 
@@ -374,7 +493,7 @@ export default function App() {
       api.batchReview(completionIds, 'reject', reason),
     );
     if (!response) return false;
-    showToast(`Возвращено на доработку: ${completionIds.length}`, 'info', 'edit');
+    batchToast(response.result as BatchReviewResult | undefined, completionIds.length);
     return true;
   };
 
@@ -395,11 +514,26 @@ export default function App() {
     kind: string;
     deadline: string;
     subject?: string;
+    subject_other?: string;
     proof_type?: 'text' | 'link' | 'photo';
   }): Promise<boolean> => {
     const response = await mutate('create', () => api.createChallenge(payload));
     if (!response) return false;
     showToast('Задание опубликовано', 'success', 'flag');
+    return true;
+  };
+
+  const handleRemoveStudent = async (studentId: number, reason: string): Promise<boolean> => {
+    const response = await mutate(`remove:${studentId}`, () => api.removeStudent(studentId, reason));
+    if (!response) return false;
+    showToast('Ученик исключён', 'info', 'check');
+    return true;
+  };
+
+  const handleRestoreStudent = async (studentId: number): Promise<boolean> => {
+    const response = await mutate(`restore:${studentId}`, () => api.restoreStudent(studentId));
+    if (!response) return false;
+    showToast('Запрет снят', 'info', 'check');
     return true;
   };
 
@@ -461,7 +595,7 @@ export default function App() {
     lastName = '',
     classId?: number,
     inviteCode?: string,
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     setBusy('onboarding');
     try {
       const response = await api.onboarding(firstName, avatar, lastName, classId, inviteCode);
@@ -469,14 +603,10 @@ export default function App() {
       setTab('hero');
       window.history.replaceState({}, '', pathForTab('hero'));
       showToast('Профиль создан', 'success', 'check');
-      return true;
+      return null;
     } catch (error) {
-      if (markExpired(error)) return false;
-      showToast(
-        error instanceof Error ? error.message : 'Не удалось создать профиль.',
-        'error',
-      );
-      return false;
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось создать профиль.';
     } finally {
       setBusy(null);
     }
@@ -557,19 +687,23 @@ export default function App() {
     }
   };
 
-  const handleJoinClass = async (classId?: number, inviteCode?: string): Promise<boolean> => {
+  const handleJoinClass = async (classId?: number, inviteCode?: string): Promise<string | null> => {
     setBusy('join');
     try {
       const response = await api.joinSchool(inviteCode, classId);
       setState(response.state);
       setAudience(null);
-      goToRoleHome(response.state.viewer.role);
-      showToast('Класс выбран', 'success', 'check');
-      return true;
+      setCodeInstead(false);
+      if (response.status === 'requested') {
+        showToast('Заявка отправлена педагогу', 'success', 'send');
+      } else {
+        goToRoleHome(response.state.viewer.role);
+        showToast('Класс выбран', 'success', 'check');
+      }
+      return null;
     } catch (error) {
-      if (markExpired(error)) return false;
-      showToast(error instanceof Error ? error.message : 'Не удалось выбрать класс', 'error');
-      return false;
+      if (markExpired(error)) return null;
+      return error instanceof Error ? error.message : 'Не удалось выбрать класс';
     } finally {
       setBusy(null);
     }
@@ -615,12 +749,50 @@ export default function App() {
     return true;
   };
 
-  const handleResetCode = async (classId: number, kind: 'student' | 'teacher'): Promise<boolean> => {
-    const response = await mutate('school-code', () => api.resetCode(classId, kind));
+  const handleResetCode = async (
+    classId: number,
+    kind: 'student' | 'teacher',
+    disconnectTeachers = false,
+  ): Promise<boolean> => {
+    const response = await mutate('school-code', () => api.resetCode(classId, kind, disconnectTeachers));
     if (!response) return false;
-    showToast('Новый код выпущен', 'info', 'refresh');
+    showToast(
+      disconnectTeachers ? 'Новый код выпущен, педагоги отключены' : 'Новый код выпущен',
+      'info',
+      'refresh',
+    );
     return true;
   };
+
+  const handleDisconnectTeacher = async (classId: number, teacherId: number): Promise<boolean> => {
+    const response = await mutate(`teacher-off:${teacherId}`, () =>
+      api.disconnectTeacher(classId, teacherId),
+    );
+    if (!response) return false;
+    showToast('Педагог отключён от класса', 'info', 'check');
+    return true;
+  };
+
+  const handleDecideJoin = async (
+    requestId: number,
+    action: 'approve' | 'decline',
+  ): Promise<boolean> => {
+    const response = await mutate(`join:${requestId}`, () => api.decideJoinRequest(requestId, action));
+    if (!response) return false;
+    showToast(action === 'approve' ? 'Ученик принят в класс' : 'Заявка отклонена', 'info', 'check');
+    return true;
+  };
+
+  const handleCancelJoin = async (): Promise<boolean> => {
+    const response = await mutate('join-cancel', () => api.cancelJoinRequest());
+    if (!response) return false;
+    setCodeInstead(false);
+    showToast('Заявка отменена', 'info', 'check');
+    return true;
+  };
+
+  const handleSetTimezone = async (schoolId: number, timezone: string): Promise<boolean> =>
+    Boolean(await mutate('school-timezone', () => api.setSchoolTimezone(schoolId, timezone)));
 
   const handleSelectSchool = async (schoolId: number): Promise<boolean> =>
     Boolean(await mutate('school-select', () => api.selectSchool(schoolId)));
@@ -628,12 +800,44 @@ export default function App() {
   const handleSchoolStatus = async (
     schoolId: number,
     status: 'active' | 'rejected',
+    reason = '',
   ): Promise<boolean> => {
-    const response = await mutate('school-status', () => api.setSchoolStatus(schoolId, status));
+    const response = await mutate('school-status', () =>
+      api.setSchoolStatus(schoolId, status, reason),
+    );
     if (!response) return false;
-    showToast(status === 'active' ? 'Школа подтверждена' : 'Заявка отклонена', 'info', 'check');
+    showToast(status === 'active' ? 'Школа активна' : 'Школа отклонена', 'info', 'check');
     return true;
   };
+
+  const handleDeleteSchool = async (
+    schoolId: number,
+    confirmName: string,
+  ): Promise<DeletedSchoolSummary | null> => {
+    let deleted: DeletedSchoolSummary | null = null;
+    const response = await mutate('school-delete', async () => {
+      const result = await api.adminDeleteSchool(schoolId, confirmName);
+      deleted = result.deleted;
+      return result;
+    });
+    return response ? deleted : null;
+  };
+
+  if (blocked) {
+    return (
+      <div className="app">
+        <div className="gate">
+          <div className="gate__box ad-blocked">
+            <EmptyState
+              icon="lock"
+              title="Доступ ограничен"
+              text="Доступ к приложению ограничен администратором платформы. Если вы считаете, что это ошибка, обратитесь в администрацию своей школы."
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (sessionExpired) {
     return (
@@ -704,6 +908,9 @@ export default function App() {
         onDismissNotice={() => setSandboxReset(false)}
         onSwitch={(id) => switchSandbox(() => switchSandboxUser(id))}
         onNew={() => switchSandbox(() => addSandboxUser())}
+        isAdmin={state.viewer.is_platform_admin}
+        adminBusy={busy !== null}
+        onToggleAdmin={(enabled) => void mutate('sandbox-admin', () => api.setSandboxAdmin(enabled))}
       />
     ) : null;
 
@@ -721,10 +928,37 @@ export default function App() {
   }
 
   // Ученик без профиля или без класса проходит регистрацию. В демо класс есть всегда.
+  // Администратору платформы регистрация ученика не нужна: сразу заявки школ.
+  const adminOnly = isAdminOnly(state);
   const needsRegistration =
-    state.viewer.role === 'student' && (!state.viewer.onboarded || !state.viewer.class_id);
+    !adminOnly &&
+    state.viewer.role === 'student' &&
+    (!state.viewer.onboarded || !state.viewer.class_id);
+  const joinRequest = state.viewer.join_request;
+  if (needsRegistration && joinRequest?.status === 'pending' && !codeInstead) {
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          <JoinRequestScreen
+            request={joinRequest}
+            onCancel={handleCancelJoin}
+            onUseCode={() => setCodeInstead(true)}
+            onRefresh={() => void load()}
+          />
+        </div>
+      </div>
+    );
+  }
   if (needsRegistration) {
-    const chosen = state.mode === 'demo' ? 'student' : audience;
+    const removedFrom = state.viewer.removed_from;
+    const removedNotice = removedFrom
+      ? `Вы больше не состоите в классе ${removedFrom.class_name}${removedFrom.school_name ? ` (${removedFrom.school_name})` : ''}. В классы этой школы вернуться можно только после того, как педагог снимет запрет. Можно выбрать другую школу.`
+      : joinRequest?.status === 'declined'
+      ? `Заявку в класс ${joinRequest.class_name} (${joinRequest.school_name}) отклонили. Выберите другой класс или войдите по коду класса.`
+      : undefined;
+    // Исключённому ученику сразу показываем выбор класса.
+    const chosen = state.mode === 'demo' || removedFrom || codeInstead || joinRequest ? 'student' : audience;
     return (
       <div className="app">
         <div className="shell">
@@ -732,6 +966,7 @@ export default function App() {
           {chosen === 'school' ? (
             <SchoolRegisterScreen
               busy={busy !== null}
+              timezones={state.timezones}
               onBack={() => setAudience(null)}
               onCreate={handleCreateSchool}
               onJoinTeacher={handleJoinTeacher}
@@ -742,7 +977,15 @@ export default function App() {
               onComplete={handleOnboarding}
               joinOnly={state.viewer.onboarded}
               onJoin={handleJoinClass}
-              onBack={state.mode === 'demo' ? undefined : () => setAudience(null)}
+              notice={removedNotice}
+              initialMode={codeInstead ? 'code' : undefined}
+              onBack={
+                codeInstead
+                  ? () => setCodeInstead(false)
+                  : state.mode === 'demo' || removedFrom
+                  ? undefined
+                  : () => setAudience(null)
+              }
             />
           ) : (
             <AudienceChoice
@@ -750,6 +993,28 @@ export default function App() {
               onSchool={() => setAudience('school')}
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (changingClass && state.viewer.role === 'student' && !adminOnly) {
+    return (
+      <div className="app">
+        <div className="shell">
+          {sandboxBar}
+          <OnboardingScreen
+            state={state}
+            onComplete={handleOnboarding}
+            joinOnly
+            onJoin={async (classId, inviteCode) => {
+              const error = await handleJoinClass(classId, inviteCode);
+              if (!error) setChangingClass(false);
+              return error;
+            }}
+            notice="Рейтинг класса не переносится: в новом классе набранные в прежнем классе очки в его рейтинг не войдут."
+            onBack={() => setChangingClass(false)}
+          />
         </div>
       </div>
     );
@@ -777,7 +1042,13 @@ export default function App() {
   ];
 
   const teacherTabs: TabItem[] = [
-    { id: 'teacher-class', label: 'Класс', icon: 'users' },
+    {
+      id: 'teacher-class',
+      label: 'Класс',
+      icon: 'users',
+      // Заявки учеников, выбравших класс из списка.
+      badge: teacher?.join_requests?.length ?? 0,
+    },
     {
       id: 'teacher-review',
       label: 'Проверка',
@@ -791,16 +1062,24 @@ export default function App() {
   const directorTabs: TabItem[] = [
     { id: 'director-overview', label: 'Школа', icon: 'shield' },
     { id: 'director-classes', label: 'Классы', icon: 'users' },
-    { id: 'director-setup', label: 'Коды', icon: 'settings' },
+    {
+      id: 'director-setup',
+      label: 'Коды',
+      icon: 'settings',
+      badge: state.school_admin?.join_requests?.length ?? 0,
+    },
     { id: 'profile', label: 'Профиль', icon: 'user' },
   ];
 
-  const adminTab: TabItem = {
-    id: 'admin-schools',
-    label: 'Заявки',
-    icon: 'check',
-    badge: state.platform_admin?.pending.length ?? 0,
-  };
+  const adminTabs: TabItem[] = [
+    {
+      id: 'admin-schools',
+      label: 'Школы',
+      icon: 'shield',
+      badge: state.platform_admin?.pending.length ?? 0,
+    },
+    { id: 'admin-users', label: 'Люди', icon: 'users' },
+  ];
 
   const busyItem = busy?.startsWith('equip:')
     ? busy.slice(6)
@@ -813,7 +1092,11 @@ export default function App() {
     : null;
 
   const roleTabs = isDirector ? directorTabs : isTeacher ? teacherTabs : studentTabs;
-  const currentTabs = state.platform_admin ? [...roleTabs, adminTab] : roleTabs;
+  const currentTabs: TabItem[] = adminOnly
+    ? [...adminTabs, { id: 'profile', label: 'Профиль', icon: 'user' }]
+    : state.platform_admin
+    ? [...roleTabs, ...adminTabs]
+    : roleTabs;
 
   const isDemo = state.mode === 'demo';
   const roleOptions: { id: 'student' | 'teacher' | 'director'; label: string }[] = [
@@ -832,15 +1115,23 @@ export default function App() {
         theme={theme}
         onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         onProfile={() => navigate('profile')}
+        hideHero={adminOnly}
       />
 
       <div className="shell">
-        <AppHeader viewer={state.viewer} onProfile={() => navigate('profile')} demo={isDemo} />
+        <AppHeader
+          viewer={state.viewer}
+          onProfile={() => navigate('profile')}
+          demo={isDemo}
+          hideHero={adminOnly}
+          onRefresh={() => void refresh(true)}
+          refreshing={refreshing}
+        />
 
         <header className="desk-head">
           <div className="desk-head__crumbs">
             <span>
-              {isDirector ? 'Администрация' : isTeacher ? 'Педагог' : 'Ученик'}
+              {adminOnly ? 'Платформа' : isDirector ? 'Администрация' : isTeacher ? 'Педагог' : 'Ученик'}
             </span>
             <span aria-hidden="true">/</span>
             <strong>{currentTabs.find((t) => t.id === tab)?.label || 'Обзор'}</strong>
@@ -906,14 +1197,19 @@ export default function App() {
               onChangeName={handleSetName}
               theme={theme}
               onThemeChange={setTheme}
+              adminOnly={adminOnly}
+              onChangeClass={state.mode === 'demo' ? undefined : () => setChangingClass(true)}
             />
           ) : null}
 
-          {tab === 'teacher-class' && isTeacher ? (
+          {tab === 'teacher-class' && isTeacher && teacher ? (
             <TeacherClassScreen
               state={state}
               onReview={() => navigate('teacher-review')}
               onRewardStudent={handleRewardStudent}
+              onRemoveStudent={handleRemoveStudent}
+              onRestoreStudent={handleRestoreStudent}
+              onDecideJoin={handleDecideJoin}
             />
           ) : null}
 
@@ -939,7 +1235,11 @@ export default function App() {
           ) : null}
 
           {(tab === 'director-overview' || tab === 'director-classes') && isDirector && director ? (
-            <DirectorScreen state={state} director={director} />
+            <DirectorScreen
+              state={state}
+              director={director}
+              section={tab === 'director-classes' ? 'classes' : 'school'}
+            />
           ) : null}
 
           {tab === 'director-setup' && isDirector && state.school_admin ? (
@@ -952,33 +1252,33 @@ export default function App() {
               onUpdateClass={handleUpdateClass}
               onDeleteClass={handleDeleteClass}
               onResetCode={handleResetCode}
+              onDisconnectTeacher={handleDisconnectTeacher}
+              onDecideJoin={handleDecideJoin}
               onSelectSchool={handleSelectSchool}
+              onSetTimezone={handleSetTimezone}
               onCreateSchool={handleCreateSchool}
             />
           ) : null}
 
           {tab === 'admin-schools' && state.platform_admin ? (
             <AdminSchoolsScreen
-              data={state.platform_admin}
               busy={busy !== null}
+              notify={showToast}
               onSetStatus={handleSchoolStatus}
+              onDelete={handleDeleteSchool}
             />
           ) : null}
 
-          {isDirector && !director && (tab === 'director-overview' || tab === 'director-classes') ? (
-            <EmptyState
-              icon="shield"
-              title="Школа не подключена"
-              text="Аккаунт не привязан ни к одной школе. Зарегистрируйте школу или обратитесь к администратору платформы."
-            />
+          {tab === 'admin-users' && state.platform_admin ? (
+            <AdminUsersScreen notify={showToast} />
+          ) : null}
+
+          {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (
+            <DirectorNoSchoolScreen busy={busy !== null} timezones={state.timezones} onCreate={handleCreateSchool} />
           ) : null}
 
           {isTeacher && !teacher && tab.startsWith('teacher-') ? (
-            <EmptyState
-              icon="users"
-              title="Класс не назначен"
-              text="Аккаунт педагога не привязан к классу. Введите код педагога, который выдал директор."
-            />
+            <TeacherNoClassScreen busy={busy !== null} onJoinTeacher={handleJoinTeacher} />
           ) : null}
         </main>
 

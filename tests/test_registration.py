@@ -119,7 +119,7 @@ def test_director_creates_school_and_gets_codes(client):
 def test_student_joins_by_code_and_is_counted(client):
     create_school(client, 100)
     code = class_codes(client, 100)["8А"]["invite_code"]
-    checked = client.get(f"/api/school/check-code?code={code.lower()}", headers=hdr(1)).json()
+    checked = client.post("/api/school/check-code", json={"code": code.lower()}, headers=hdr(1)).json()
     assert checked["valid"] is True and checked["kind"] == "student"
     state = onboard_student(client, 1, code)
     assert state["viewer"]["class_name"] == "8А"
@@ -132,7 +132,7 @@ def test_cyrillic_lookalikes_in_code_are_accepted(client):
     create_school(client, 100)
     code = class_codes(client, 100)["8А"]["invite_code"]
     table = str.maketrans("ABEKMHPCTX", "АВЕКМНРСТХ")
-    r = client.get(f"/api/school/check-code?code={code.translate(table)}", headers=hdr(1))
+    r = client.post("/api/school/check-code", json={"code": code.translate(table)}, headers=hdr(1))
     assert r.json()["valid"] is True
 
 
@@ -216,8 +216,8 @@ def test_teacher_code_makes_teacher_of_that_class(client):
 
 def test_failed_code_attempts_are_limited(client):
     for _ in range(20):
-        client.get("/api/school/check-code?code=NOPE", headers=hdr(300))
-    r = client.get("/api/school/check-code?code=NOPE", headers=hdr(300))
+        client.post("/api/school/check-code", json={"code": "NOPE"}, headers=hdr(300))
+    r = client.post("/api/school/check-code", json={"code": "NOPE"}, headers=hdr(300))
     assert r.status_code == 429
 
 
@@ -271,7 +271,7 @@ def test_directors_cannot_touch_other_schools(client):
     )
     assert forged.status_code == 403
     student_id = client.get("/api/state", headers=hdr(1)).json()["viewer"]["id"]
-    assert client.post("/api/teacher/reward", json={"student_id": student_id, "amount": 50}, headers=h).status_code == 403
+    assert client.post("/api/teacher/reward", json={"student_id": student_id, "amount": 50, "reason": "Чужой ученик"}, headers=h).status_code == 403
     review_ids = client.get("/api/state", headers=hdr(100)).json()
     assert review_ids is not None
     r = client.post("/api/reviews/1", json={"action": "approve"}, headers=h)
@@ -312,7 +312,7 @@ def test_manual_approval_hides_school_until_confirmed(tmp_path):
         code = class_codes(c, 100)["8А"]["invite_code"]
 
         assert c.get("/api/school/catalog", headers=hdr(1)).json()["schools"] == []
-        assert c.get(f"/api/school/check-code?code={code}", headers=hdr(1)).json()["valid"] is False
+        assert c.post("/api/school/check-code", json={"code": code}, headers=hdr(1)).json()["valid"] is False
         class_id = class_codes(c, 100)["8А"]["id"]
         assert c.post("/api/school/join", json={"class_id": class_id}, headers=hdr(1)).status_code == 404
         # not visible in cross-school rankings either
@@ -329,7 +329,7 @@ def test_manual_approval_hides_school_until_confirmed(tmp_path):
         assert r.json()["state"]["platform_admin"]["pending"] == []
 
         assert len(c.get("/api/school/catalog", headers=hdr(1)).json()["schools"]) == 1
-        assert c.get(f"/api/school/check-code?code={code}", headers=hdr(1)).json()["valid"] is True
+        assert c.post("/api/school/check-code", json={"code": code}, headers=hdr(1)).json()["valid"] is True
     finally:
         c.close()
 

@@ -16,16 +16,17 @@
 - [Переход с systemd на Docker](#переход-с-systemd-на-docker)
 - [Что не запускается в Docker](#что-не-запускается-в-docker)
 - [Безопасность](#безопасность)
+- [Закрепление базовых образов](#закрепление-базовых-образов)
 - [Типичные проблемы](#типичные-проблемы)
 
 ## Что входит
 
 | Файл | Назначение |
 | --- | --- |
-| `Dockerfile` | Две стадии. `node:22-bookworm-slim` собирает фронтенд (`npm ci`, `npm run build`). `python:3.12-slim` ставит зависимости, копирует `app.py`, `backend/`, `tools/`, `landing/`, `catalog.example.json` и собранный `static/`. Запуск `python app.py` от пользователя `app` (uid 10001), порт 8000, том `/data`, `HEALTHCHECK` на `/api/health`. В образе заданы `APP_MODE=prod` и `CATALOG_FILE=/data/catalog.json`. |
+| `Dockerfile` | Две стадии. `node:22.14.0-bookworm-slim` собирает фронтенд (`npm ci`, `npm run build`). `python:3.12.10-slim-bookworm` ставит только runtime-зависимости из `requirements.txt` (pytest из `requirements-dev.txt` в образ не попадает), копирует `app.py`, `backend/`, `tools/`, `landing/`, `catalog.example.json` и собранный `static/`. Запуск `python app.py` с `umask 077` от пользователя `app` (uid 10001), порт 8000, том `/data`, `HEALTHCHECK` на `/api/health`. В образе заданы `APP_MODE=prod` и `CATALOG_FILE=/data/catalog.json`. |
 | `docker-compose.yml` | Сервисы `app` (боевой), `demo` (профиль `demo`), `caddy` (профиль `proxy`). |
-| `.dockerignore` | В образ не попадают `.env`, `data/`, `static/`, `tests/`, `docs/`, `deploy/`, `docker/`, `catalog.json`, `node_modules`. |
-| `docker/Caddyfile` | Конфиг Caddy: `{$APP_DOMAIN}` с `reverse_proxy app:8000`. |
+| `.dockerignore` | В образ не попадают `.env`, `data/`, `static/`, `tests/`, `docs/`, `deploy/`, `docker/`, `dist/`, `catalog.json`, `node_modules`, `requirements-dev.txt`, `tools/package.py`. |
+| `docker/Caddyfile` | Конфиг Caddy (`caddy:2.10.0-alpine`): `{$APP_DOMAIN}`, сжатие zstd/gzip, лимит тела запроса 6 МБ, заголовки HSTS, `X-Content-Type-Options`, `Referrer-Policy`, без `Server`, `reverse_proxy app:8000`. |
 | `deploy/deploy-docker.sh` | Скрипт для сервера: проверка `.env`, сборка, запуск, nginx и сертификат. |
 
 Сервисы:
@@ -126,6 +127,8 @@ docker compose --profile proxy up -d --build
 
 Caddy стартует после того, как `app` станет `healthy`. Сертификаты хранятся в томе `caddy_data`.
 
+Заголовки и лимит тела те же, что в nginx-шаблоне. Ограничения частоты запросов в стандартной сборке Caddy нет (нужен сторонний модуль `caddy-ratelimit`); если это важно, используйте вариант с nginx на хосте.
+
 ## Конфигурация
 
 Контейнер `app` читает `.env` (`env_file`), но значения из блока `environment` в `docker-compose.yml` важнее. Они зафиксированы и не меняются через `.env`:
@@ -152,10 +155,10 @@ docker compose up -d app
 
 База SQLite лежит в томе `school-hero_school_hero_data` по пути `/data/school_hero.db` (режим WAL, рядом файлы `-wal` и `-shm`). Школы можно создавать в приложении через регистрацию директора; каталог `catalog.json` необязателен.
 
-Положить каталог школ:
+Положить каталог школ (корневая ФС контейнера только для чтения, поэтому файл кладётся в том через вспомогательный контейнер):
 
 ```bash
-docker compose cp catalog.json app:/data/catalog.json
+docker run --rm -v school-hero_school_hero_data:/data -v "$PWD":/src:ro alpine sh -c "cp /src/catalog.json /data/catalog.json && chown 10001:10001 /data/catalog.json && chmod 600 /data/catalog.json"
 ```
 
 ```bash
@@ -164,7 +167,11 @@ docker compose restart app
 
 Каталог применяется при старте. Образец: `catalog.example.json`.
 
+Фото-подтверждения хранятся в `/data/uploads` (в том же томе, `DATA_DIR/uploads`). Лимит одного фото 5 МБ.
+
 ### Резервная копия
+
+Резервная копия должна включать и базу, и каталог `/data/uploads`; без него в работах пропадут фото.
 
 Копия через API SQLite корректна и при работающем приложении:
 
@@ -178,6 +185,12 @@ docker compose cp app:/data/backup.db ./backup-$(date +%F).db
 
 ```bash
 docker compose exec app rm /data/backup.db
+```
+
+Каталог фото копируется целиком:
+
+```bash
+docker compose cp app:/data/uploads ./uploads-$(date +%F)
 ```
 
 Храните копии вне сервера.
@@ -292,9 +305,31 @@ docker run --rm -v school-hero_school_hero_data:/data -v /var/lib/school-hero:/o
 
 - Порты `app` и `demo` опубликованы только на `127.0.0.1`. Наружу выходит только прокси (nginx или Caddy).
 - Контейнер работает от непривилегированного пользователя (uid 10001), с `no-new-privileges` и без Linux-capabilities (`cap_drop: ALL`).
+- Корневая ФС `app` и `demo` только для чтения (`read_only: true`). Писать можно в том `/data` (база, каталог) и в `tmpfs` `/tmp` (64 МБ, временные файлы SQLite). Байткод Python не пишется (`PYTHONDONTWRITEBYTECODE=1`). Если в будущем приложение начнёт писать в другой каталог (например, загрузки), его нужно разместить в `/data` или добавить отдельный том.
+- Ресурсы: `pids_limit: 128`, `mem_limit: 512m`. Приложение - один процесс uvicorn; при нехватке памяти контейнер будет перезапущен (`docker inspect` покажет `OOMKilled`).
+- Файлы базы в томе создаются с правами 600 (`umask 077`).
+- В образе нет `pytest` и прочих инструментов разработки: только `requirements.txt`.
 - `.env` не попадает в образ (`.dockerignore`) и передаётся только как переменные окружения; не коммитьте его.
 - Профиль `demo` принимает вход без подписи MAX. Не публикуйте его порт наружу и не запускайте на публичном сервере.
 - Токен бота в логи не пишется; для логов настроена ротация (`10m` × 3 файла).
+
+## Закрепление базовых образов
+
+Базовые образы указаны точными тегами: `node:22.14.0-bookworm-slim`, `python:3.12.10-slim-bookworm` (в `Dockerfile`), `caddy:2.10.0-alpine` (в `docker-compose.yml`). Тег можно перезаписать в реестре, поэтому для полной повторяемости закрепите образ ещё и по digest:
+
+```bash
+docker pull python:3.12.10-slim-bookworm
+docker inspect --format '{{index .RepoDigests 0}}' python:3.12.10-slim-bookworm
+# python@sha256:<64 hex>
+```
+
+и впишите его рядом с тегом (тег остаётся для читаемости, решает digest):
+
+```dockerfile
+FROM python:3.12.10-slim-bookworm@sha256:<64 hex> AS runtime
+```
+
+То же для `node` и `caddy` (`image: caddy:2.10.0-alpine@sha256:...`). Digest мультиархитектурного образа (index) подходит для всех платформ. Обновление: раз в месяц или по бюллетеням безопасности меняйте тег на свежий патч-релиз той же ветки (3.12.x, 22.x, 2.x), заново получайте digest, пересобирайте `docker compose build --pull` и проверяйте `/api/health`. Frontend требует Node `^20.19` или `>=22.12` (Vite).
 
 ## Типичные проблемы
 
@@ -304,6 +339,8 @@ docker run --rm -v school-hero_school_hero_data:/data -v /var/lib/school-hero:/o
 | Контейнер `unhealthy` или перезапускается | `docker compose logs app`. Частая причина: нет токена, либо `.env` испорчен. |
 | `port is already allocated` (8000) | Порт занят systemd-сервисом `school-hero` или другим процессом. |
 | `/portal` отдаёт 404 | Образ собран из старой версии без каталога `landing/`: пересоберите `docker compose build --no-cache app`. |
+| `Read-only file system` в логах `app` | Приложение пытается писать вне `/data` и `/tmp`. Временно уберите `read_only: true` в `docker-compose.override.yml` и сообщите разработчику, какой путь нужен |
+| `docker compose cp ... app:/data/...` падает с `container rootfs is marked read-only` | Корневая ФС только для чтения; копируйте в том через `docker run --rm -v school-hero_school_hero_data:/data ...` (см. «Данные») |
 | Ошибка доступа к `/data` | Том создан с другим владельцем: `docker run --rm -v school-hero_school_hero_data:/data alpine chown -R 10001:10001 /data`. |
 | Изменения в `.env` не применяются | Нужно пересоздать контейнер: `docker compose up -d app`. |
 | `https://app.example.org` отдаёт 502 | Контейнер не запущен или не `healthy`: `docker compose ps`. |

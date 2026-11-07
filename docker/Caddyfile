@@ -1,4 +1,20 @@
 {$APP_DOMAIN} {
-    encode zstd gzip
-    reverse_proxy app:8000
+	encode zstd gzip
+
+	# Под загрузку фото до 5 МБ (с запасом на multipart), как client_max_body_size в nginx.
+	request_body {
+		max_size 6MB
+	}
+
+	# Те же заголовки, что в deploy/nginx.conf.template. X-Frame-Options не
+	# ставим: веб-версия MAX может открывать мини-приложение во фрейме.
+	# -Server убирает заголовок Server (свой и uvicorn).
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy app:8000
 }

@@ -1,7 +1,13 @@
+import { setSchoolTimezone } from './game';
 import { getClientId, getInitData } from './max';
 import { activeSandboxClientId } from './sandbox';
 import type {
+  AdminPage,
+  AdminSchoolDetail,
+  AdminSchoolItem,
+  AdminUserItem,
   BatchReviewResult,
+  DeletedSchoolSummary,
   GameState,
   MutationResponse,
   NewSchoolPayload,
@@ -14,11 +20,14 @@ import type {
 
 export class ApiError extends Error {
   status: number;
+  /** Сервер заблокировал пользователя (403 + X-Access-Blocked). */
+  blocked: boolean;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, blocked = false) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.blocked = blocked;
   }
 }
 
@@ -49,6 +58,7 @@ const FIELD_MESSAGES: Record<string, string> = {
   invite_code: 'Проверьте код приглашения',
   reason: 'Причина слишком длинная',
   status: 'Неизвестный статус',
+  confirm_name: 'Название школы введено неверно',
   kind: 'Неизвестный тип',
 };
 
@@ -106,10 +116,65 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep generic error
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, response.headers.get('X-Access-Blocked') === '1');
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  // The state (own or inside a mutation answer) carries the school zone:
+  // "today" and deadlines on screen follow it, not the device clock.
+  const state = (data as { state?: { timezone?: unknown }; timezone?: unknown } | null) ?? {};
+  const zone = typeof state.timezone === 'string' ? state.timezone : state.state?.timezone;
+  if (typeof zone === 'string') setSchoolTimezone(zone);
+  return data;
+}
+
+/**
+ * Photo chosen in the challenge sheet, per challenge. submit() sends it as
+ * upload_id when the caller does not pass one explicitly.
+ */
+const stagedUploads = new Map<number, number>();
+
+export function stageUpload(challengeId: number, uploadId: number | null): void {
+  if (uploadId) stagedUploads.set(challengeId, uploadId);
+  else stagedUploads.delete(challengeId);
+}
+
+/** Photo proof: raw image bytes (no multipart); returns the upload id. */
+export async function uploadPhoto(blob: Blob): Promise<number> {
+  let response: Response;
+  try {
+    response = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': blob.type || 'image/jpeg' },
+      body: blob,
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw new ApiError('Нет связи с сервером. Проверь соединение и попробуй ещё раз.', 0);
+  }
+  if (!response.ok) {
+    let message = response.status === 413 ? 'Файл больше 5 МБ.' : statusFallback(response.status);
+    try {
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === 'string' && body.detail.trim()) message = body.detail;
+    } catch {
+      // keep fallback
+    }
+    throw new ApiError(message, response.status);
+  }
+  return ((await response.json()) as { id: number }).id;
+}
+
+/** Photo of a submission as a Blob (the file is behind authorization headers). */
+export async function getUploadBlob(id: number): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/uploads/${id}`, { headers: headers(), credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('Нет связи с сервером. Проверь соединение и попробуй ещё раз.', 0);
+  }
+  if (!response.ok) throw new ApiError(statusFallback(response.status), response.status);
+  return response.blob();
 }
 
 export const api = {
@@ -124,7 +189,11 @@ export const api = {
   },
 
   checkInviteCode(code: string): Promise<SchoolClassInfo> {
-    return request<SchoolClassInfo>(`/api/school/check-code?code=${encodeURIComponent(code)}`);
+    // POST: the code stays out of URLs and access logs.
+    return request<SchoolClassInfo>('/api/school/check-code', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
   },
 
   getSchoolCatalog(
@@ -140,9 +209,27 @@ export const api = {
     return request<SchoolCatalog>(`/api/school/catalog${suffix ? `?${suffix}` : ''}`);
   },
 
-  searchCities(q: string, limit = 10): Promise<{ cities: CitySuggestion[]; total: number }> {
+  searchCities(
+    q: string,
+    limit = 10,
+    scope: '' | 'all' = '',
+  ): Promise<{ cities: CitySuggestion[]; total: number }> {
     const query = new URLSearchParams({ q, limit: String(limit) });
+    if (scope) query.set('scope', scope);
     return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
+  },
+
+  removeStudent(studentId: number, reason = ''): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/teacher/students/${studentId}/remove`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  restoreStudent(studentId: number): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/teacher/students/${studentId}/restore`, {
+      method: 'POST',
+    });
   },
 
   setName(firstName: string, lastName: string): Promise<MutationResponse> {
@@ -180,10 +267,47 @@ export const api = {
     return request<MutationResponse>(`/api/school/classes/${classId}`, { method: 'DELETE' });
   },
 
-  resetCode(classId: number, kind: 'student' | 'teacher'): Promise<MutationResponse> {
+  resetCode(
+    classId: number,
+    kind: 'student' | 'teacher',
+    disconnectTeachers = false,
+  ): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/school/classes/${classId}/codes`, {
       method: 'POST',
-      body: JSON.stringify({ kind }),
+      body: JSON.stringify({ kind, disconnect_teachers: disconnectTeachers }),
+    });
+  },
+
+  disconnectTeacher(classId: number, teacherId: number): Promise<MutationResponse> {
+    return request<MutationResponse>(
+      `/api/school/classes/${classId}/teachers/${teacherId}/disconnect`,
+      { method: 'POST' },
+    );
+  },
+
+  cancelJoinRequest(): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/join-requests/cancel', { method: 'POST' });
+  },
+
+  decideJoinRequest(requestId: number, action: 'approve' | 'decline'): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/join-requests/${requestId}`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+  },
+
+  setSchoolTimezone(schoolId: number, timezone: string): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/school/${schoolId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ timezone }),
+    });
+  },
+
+  /** Только в песочнице: текущий тестовый пользователь становится администратором платформы. */
+  setSandboxAdmin(enabled: boolean): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/sandbox/admin', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     });
   },
 
@@ -191,15 +315,74 @@ export const api = {
     return request<MutationResponse>(`/api/school/${schoolId}/select`, { method: 'POST' });
   },
 
-  setSchoolStatus(schoolId: number, status: 'active' | 'rejected'): Promise<MutationResponse> {
+  setSchoolStatus(
+    schoolId: number,
+    status: 'active' | 'rejected',
+    reason = '',
+  ): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/admin/schools/${schoolId}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, reason }),
     });
   },
 
-  joinSchool(inviteCode?: string, classId?: number): Promise<MutationResponse> {
-    return request<MutationResponse>('/api/school/join', {
+  adminSchools(params: {
+    status?: string;
+    q?: string;
+    offset?: number;
+  }): Promise<AdminPage<AdminSchoolItem>> {
+    const query = new URLSearchParams();
+    if (params.status && params.status !== 'all') query.set('status', params.status);
+    if (params.q) query.set('q', params.q);
+    if (params.offset) query.set('offset', String(params.offset));
+    return request<AdminPage<AdminSchoolItem>>(`/api/admin/schools?${query.toString()}`);
+  },
+
+  adminSchoolDetail(schoolId: number): Promise<AdminSchoolDetail> {
+    return request<AdminSchoolDetail>(`/api/admin/schools/${schoolId}`);
+  },
+
+  adminDeleteSchool(
+    schoolId: number,
+    confirmName: string,
+  ): Promise<MutationResponse & { deleted: DeletedSchoolSummary }> {
+    return request<MutationResponse & { deleted: DeletedSchoolSummary }>(
+      `/api/admin/schools/${schoolId}/delete`,
+      { method: 'POST', body: JSON.stringify({ confirm_name: confirmName }) },
+    );
+  },
+
+  adminUsers(params: {
+    q?: string;
+    offset?: number;
+    blocked?: boolean;
+  }): Promise<AdminPage<AdminUserItem>> {
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (params.offset) query.set('offset', String(params.offset));
+    if (params.blocked) query.set('blocked', 'true');
+    return request<AdminPage<AdminUserItem>>(`/api/admin/users?${query.toString()}`);
+  },
+
+  adminBlockUser(userId: number, reason: string): Promise<{ user: AdminUserItem }> {
+    return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/block`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  adminUnblockUser(userId: number): Promise<{ user: AdminUserItem }> {
+    return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/unblock`, {
+      method: 'POST',
+    });
+  },
+
+  /** По коду вступает сразу (status: joined), из списка подаёт заявку (status: requested). */
+  joinSchool(
+    inviteCode?: string,
+    classId?: number,
+  ): Promise<MutationResponse & { status?: 'joined' | 'requested' }> {
+    return request<MutationResponse & { status?: 'joined' | 'requested' }>('/api/school/join', {
       method: 'POST',
       body: JSON.stringify({ invite_code: inviteCode, class_id: classId }),
     });
@@ -238,10 +421,23 @@ export const api = {
     });
   },
 
-  submit(challengeId: number, proof: string, proofUrl = ''): Promise<MutationResponse<SubmitResult>> {
+  submit(
+    challengeId: number,
+    proof: string,
+    proofUrl = '',
+    uploadId: number | null = null,
+  ): Promise<MutationResponse<SubmitResult>> {
+    const attached = uploadId ?? stagedUploads.get(challengeId) ?? null;
     return request<MutationResponse<SubmitResult>>(`/api/challenges/${challengeId}/submit`, {
       method: 'POST',
-      body: JSON.stringify({ proof, proof_url: proofUrl }),
+      body: JSON.stringify({
+        proof,
+        proof_url: proofUrl,
+        ...(attached ? { upload_id: attached } : {}),
+      }),
+    }).then((result) => {
+      stagedUploads.delete(challengeId);
+      return result;
     });
   },
 
@@ -253,6 +449,7 @@ export const api = {
     kind: string;
     deadline: string;
     subject?: string;
+    subject_other?: string;
     proof_type?: 'text' | 'link' | 'photo';
     class_id?: number;
   }): Promise<MutationResponse> {

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 
 import { AvatarFrame } from '../components/AvatarFrame';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { ProofPhoto } from '../components/ProofPhoto';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { Sheet } from '../components/Sheet';
 import { formatNumber, formatRelative, plural } from '../game';
@@ -493,6 +494,9 @@ export function TeacherReviewScreen({
             ) : (
               <p className="tc-muted">Текстового ответа нет.</p>
             )}
+            {detail.upload_id ? (
+              <ProofPhoto uploadId={detail.upload_id} alt={`Фото к работе: ${detail.title}`} />
+            ) : null}
             {detailUrl ? (
               <>
                 {detail.proof_type === 'photo' && !photoFailed ? (

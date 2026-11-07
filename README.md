@@ -37,7 +37,7 @@ docker compose --profile demo up -d --build demo
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # requirements.txt + pytest; на сервере ставится только requirements.txt
 
 cd frontend
 npm ci
@@ -69,6 +69,7 @@ python app.py                   # http://127.0.0.1:8000
 - [docs/bot.md](docs/bot.md) - бот MAX: приветствие и кнопка мини-приложения, webhook, настройка и проверка
 - [docs/api.md](docs/api.md) - справочник API
 - [docs/development.md](docs/development.md) - разработка, песочница, тесты, соглашения, пределы масштабирования
+- [docs/submission.md](docs/submission.md) - сдача работы: состав комплекта, сборка архива и образа (`python tools/package.py`), проверка за 5 минут, ограничения
 
 ## Структура
 
@@ -79,7 +80,7 @@ frontend/     React-интерфейс (сборка в static/)
 landing/      страница-портал (/portal)
 deploy/       deploy.sh, nginx, systemd
 docker/       Caddyfile
-tools/        list_max_users.py, run_sandbox.py
+tools/        list_max_users.py, run_sandbox.py, max_bot.py, package.py (комплект для сдачи)
 tests/        pytest
 docs/         документация
 ```

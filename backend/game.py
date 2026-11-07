@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
-from typing import Any
-
-MSK = timezone(timedelta(hours=3))
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from typing import Any, Union
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 RANKS: list[dict[str, Any]] = [
     {"level": 1, "title": "Новичок", "min_xp": 0, "next_xp": 100},
@@ -28,20 +27,35 @@ XP_VALUES = {
 }
 
 
+# The one list of subjects: the state sends it to teachers and directors for
+# the challenge form, and create_challenge accepts only these (or "Другое"
+# with the teacher's own text, see SUBJECT_OTHER).
 SUBJECTS = [
+    "Математика",
     "Алгебра",
     "Геометрия",
     "Информатика",
     "Физика",
+    "Химия",
+    "Биология",
+    "География",
     "Русский язык",
     "Литература",
     "История",
-    "Биология",
-    "Химия",
+    "Обществознание",
     "Английский язык",
+    "Иностранный язык",
+    "Музыка",
+    "Изобразительное искусство",
+    "Технология",
     "Физкультура",
+    "ОБЗР",
     "Общешкольное",
 ]
+# Default subject of a challenge created without one.
+SUBJECT_NONE = "Общее"
+# Form option for a subject outside the list: the teacher types its name.
+SUBJECT_OTHER = "Другое"
 
 PROOF_TYPES = {
     "text": "Текстовый ответ",
@@ -369,6 +383,29 @@ COSMETICS: list[Cosmetic] = [
 
 COSMETIC_BY_ID = {item.id: item for item in COSMETICS}
 
+NOTHING_IDS = {"none", "hat_none", "face_none"}
+
+
+def cosmetic_sort_key(item: Cosmetic) -> tuple:
+    """Единый порядок предметов в гардеробе и онбординге (источник истины).
+
+    «Ничего» первым; затем уровень открытия по возрастанию; внутри уровня
+    бесплатные, затем по цене; затем редкость (обычное -> легендарное); затем
+    название по алфавиту (ё как е). Статус владения не влияет, поэтому порядок
+    не меняется после покупки или надевания.
+    """
+    return (
+        item.id not in NOTHING_IDS,
+        item.unlock_level,
+        item.price,
+        RARITIES.index(item.rarity_id),
+        item.name.casefold().replace("ё", "е"),
+        item.id,
+    )
+
+
+SORTED_COSMETICS = sorted(COSMETICS, key=cosmetic_sort_key)
+
 # Предметы, которые в старых аватарах хранились в слоте accessory (id не менялись).
 LEGACY_ACCESSORY_SLOT = {
     "glasses": "face",
@@ -428,7 +465,7 @@ ACHIEVEMENTS = [
     {
         "id": "team",
         "title": "Командный дух",
-        "description": "Войди с классом в топ-3 города",
+        "description": "Войди с классом в топ-3 общего рейтинга классов",
         "icon": "users",
         "target": 3,
     },
@@ -436,17 +473,86 @@ ACHIEVEMENTS = [
 
 
 # ---------------------------------------------------------------------------
-# Dates. Moscow has no DST, so a fixed UTC+3 offset is enough and avoids the
-# missing IANA tz database on Windows.
+# Dates. Everything "local" (today, week bounds, deadlines "до 23:59", streak
+# days, daily limits) is computed in the time zone of the user's school; the
+# database keeps UTC. A user without a school uses Moscow. Russian zones have
+# no DST since 2014, so when the IANA database is missing (Windows without the
+# tzdata package) a fixed offset from TIMEZONES is used instead.
 # ---------------------------------------------------------------------------
 
+DEFAULT_TIMEZONE = "Europe/Moscow"
 
-def now_local() -> datetime:
-    return datetime.now(MSK)
+# IANA name, label, UTC offset in hours ("МСК+N" in the UI).
+TIMEZONES: list[tuple[str, str, int]] = [
+    ("Europe/Kaliningrad", "Калининград", 2),
+    ("Europe/Moscow", "Москва", 3),
+    ("Europe/Samara", "Самара", 4),
+    ("Asia/Yekaterinburg", "Екатеринбург", 5),
+    ("Asia/Omsk", "Омск", 6),
+    ("Asia/Novosibirsk", "Новосибирск, Красноярск", 7),
+    ("Asia/Irkutsk", "Иркутск", 8),
+    ("Asia/Yakutsk", "Якутск", 9),
+    ("Asia/Vladivostok", "Владивосток", 10),
+    ("Asia/Magadan", "Магадан", 11),
+    ("Asia/Kamchatka", "Камчатка", 12),
+]
+TIMEZONE_NAMES = {name for name, _, _ in TIMEZONES}
+_TZ_OFFSETS = {name: hours for name, _, hours in TIMEZONES}
+_TZ_CACHE: dict[str, tzinfo] = {}
+
+TzLike = Union[str, tzinfo, None]
 
 
-def today_local() -> date:
-    return now_local().date()
+def msk_label(hours: int) -> str:
+    diff = hours - 3
+    if diff == 0:
+        return "МСК"
+    return f"МСК{'+' if diff > 0 else '−'}{abs(diff)}"
+
+
+def timezone_options() -> list[dict[str, Any]]:
+    """Choices for the school time zone (registration and school settings)."""
+    return [
+        {
+            "id": name,
+            "label": f"{label} ({msk_label(hours)})",
+            "city": label,
+            "msk": msk_label(hours),
+            "utc_offset": hours,
+        }
+        for name, label, hours in TIMEZONES
+    ]
+
+
+def normalize_timezone(value: Any) -> str:
+    """A supported zone name, or the default for anything else."""
+    name = str(value or "").strip()
+    return name if name in TIMEZONE_NAMES else DEFAULT_TIMEZONE
+
+
+def get_tz(value: TzLike = None) -> tzinfo:
+    if isinstance(value, tzinfo):
+        return value
+    name = normalize_timezone(value)
+    cached = _TZ_CACHE.get(name)
+    if cached is None:
+        try:
+            cached = ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            cached = timezone(timedelta(hours=_TZ_OFFSETS[name]), name)
+        _TZ_CACHE[name] = cached
+    return cached
+
+
+MSK = get_tz(DEFAULT_TIMEZONE)
+
+
+def now_local(tz: TzLike = None) -> datetime:
+    return datetime.now(get_tz(tz))
+
+
+def today_local(tz: TzLike = None) -> date:
+    return now_local(tz).date()
 
 
 def utc_sql(dt: datetime | None = None) -> str:
@@ -473,24 +579,36 @@ def iso_utc(value: str | None) -> str | None:
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if parsed else None
 
 
-def local_day(value: str | None) -> str | None:
+def local_day(value: str | None, tz: TzLike = None) -> str | None:
     parsed = parse_sql_utc(value)
-    return parsed.astimezone(MSK).date().isoformat() if parsed else None
+    return parsed.astimezone(get_tz(tz)).date().isoformat() if parsed else None
 
 
-def week_start_local() -> datetime:
-    today = today_local()
+def day_start_local(tz: TzLike = None) -> datetime:
+    zone = get_tz(tz)
+    return datetime.combine(today_local(zone), time.min, tzinfo=zone)
+
+
+def day_start_utc_sql(tz: TzLike = None) -> str:
+    """Start of today in the zone as a UTC SQL timestamp (daily limits)."""
+    return utc_sql(day_start_local(tz))
+
+
+def week_start_local(tz: TzLike = None) -> datetime:
+    zone = get_tz(tz)
+    today = today_local(zone)
     monday = today - timedelta(days=today.weekday())
-    return datetime.combine(monday, time.min, tzinfo=MSK)
+    return datetime.combine(monday, time.min, tzinfo=zone)
 
 
-def week_start_utc_sql() -> str:
-    return utc_sql(week_start_local())
+def week_start_utc_sql(tz: TzLike = None) -> str:
+    return utc_sql(week_start_local(tz))
 
 
-def week_days() -> list[dict[str, str]]:
-    start = week_start_local().date()
-    today = today_local()
+def week_days(tz: TzLike = None) -> list[dict[str, Any]]:
+    zone = get_tz(tz)
+    start = week_start_local(zone).date()
+    today = today_local(zone)
     labels = WEEKDAYS_SHORT
     result = []
     for offset in range(7):
@@ -506,27 +624,33 @@ def week_days() -> list[dict[str, str]]:
     return result
 
 
-def deadline_today() -> str:
-    return datetime.combine(today_local(), time(23, 59), tzinfo=MSK).isoformat()
+def deadline_on(day: date, tz: TzLike = None) -> str:
+    """23:59 of a calendar day in the zone, ISO with the zone offset."""
+    return datetime.combine(day, time(23, 59), tzinfo=get_tz(tz)).isoformat()
 
 
-def deadline_week() -> str:
-    start = week_start_local().date()
-    sunday = start + timedelta(days=6)
-    return datetime.combine(sunday, time(23, 59), tzinfo=MSK).isoformat()
+def deadline_today(tz: TzLike = None) -> str:
+    return deadline_on(today_local(tz), tz)
 
 
-def deadline_in(days: int) -> str:
-    day = today_local() + timedelta(days=days)
-    return datetime.combine(day, time(23, 59), tzinfo=MSK).isoformat()
+def deadline_week(tz: TzLike = None) -> str:
+    return deadline_on(week_start_local(tz).date() + timedelta(days=6), tz)
 
 
-def is_past(iso_value: str) -> bool:
+def deadline_in(days: int, tz: TzLike = None) -> str:
+    return deadline_on(today_local(tz) + timedelta(days=days), tz)
+
+
+def is_past(iso_value: str, tz: TzLike = None) -> bool:
+    """True once the moment has passed. Values with an offset are absolute;
+    a value without one is read in ``tz`` (default Moscow)."""
     try:
-        moment = datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(str(iso_value).replace("Z", "+00:00"))
     except ValueError:
         return True
-    return moment < now_local()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=get_tz(tz))
+    return moment < datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -652,9 +776,33 @@ def validate_avatar_patch(
 # ---------------------------------------------------------------------------
 
 
-def mark_active(conn, user_id: int) -> int:
-    """Mark today as an active day and update the streak. Returns new streak."""
-    today = today_local()
+def current_streak(
+    streak: int | None, last_active_date: str | None, tz: TzLike = None
+) -> int:
+    """Streak as of today: a stored streak is broken once a whole day is missed.
+
+    The stored value only changes when the student acts, so it is
+    recomputed on every read from ``last_active_date``.
+    """
+    if not streak or not last_active_date:
+        return 0
+    try:
+        last = date.fromisoformat(str(last_active_date))
+    except ValueError:
+        return 0
+    if (today_local(tz) - last).days > 1:
+        return 0
+    return int(streak)
+
+
+def mark_active(conn, user_id: int, tz: TzLike = None) -> int:
+    """Mark today as an active day of the student and update the streak.
+
+    Called only for the student's own actions (sending work), never when a
+    teacher approves work or awards XP. ``tz`` is the student's school zone.
+    Returns the new streak.
+    """
+    today = today_local(tz)
     today_iso = today.isoformat()
     row = conn.execute(
         "SELECT streak, last_active_date FROM users WHERE id = ?", (user_id,)
@@ -664,7 +812,7 @@ def mark_active(conn, user_id: int) -> int:
     last_active = row["last_active_date"]
     streak = int(row["streak"] or 0)
     if last_active == today_iso:
-        pass
+        streak = max(1, streak)
     elif last_active == (today - timedelta(days=1)).isoformat():
         streak += 1
     else:
@@ -681,6 +829,9 @@ def mark_active(conn, user_id: int) -> int:
     return streak
 
 
+_CURRENT_CLASS = object()
+
+
 def award_xp(
     conn,
     user_id: int,
@@ -688,18 +839,36 @@ def award_xp(
     reason: str,
     category: str | None = None,
     created_at: str | None = None,
+    *,
+    class_id: Any = _CURRENT_CLASS,
+    source: str | None = None,
+    awarded_by: int | None = None,
 ) -> dict[str, Any]:
-    """Add XP and an event. Returns level-up details for the recipient."""
-    row = conn.execute("SELECT xp FROM users WHERE id = ?", (user_id,)).fetchone()
+    """Add XP and an event. Returns level-up details for the recipient.
+
+    The increment is a single ``xp = xp + ?`` statement and the level bonus
+    is computed from the value it produced, so concurrent awards never lose
+    an update. ``class_id`` is the class the XP counts for (default: the
+    student's current class).
+    """
+    amount = int(amount)
+    rows = conn.execute(
+        "UPDATE users SET xp = xp + ? WHERE id = ? RETURNING xp, class_id",
+        (amount, user_id),
+    ).fetchall()
+    row = rows[0] if rows else None
     if row is None:
         raise ValueError("Ученик не найден")
-    old_xp = int(row["xp"])
-    new_xp = old_xp + int(amount)
-    conn.execute("UPDATE users SET xp = ? WHERE id = ?", (new_xp, user_id))
+    new_xp = int(row["xp"])
+    old_xp = new_xp - amount
+    event_class = row["class_id"] if class_id is _CURRENT_CLASS else class_id
     conn.execute(
-        "INSERT INTO xp_events (user_id, amount, reason, category, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user_id, int(amount), reason, category, created_at or utc_sql()),
+        "INSERT INTO xp_events (user_id, amount, reason, category, created_at, "
+        "class_id, source, awarded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id, amount, reason, category, created_at or utc_sql(),
+            event_class, source, awarded_by,
+        ),
     )
     levels = xp_between_levels(old_xp, new_xp)
     bonus = earned_sparks_for_levels(levels)
@@ -717,9 +886,11 @@ def award_xp(
     }
 
 
-def streak_days(conn, user_id: int, limit: int = 7) -> list[dict[str, Any]]:
-    """Return the last seven days, ending today, with activity flags."""
-    today = today_local()
+def streak_days(
+    conn, user_id: int, limit: int = 7, tz: TzLike = None
+) -> list[dict[str, Any]]:
+    """Return the last seven days, ending today in ``tz``, with activity flags."""
+    today = today_local(tz)
     dates = [today - timedelta(days=offset) for offset in range(limit - 1, -1, -1)]
     placeholders = ",".join("?" for _ in dates)
     rows = conn.execute(
@@ -751,7 +922,9 @@ def cosmetic_state(item: Cosmetic, level: int, owned: list[str], avatar: dict[st
     return data
 
 
-def achievements_for(conn, user, class_rank: int | None) -> list[dict[str, Any]]:
+def achievements_for(
+    conn, user, class_rank: int | None, tz: TzLike = None
+) -> list[dict[str, Any]]:
     approved = conn.execute(
         "SELECT c.category, COUNT(*) AS n "
         "FROM completions cp JOIN challenges c ON c.id = cp.challenge_id "
@@ -762,7 +935,7 @@ def achievements_for(conn, user, class_rank: int | None) -> list[dict[str, Any]]
     counts = {row["category"]: int(row["n"]) for row in approved}
     total = sum(counts.values())
     level = level_info(int(user["xp"]))["level"]
-    streak = int(user["streak"] or 0)
+    streak = current_streak(user["streak"], user["last_active_date"], tz)
 
     progress = {
         "first_step": total,

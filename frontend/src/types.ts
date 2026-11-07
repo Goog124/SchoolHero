@@ -46,6 +46,10 @@ export type Viewer = {
   is_platform_admin: boolean;
   /** Педагог или директор без имени: сначала спрашиваем имя. */
   needs_name: boolean;
+  /** Класс, из которого ученика исключили (пока он без класса). */
+  removed_from?: { class_name: string; school_name: string } | null;
+  /** Своя заявка на вступление: ждёт решения или последняя отклонённая. */
+  join_request?: JoinRequestInfo | null;
   xp: number;
   level: LevelInfo;
   sparks: number;
@@ -234,6 +238,8 @@ export type ReviewItem = {
   proof_url?: string;
   subject?: string;
   proof_type?: 'text' | 'link' | 'photo';
+  /** Фото работы (GET /api/uploads/{id}) или null. */
+  upload_id?: number | null;
   created_at: string;
   is_self: boolean;
 };
@@ -301,7 +307,16 @@ export type TeacherChartItem = {
   xp: number;
 };
 
+export type ExcludedStudent = {
+  id: number;
+  name: string;
+  reason: string;
+  removed_at: string;
+};
+
 export type TeacherData = {
+  excluded?: ExcludedStudent[];
+  join_requests?: ClassJoinRequest[];
   invite_code?: string;
   pending: ReviewItem[];
   students: TeacherStudent[];
@@ -339,7 +354,14 @@ export type ManagedClass = {
   members: number;
   invite_code: string;
   teacher_code: string;
-  teachers: string[];
+  teachers: ManagedTeacher[];
+};
+
+export type ManagedTeacher = {
+  id: number;
+  name: string;
+  /** Когда педагог подключился к классу (ISO), если известно. */
+  since: string | null;
 };
 
 export type ManagedSchool = {
@@ -347,10 +369,39 @@ export type ManagedSchool = {
   name: string;
   city: string;
   status: 'active' | 'pending' | 'rejected';
+  /** IANA-пояс школы. */
+  timezone: string;
+  /** Причина отклонения, которую указал администратор платформы. */
+  reject_reason?: string;
   classes: ManagedClass[];
 };
 
+export type JoinRequestInfo = {
+  id: number;
+  status: 'pending' | 'approved' | 'declined' | 'cancelled';
+  class_id: number;
+  class_name: string;
+  school_name: string;
+  created_at: string;
+  decided_at: string | null;
+};
+
+/** Заявка ученика в класс (для педагога и директора). */
+export type ClassJoinRequest = {
+  id: number;
+  class_id: number;
+  class_name: string;
+  school_id: number;
+  student_id: number;
+  name: string;
+  avatar: AvatarConfig;
+  created_at: string;
+  /** Класс, в котором ученик состоит сейчас (переход), или пусто. */
+  current_class: string;
+};
+
 export type SchoolAdminData = {
+  join_requests: ClassJoinRequest[];
   active_school_id: number | null;
   max_schools: number;
   schools_left: number;
@@ -368,12 +419,30 @@ export type PlatformAdminData = {
     created_by: string;
     created_at: string;
   }>;
+  rejected?: Array<{
+    id: number;
+    name: string;
+    city: string;
+    classes: number;
+    created_by: string;
+    created_at: string;
+  }>;
 };
 
 export type NewSchoolPayload = {
   name: string;
   city: string;
+  /** IANA-пояс из state.timezones; пусто: Москва. */
+  timezone?: string;
   classes: Array<{ name: string; weekly_goal?: number }>;
+};
+
+export type TimezoneOption = {
+  id: string;
+  label: string;
+  city: string;
+  msk: string;
+  utc_offset: number;
 };
 
 export type GradeEntry = {
@@ -403,7 +472,7 @@ export type DirectorKPI = {
   total_weekly_xp: number;
   completed_fop_tasks?: number;
   social_activity_index?: number;
-  leading_grade?: string;
+  leading_grade?: string | null;
 };
 
 export type DirectorData = {
@@ -420,7 +489,12 @@ export type DirectorData = {
 export type GameState = {
   mode: 'demo' | 'prod' | 'sandbox';
   verified: boolean;
+  /** Сегодняшняя дата школы (YYYY-MM-DD). */
   today: string;
+  /** IANA-пояс школы пользователя. */
+  timezone: string;
+  timezone_label: string;
+  timezones: TimezoneOption[];
   viewer: Viewer;
   class_sprint: ClassSprint;
   challenges: Challenge[];
@@ -435,6 +509,8 @@ export type GameState = {
   platform_admin?: PlatformAdminData | null;
   demo_teacher_available: boolean;
   demo_director_available?: boolean;
+  /** Предметы для формы задания (педагогу и директору); сервер проверяет по этому же списку. */
+  subjects?: string[];
 };
 
 export type ReviewResult = {
@@ -449,7 +525,10 @@ export type BatchReviewResult = {
   action: string;
   approved: number;
   rejected: number;
+  failed?: number;
   total: number;
+  counts?: { approved: number; rejected: number; failed: number };
+  errors?: { id: number; detail: string; status: number }[];
 };
 
 export type SubmitResult = {
@@ -475,4 +554,79 @@ export type TabId =
   | 'director-classes'
   | 'director-setup'
   | 'admin-schools'
-  | 'director-reports';
+  | 'admin-users';
+
+export type SchoolStatus = 'pending' | 'active' | 'rejected';
+
+export type AdminSummary = {
+  schools: Record<SchoolStatus | 'total', number>;
+  users: { student: number; teacher: number; director: number; total: number };
+  active_students_week: number;
+  pending_works: number;
+  blocked_users: number;
+};
+
+export type AdminSchoolItem = {
+  id: number;
+  name: string;
+  city: string;
+  timezone: string;
+  status: SchoolStatus;
+  created_at: string;
+  director: string;
+  classes: number;
+  students: number;
+  teachers: number;
+  active_week: number;
+  reject_reason: string;
+};
+
+export type AdminPage<T> = {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+  summary: AdminSummary;
+};
+
+export type AdminSchoolDetail = {
+  school: AdminSchoolItem;
+  classes: Array<{
+    id: number;
+    name: string;
+    students: number;
+    teachers: number;
+    teacher_names: string[];
+  }>;
+};
+
+export type AdminUserItem = {
+  id: number;
+  name: string;
+  role: 'student' | 'teacher' | 'director';
+  external_id: string;
+  school: string;
+  class_name: string;
+  created_at: string;
+  last_active: string;
+  blocked: boolean;
+  blocked_at: string;
+  blocked_reason: string;
+  is_admin: boolean;
+  is_self: boolean;
+};
+
+export type DeletedSchoolSummary = {
+  classes: number;
+  challenges: number;
+  completions: number;
+  uploads: number;
+  students: number;
+  teachers: number;
+  directors: number;
+  xp_events: number;
+  join_requests: number;
+  exclusions: number;
+  files_removed: number;
+};

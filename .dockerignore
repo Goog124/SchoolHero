@@ -19,3 +19,6 @@ docker
 *.log
 .github
 catalog.json
+requirements-dev.txt
+tools/package.py
+dist

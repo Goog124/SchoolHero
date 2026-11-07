@@ -21,12 +21,13 @@ type FormState = {
   category: ChallengeCategory;
   subject: string;
   xp: string;
-  kind: ChallengeKind;
+  subjectOther: string;
+  term: Term;
   deadline: string;
   proof_type: ProofType;
 };
 
-type FormErrors = Partial<Record<'title' | 'xp' | 'deadline' | 'description', string>>;
+type FormErrors = Partial<Record<'title' | 'xp' | 'deadline' | 'description' | 'subject', string>>;
 
 const initialForm = (): FormState => ({
   title: '',
@@ -34,23 +35,14 @@ const initialForm = (): FormState => ({
   category: 'homework',
   subject: '',
   xp: '50',
-  kind: 'weekly',
+  subjectOther: '',
+  term: 'week',
   deadline: daysFromNow(3),
   proof_type: 'text',
 });
 
-const SUBJECTS = [
-  'Математика',
-  'Физика',
-  'Русский язык',
-  'Литература',
-  'Информатика',
-  'Химия',
-  'Биология',
-  'История',
-  'Обществознание',
-  'Иностранный язык',
-];
+// Значение списка предметов для темы вне списка: сервер ждёт текст в subject_other.
+const SUBJECT_OTHER = 'Другое';
 
 const CATEGORIES: { id: ChallengeCategory; label: string }[] = [
   { id: 'homework', label: 'Учебное задание' },
@@ -61,10 +53,13 @@ const CATEGORIES: { id: ChallengeCategory; label: string }[] = [
   { id: 'event', label: 'Школьное событие' },
 ];
 
-const KINDS: { id: ChallengeKind; label: string }[] = [
-  { id: 'daily', label: 'Ежедневное' },
-  { id: 'weekly', label: 'Недельное' },
-  { id: 'event', label: 'Событие' },
+type Term = 'today' | 'week' | 'date';
+
+// «Срок» вместо периодичности: kind сохраняется как раньше, дедлайн без даты подставляет сервер.
+const TERMS: { id: Term; label: string; kind: ChallengeKind }[] = [
+  { id: 'today', label: 'Сегодня', kind: 'daily' },
+  { id: 'week', label: 'До конца недели', kind: 'weekly' },
+  { id: 'date', label: 'Своя дата', kind: 'event' },
 ];
 
 const PROOF_TYPES: { id: ProofType; label: string }[] = [
@@ -87,6 +82,7 @@ type TeacherChallengesScreenProps = {
     kind: string;
     deadline: string;
     subject?: string;
+    subject_other?: string;
     proof_type?: ProofType;
   }) => Promise<boolean>;
   onArchive: (challengeId: number) => Promise<boolean>;
@@ -130,7 +126,13 @@ export function TeacherChallengesScreen({
     if (!Number.isInteger(xp) || xp < XP_MIN || xp > XP_MAX) {
       next.xp = `Награда: целое число от ${XP_MIN} до ${XP_MAX}.`;
     }
-    if (!form.deadline) {
+    if (form.subject === SUBJECT_OTHER) {
+      const other = form.subjectOther.trim();
+      if (other.length < 2 || other.length > 40) next.subject = 'Название предмета: от 2 до 40 символов.';
+    }
+    if (form.term !== 'date') {
+      // Срок подставит сервер.
+    } else if (!form.deadline) {
       next.deadline = 'Укажите срок сдачи.';
     } else if (form.deadline < daysFromNow(0)) {
       next.deadline = 'Срок сдачи не может быть в прошлом.';
@@ -148,9 +150,10 @@ export function TeacherChallengesScreen({
       description: form.description.trim(),
       category: form.category,
       xp: Number(form.xp),
-      kind: form.kind,
-      deadline: form.deadline,
-      subject: form.subject.trim() || undefined,
+      kind: TERMS.find((t) => t.id === form.term)?.kind ?? 'weekly',
+      deadline: form.term === 'date' ? form.deadline : '',
+      subject: form.subject || undefined,
+      subject_other: form.subject === SUBJECT_OTHER ? form.subjectOther.trim() : undefined,
       proof_type: form.proof_type,
     });
     if (ok) {
@@ -229,13 +232,16 @@ export function TeacherChallengesScreen({
                     <td className="tc-cell--main">
                       <strong>{c.title}</strong>
                       <div className="tc-faint">
-                        {[c.subject, c.category_label, c.kind_label].filter(Boolean).join(' · ')}
+                        {[c.subject, c.category_label].filter(Boolean).join(' · ')}
                       </div>
                       {c.description ? (
                         <div className="tc-muted tc-clamp">{c.description}</div>
                       ) : null}
                     </td>
-                    <td data-label="Срок">{c.deadline ? formatDeadline(c.deadline) : 'Без срока'}</td>
+                    <td data-label="Срок">
+                      {c.kind_label ? <strong>{c.kind_label}</strong> : null}
+                      <div className="tc-faint">{c.deadline ? formatDeadline(c.deadline) : 'Без срока'}</div>
+                    </td>
                     <td data-label="Награда" className="tc-r tc-num">
                       {c.xp} XP
                     </td>
@@ -334,20 +340,39 @@ export function TeacherChallengesScreen({
               <label className="tc-label" htmlFor={fieldId('subject')}>
                 Предмет <small>(необязательно)</small>
               </label>
-              <input
+              <select
                 id={fieldId('subject')}
-                className="tc-input"
-                type="text"
-                list={fieldId('subjects')}
+                className="tc-select"
                 value={form.subject}
-                maxLength={40}
                 onChange={(e) => update('subject', e.target.value)}
-              />
-              <datalist id={fieldId('subjects')}>
-                {SUBJECTS.map((s) => (
-                  <option key={s} value={s} />
+              >
+                <option value="">Без предмета</option>
+                {(state.subjects ?? []).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
-              </datalist>
+                <option value={SUBJECT_OTHER}>{SUBJECT_OTHER}</option>
+              </select>
+              {form.subject === SUBJECT_OTHER ? (
+                <>
+                  <input
+                    className="tc-input"
+                    type="text"
+                    aria-label="Название предмета"
+                    placeholder="Название предмета"
+                    value={form.subjectOther}
+                    maxLength={40}
+                    onChange={(e) => update('subjectOther', e.target.value)}
+                    aria-invalid={Boolean(errors.subject)}
+                  />
+                  {errors.subject ? (
+                    <p className="tc-error" role="alert">
+                      {errors.subject}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
             </div>
             <div className="tc-field">
               <label className="tc-label" htmlFor={fieldId('category')}>
@@ -370,18 +395,18 @@ export function TeacherChallengesScreen({
 
           <div className="tc-form__row">
             <div className="tc-field">
-              <label className="tc-label" htmlFor={fieldId('kind')}>
-                Периодичность
+              <label className="tc-label" htmlFor={fieldId('term')}>
+                Срок
               </label>
               <select
-                id={fieldId('kind')}
+                id={fieldId('term')}
                 className="tc-select"
-                value={form.kind}
-                onChange={(e) => update('kind', e.target.value as ChallengeKind)}
+                value={form.term}
+                onChange={(e) => update('term', e.target.value as Term)}
               >
-                {KINDS.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {k.label}
+                {TERMS.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
                   </option>
                 ))}
               </select>
@@ -429,6 +454,7 @@ export function TeacherChallengesScreen({
                 </p>
               ) : null}
             </div>
+{form.term === 'date' ? (
             <div className="tc-field">
               <label className="tc-label" htmlFor={fieldId('deadline')}>
                 Срок сдачи
@@ -449,6 +475,7 @@ export function TeacherChallengesScreen({
                 </p>
               ) : null}
             </div>
+) : null}
           </div>
 
           <div className="tc-field">

@@ -49,17 +49,54 @@ export function formatSparks(value: number): string {
   return `${formatNumber(value)} ${plural(value, 'искра', 'искры', 'искр')}`;
 }
 
+/** Часовой пояс школы (state.timezone); пока не известен, берётся пояс устройства. */
+let schoolTimeZone: string | undefined;
+
+export function setSchoolTimezone(zone: string | null | undefined): void {
+  if (!zone) return;
+  try {
+    new Intl.DateTimeFormat('ru-RU', { timeZone: zone });
+    schoolTimeZone = zone;
+  } catch {
+    // Неизвестный пояс: остаётся прежний.
+  }
+}
+
+export function getSchoolTimezone(): string | undefined {
+  return schoolTimeZone;
+}
+
+/** Календарный день момента в поясе школы. */
+function dayParts(date: Date): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: schoolTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const pick = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return { y: pick('year'), m: pick('month'), d: pick('day') };
+}
+
+function sameCalendarDay(a: Date, b: Date): boolean {
+  const x = dayParts(a);
+  const y = dayParts(b);
+  return x.y === y.y && x.m === y.m && x.d === y.d;
+}
+
 export function formatShortDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('ru-RU', {
     day: 'numeric',
     month: 'short',
+    timeZone: schoolTimeZone,
   }).format(date);
 }
 
 export function formatLongDate(date = new Date()): string {
   return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: schoolTimeZone,
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -70,19 +107,12 @@ export function formatDeadline(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const isTomorrow =
-    date.getFullYear() === tomorrow.getFullYear() &&
-    date.getMonth() === tomorrow.getMonth() &&
-    date.getDate() === tomorrow.getDate();
+  const sameDay = sameCalendarDay(date, now);
+  const isTomorrow = sameCalendarDay(date, new Date(now.getTime() + 24 * 3600 * 1000));
   const time = new Intl.DateTimeFormat('ru-RU', {
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: schoolTimeZone,
   }).format(date);
   if (sameDay) return `сегодня до ${time}`;
   if (isTomorrow) return `завтра до ${time}`;
@@ -146,12 +176,7 @@ export function nextUnlockLevel(cosmetics: Cosmetic[], level: number): number | 
 export function isToday(iso: string): boolean {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return false;
-  const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
+  return sameCalendarDay(date, new Date());
 }
 
 export function toDateInput(date: Date | string): string {
@@ -163,8 +188,9 @@ export function toDateInput(date: Date | string): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Дата YYYY-MM-DD: сегодня по часам школы плюс N дней. */
 export function daysFromNow(days: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return toDateInput(date);
+  const { y, m, d } = dayParts(new Date());
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().slice(0, 10);
 }

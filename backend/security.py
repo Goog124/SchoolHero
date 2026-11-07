@@ -18,6 +18,7 @@ from .config import Settings
 
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+HASH_RE = re.compile(r"[0-9a-f]{64}")
 DEMO_CLIENT_ID = "demo-viewer"
 # Name given to a user MAX did not name; staff are asked for a real one.
 DEFAULT_FIRST_NAME = "Герой"
@@ -59,6 +60,10 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int) -> dict[str
         raise AuthError("Некорректная подпись MAX")
 
     received_hash = hashes[0].lower()
+    # A SHA-256 hex digest; anything else (incl. non-ASCII) is just a bad
+    # signature, never a server error in compare_digest.
+    if not HASH_RE.fullmatch(received_hash):
+        raise AuthError("Некорректная подпись MAX")
     data_check_string = "\n".join(
         sorted(f"{key}={value}" for key, value in pairs if key != "hash")
     )
@@ -69,7 +74,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int) -> dict[str
         secret_key, data_check_string.encode("utf-8"), hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(computed_hash, received_hash):
+    if not hmac.compare_digest(computed_hash.encode("ascii"), received_hash.encode("ascii")):
         raise AuthError("Подпись MAX не совпадает")
 
     values = dict(pairs)

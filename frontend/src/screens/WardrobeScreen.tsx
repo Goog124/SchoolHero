@@ -147,19 +147,18 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
   const { viewer, cosmetics } = state;
 
   const zone = ZONES.find((z) => z.id === zoneId) ?? ZONES[0];
-  const items = useMemo(() => {
-    const isNone = (c: Cosmetic) => c.id === 'none' || c.id.endsWith('_none');
-    // «Ничего» всегда первым, остальное в порядке каталога.
-    return cosmetics
-      .filter((c) => c.type === zone.id)
-      .sort((a, b) => Number(isNone(b)) - Number(isNone(a)));
-  }, [cosmetics, zone.id]);
+  // Порядок задаёт сервер (cosmetic_sort_key в backend/game.py), фильтр его сохраняет.
+  const items = useMemo(() => cosmetics.filter((c) => c.type === zone.id), [cosmetics, zone.id]);
   const equippedId =
     viewer.avatar[zone.avatarKey] ?? (zone.id === 'hat' ? 'hat_none' : zone.id === 'face' ? 'face_none' : '');
   const selected = items.find((c) => c.id === selectedId) ?? null;
   const preview: AvatarConfig = selected
     ? { ...viewer.avatar, [zone.avatarKey]: selected.id }
     : viewer.avatar;
+  // На вкладках волос головной убор временно снимаем, чтобы была видна причёска.
+  const hairZone = zone.id === 'hair' || zone.id === 'hair_color';
+  const hatHidden = hairZone && (viewer.avatar.hat ?? 'hat_none') !== 'hat_none';
+  const sceneAvatar: AvatarConfig = hairZone ? { ...preview, hat: 'hat_none' } : preview;
 
   useLayoutEffect(() => {
     const el = sceneRef.current;
@@ -239,7 +238,7 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
             <div className="wd-world" style={camera ? camera.world : undefined}>
               <div className="wd-hop" key={hop}>
                 <AvatarFrame
-                  avatar={preview}
+                  avatar={sceneAvatar}
                   size={camera ? camera.side : 240}
                   level={zone.id === 'frame' ? viewer.level.level : undefined}
                   decorative
@@ -250,6 +249,7 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
               <span>Искры</span>
               <strong>{formatSparks(viewer.sparks)}</strong>
             </div>
+            {hatHidden ? <p className="wd-note">Шапка скрыта на время примерки</p> : null}
           </div>
 
           <div className="wd-tryon" data-active={trying ? 'true' : 'false'}>
@@ -328,7 +328,9 @@ export function WardrobeScreen({ state, onEquip, onBuy, busyItem }: WardrobeScre
               <div className="wd-items">
                 {items.map((item) => {
                   const status = statusOf(item);
-                  const thumbAvatar = { ...viewer.avatar, [zone.avatarKey]: item.id };
+                  const thumbAvatar = hairZone
+                    ? { ...viewer.avatar, hat: 'hat_none', face: 'face_none', [zone.avatarKey]: item.id }
+                    : { ...viewer.avatar, [zone.avatarKey]: item.id };
                   return (
                     <button
                       key={item.id}

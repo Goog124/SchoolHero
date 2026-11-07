@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { ClassJoinRequest } from '../types';
 import { useConfirm } from './ConfirmDialog';
+import { InfoButton } from './InfoButton';
+import { JoinRequestsInfo } from './infoTexts';
 import { formatShortDate } from './PrintReport';
 import '../styles/onboarding.css';
 import '../styles/setup.css';
@@ -45,7 +47,13 @@ export function JoinRequestsList({
     <section className="su-req" aria-labelledby="su-req-h">
       <div className="su-req__head">
         <h2 className="su-h2" id="su-req-h">
-          {title}
+          {title.includes(' ') ? `${title.slice(0, title.lastIndexOf(' '))} ` : ''}
+          <span className="info-nw">
+            {title.includes(' ') ? title.slice(title.lastIndexOf(' ') + 1) : title}
+            <InfoButton title="Заявки на вступление">
+              <JoinRequestsInfo />
+            </InfoButton>
+          </span>
         </h2>
         <span className="su-req__count">{requests.length}</span>
       </div>

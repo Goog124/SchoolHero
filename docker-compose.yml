@@ -21,7 +21,10 @@ services:
       # Значения здесь важнее env_file: .env не может переключить боевой
       # контейнер в demo или sandbox.
       APP_MODE: prod
-      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Задайте MAX_BOT_TOKEN в .env}
+      # MAX_BOT_TOKEN берётся из .env (env_file). Без токена приложение в prod
+      # не стартует и пишет причину в лог. Обязательную подстановку ${...:?} здесь
+      # не используем: compose проверяет её для всего файла, и тогда даже профиль
+      # demo не запускался бы без токена.
       CATALOG_FILE: /data/catalog.json
       HOST: 0.0.0.0
       PORT: "8000"

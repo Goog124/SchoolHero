@@ -278,10 +278,9 @@ def school_catalog(
 def school_cities(
     q: str = "",
     limit: Annotated[int, Query(ge=-1000, le=1000)] = 10,
-    scope: Annotated[str, Query(max_length=10)] = "",
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
-    return search_cities(ctx.conn, q, limit, scope)
+    return search_cities(ctx.conn, q, limit)
 
 
 class SandboxAdminBody(BaseModel):

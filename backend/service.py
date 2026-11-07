@@ -1348,42 +1348,14 @@ def _natural_key(name: str) -> tuple[int, str]:
 
 
 def search_cities(
-    conn, query: str = "", limit: int = 10, scope: str = ""
+    conn, query: str = "", limit: int = 10
 ) -> dict[str, Any]:
-    """Cities for suggestions while typing.
+    """Cities with active schools (what a pupil may pick) for suggestions.
 
-    By default only cities with active schools (what a pupil may pick).
-    ``scope="all"`` (director registering a school) adds the built-in
-    directory of Russian cities. Substring match ignoring case and "ё";
-    cities starting with the text come first.
+    Substring match ignoring case; cities starting with the text come first.
     """
-    from .cities import directory, fold, search_directory
-
     needle = query.strip().casefold()[:60]
     limit = max(1, min(int(limit), 20))
-    if scope == "all":
-        counts = {
-            fold(r["city"]): (r["city"], int(r["n"]))
-            for r in conn.execute(
-                "SELECT city, COUNT(*) AS n FROM schools WHERE status = 'active' GROUP BY city"
-            )
-        }
-        key = fold(needle)
-        names = search_directory(needle, len(directory()))
-        shown = {fold(n) for n in names}
-        extra = [
-            name
-            for k, (name, _) in counts.items()
-            if k not in shown and (not key or key in k)
-        ]
-        names = names + extra
-        names.sort(key=lambda n: (0 if (not key or fold(n).startswith(key)) else 1))
-        return {
-            "cities": [
-                {"name": n, "schools": counts.get(fold(n), ("", 0))[1]} for n in names[:limit]
-            ],
-            "total": len(names),
-        }
     rows = conn.execute(
         """
         SELECT city, COUNT(*) AS n FROM schools

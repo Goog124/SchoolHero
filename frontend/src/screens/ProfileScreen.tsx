@@ -4,6 +4,8 @@ import { NameForm } from '../components/NameScreen';
 import { useConfirm } from '../components/ConfirmDialog';
 import { Sheet } from '../components/Sheet';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { AchievementsInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatNumber, formatXp } from '../game';
 import { tapHaptic } from '../max';
@@ -201,7 +203,12 @@ export function ProfileScreen({
 
           <section className="pf-card" aria-labelledby="pf-ach-h">
             <div className="pf-level__row">
-              <h2 className="pf-h" id="pf-ach-h">Достижения</h2>
+              <h2 className="pf-h" id="pf-ach-h">
+                Достижения
+                <InfoButton title="Достижения">
+                  <AchievementsInfo />
+                </InfoButton>
+              </h2>
               {achievements.length > 0 && (
                 <span className="pf-muted">
                   {unlocked} из {achievements.length}

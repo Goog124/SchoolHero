@@ -3,6 +3,8 @@ import { stageUpload, uploadPhoto } from '../api';
 import '../styles/student.css';
 import { STATUS_META, formatDeadline, formatNumber, formatRelative } from '../game';
 import type { Challenge, ChallengeCategory } from '../types';
+import { InfoButton } from './InfoButton';
+import { PhotoProofInfo } from './infoTexts';
 import { Sheet } from './Sheet';
 
 const PROOF_HINTS: Record<ChallengeCategory, string[]> = {
@@ -247,7 +249,12 @@ export function ChallengeSheet({ challenge, onClose, onSubmit, busy }: Challenge
 
             {needsPhoto ? (
               <div>
-                <span className="st-label">Фото работы</span>
+                <span className="st-label">
+                  Фото работы
+                  <InfoButton title="Фото работы">
+                    <PhotoProofInfo />
+                  </InfoButton>
+                </span>
                 <input
                   ref={fileRef}
                   type="file"

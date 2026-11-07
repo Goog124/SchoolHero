@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import '../styles/student.css';
 import { ChallengeCard } from '../components/ChallengeCard';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { TaskStatusInfo } from '../components/infoTexts';
 import { formatNumber } from '../game';
 import { tapHaptic } from '../max';
 import type { Challenge, GameState } from '../types';
@@ -82,7 +84,12 @@ export function ChallengesScreen({ state, onOpenChallenge }: ChallengesScreenPro
   return (
     <div className="st-page">
       <header className="st-head">
-        <h1>Задания</h1>
+        <h1>
+          Задания
+          <InfoButton title="Статусы заданий">
+            <TaskStatusInfo />
+          </InfoButton>
+        </h1>
         <p>Выполните задание и отправьте результат учителю. После проверки начисляются XP.</p>
       </header>
 

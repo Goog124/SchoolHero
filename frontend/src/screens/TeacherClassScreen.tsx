@@ -2,6 +2,8 @@ import { useId, useMemo, useState } from 'react';
 import { AvatarFrame } from '../components/AvatarFrame';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { InfoButton } from '../components/InfoButton';
+import { ClassCodeInfo, ExcludeInfo, ManualRewardInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { useConfirm } from '../components/ConfirmDialog';
 import { JoinRequestsList } from '../components/JoinRequestsList';
@@ -314,7 +316,13 @@ export function TeacherClassScreen({
         <div className="tc-invite">
           <div className="tc-invite__text">
             <h2 className="tc-h2" id={`${uid}-invite`}>
-              Код приглашения
+              Код{' '}
+              <span className="info-nw">
+                приглашения
+                <InfoButton title="Код приглашения">
+                  <ClassCodeInfo />
+                </InfoButton>
+              </span>
             </h2>
             <p className="tc-muted" style={{ margin: 0 }}>
               {inviteCode
@@ -620,7 +628,13 @@ export function TeacherClassScreen({
                 aria-labelledby={`${uid}-reward`}
               >
                 <h3 className="tc-h2" id={`${uid}-reward`}>
-                  Начислить баллы вручную
+                  Начислить баллы{' '}
+                  <span className="info-nw">
+                    вручную
+                    <InfoButton title="Ручное начисление">
+                      <ManualRewardInfo />
+                    </InfoButton>
+                  </span>
                 </h3>
                 <div className="tc-field">
                   <label className="tc-label" htmlFor={`${uid}-amount`}>
@@ -701,7 +715,13 @@ export function TeacherClassScreen({
             {onRemoveStudent && !selected.is_viewer ? (
               <section className="tc-form tc-remove" aria-labelledby={`${uid}-remove`}>
                 <h3 className="tc-h2" id={`${uid}-remove`}>
-                  Исключить из класса
+                  Исключить из{' '}
+                  <span className="info-nw">
+                    класса
+                    <InfoButton title="Исключение и возврат">
+                      <ExcludeInfo />
+                    </InfoButton>
+                  </span>
                 </h3>
                 <p className="tc-muted" style={{ margin: 0 }}>
                   Для случайных и посторонних учеников. XP и достижения сохраняются.

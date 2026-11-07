@@ -1,6 +1,8 @@
 import { AvatarFrame } from './AvatarFrame';
 import { BrandLogo } from './BrandLogo';
 import { Icon } from './Icon';
+import { InfoButton } from './InfoButton';
+import { SparksInfo } from './infoTexts';
 import { formatNumber } from '../game';
 import type { Viewer } from '../types';
 
@@ -40,6 +42,11 @@ export function AppHeader({
             <Icon name="spark" size={14} filled />
             {formatNumber(viewer.sparks)}
           </span>
+        ) : null}
+        {isStudent ? (
+          <InfoButton title="Искры" className="info-btn--bar">
+            <SparksInfo />
+          </InfoButton>
         ) : null}
         {isStudent ? (
           <button

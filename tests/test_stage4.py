@@ -1,8 +1,7 @@
-"""City directory, school time zone patch, sandbox admin switch."""
+"""School time zone patch, sandbox admin switch."""
 
 from __future__ import annotations
 
-from backend import cities
 from test_registration import (  # noqa: F401
     client,
     create_school,
@@ -19,48 +18,19 @@ def names(res):
     return [c["name"] for c in res.json()["cities"]]
 
 
-def test_directory_loaded_and_clean():
-    all_names = cities.directory()
-    assert len(all_names) > 400 and len(set(all_names)) == len(all_names)
-    assert {"Москва", "Тула", "Владивосток", "Орёл"} <= set(all_names)
-
-
-def test_scope_all_suggests_directory(client):
-    r = client.get("/api/school/cities", params={"q": "тул", "scope": "all"}, headers=hdr(10))
-    assert r.status_code == 200
-    got = names(r)
-    assert got[0] == "Тула" and len(got) <= 10
-    # yo equals ye, case ignored; prefix matches come first
-    assert "Орёл" in names(
-        client.get("/api/school/cities", params={"q": "ОРЕЛ", "scope": "all"}, headers=hdr(10))
-    )
-    got = names(client.get("/api/school/cities", params={"q": "ново", "scope": "all"}, headers=hdr(10)))
-    assert len(got) == 10 and all(n.casefold().startswith("ново") for n in got)
-    got = names(client.get("/api/school/cities", params={"q": "ск", "limit": 5, "scope": "all"}, headers=hdr(10)))
-    assert len(got) == 5
-
-
 def test_pupils_see_only_cities_with_active_schools(client):
     assert names(client.get("/api/school/cities", params={"q": "тул"}, headers=hdr(11))) == []
-    assert names(client.get("/api/school/cities", params={"q": "тул", "scope": "all"}, headers=hdr(11))) [:1] == ["Тула"]
-    assert create_school(client, 12, city="тула").status_code == 200
+    assert create_school(client, 12, city="Тула").status_code == 200
     # pending/active: a registered city is shown to pupils only once its school is active
     shown = names(client.get("/api/school/cities", params={"q": "тул"}, headers=hdr(11)))
     assert shown in ([], ["Тула"])
+    # the old directory scope is gone: the parameter is ignored
+    assert names(client.get("/api/school/cities", params={"q": "моск", "scope": "all"}, headers=hdr(11))) == []
 
 
-def test_city_normalized_to_directory_spelling(client):
-    assert create_school(client, 12, name="Лицей 1", city="орёл").status_code == 200
-    assert create_school(client, 13, name="Лицей 2", city="ОРЕЛ").status_code in (200, 400, 409)
-    state = client.get("/api/state", headers=hdr(12)).json()
-    assert state["viewer"]["city"] == "Орёл"
-
-
-def test_custom_city_kept_as_typed(client):
+def test_city_kept_as_typed(client):
     assert create_school(client, 14, name="Школа села", city="Малиновка").status_code == 200
     assert client.get("/api/state", headers=hdr(14)).json()["viewer"]["city"] == "Малиновка"
-    res = client.get("/api/school/cities", params={"q": "малин", "scope": "all"}, headers=hdr(15))
-    assert names(res) == ["Малиновка"]
 
 
 def test_director_changes_school_timezone(client):

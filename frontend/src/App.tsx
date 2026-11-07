@@ -966,7 +966,6 @@ export default function App() {
           {chosen === 'school' ? (
             <SchoolRegisterScreen
               busy={busy !== null}
-              timezones={state.timezones}
               onBack={() => setAudience(null)}
               onCreate={handleCreateSchool}
               onJoinTeacher={handleJoinTeacher}
@@ -1274,7 +1273,7 @@ export default function App() {
           ) : null}
 
           {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (
-            <DirectorNoSchoolScreen busy={busy !== null} timezones={state.timezones} onCreate={handleCreateSchool} />
+            <DirectorNoSchoolScreen busy={busy !== null} onCreate={handleCreateSchool} />
           ) : null}
 
           {isTeacher && !teacher && tab.startsWith('teacher-') ? (

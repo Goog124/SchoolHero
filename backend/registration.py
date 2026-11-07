@@ -8,7 +8,6 @@ import secrets
 import sqlite3
 from typing import Any
 
-from .cities import canonical_city
 from .config import Settings
 from .db import immediate, school_key
 from .game import DEFAULT_TIMEZONE, TIMEZONE_NAMES, iso_utc, normalize_timezone, utc_sql
@@ -99,8 +98,7 @@ def _check_school_fields(name: Any, city: Any) -> tuple[str, str]:
         raise GameError("Название школы: от 3 до 80 символов, должно содержать буквы")
     if not 2 <= len(city) <= 60 or not CITY_RE.fullmatch(city):
         raise GameError("Город: от 2 до 60 символов, только буквы, пробел, дефис и точка")
-    # Same spelling as in the directory when it matches ignoring case.
-    return name, canonical_city(city) or city
+    return name, city
 
 
 def _check_timezone(value: Any) -> str:

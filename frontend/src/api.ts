@@ -212,10 +212,8 @@ export const api = {
   searchCities(
     q: string,
     limit = 10,
-    scope: '' | 'all' = '',
   ): Promise<{ cities: CitySuggestion[]; total: number }> {
     const query = new URLSearchParams({ q, limit: String(limit) });
-    if (scope) query.set('scope', scope);
     return request<{ cities: CitySuggestion[]; total: number }>(`/api/school/cities?${query}`);
   },
 

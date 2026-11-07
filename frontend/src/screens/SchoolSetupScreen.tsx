@@ -156,6 +156,8 @@ export function NewSchoolForm({
   const [extraError, setExtraError] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // undefined: по умолчанию первый класс; '': «Не веду класс».
+  const [teachChoice, setTeachChoice] = useState<string | undefined>(undefined);
 
   const customLetters = Array.from(new Set(Array.from(custom.toUpperCase().replace(/[^\p{L}]/gu, ''))))
     .filter((l) => !LETTERS.includes(l))
@@ -172,6 +174,12 @@ export function NewSchoolForm({
     return true;
   });
   const tooMany = classNames.length > MAX_CLASSES;
+  const teachClass =
+    teachChoice === undefined
+      ? classNames[0] ?? ''
+      : classNames.includes(teachChoice)
+      ? teachChoice
+      : '';
 
   const unremove = (match: (key: string) => boolean) =>
     setRemoved((prev) => prev.filter((key) => !match(key)));
@@ -252,6 +260,7 @@ export function NewSchoolForm({
       name: cleanName(name),
       city: cityName,
       classes: classNames.map((n) => ({ name: n })),
+      teach_class: teachClass || null,
     });
     if (error) {
       setFormError(error);
@@ -399,6 +408,25 @@ export function NewSchoolForm({
         </div>
         {errors.classes && <span id="su-classes-err" className="ob-error">{errors.classes}</span>}
       </fieldset>
+
+      <div className="ob-field">
+        <label className="ob-label" htmlFor="su-teach">Ваш класс (вы классный руководитель)</label>
+        <select
+          id="su-teach"
+          className="ob-select"
+          value={teachClass}
+          disabled={classNames.length === 0}
+          onChange={(e) => setTeachChoice(e.target.value)}
+        >
+          {classNames.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+          <option value="">Не веду класс</option>
+        </select>
+        <span className="ob-hint">
+          Вы будете директором и педагогом этого класса и сможете переключаться между режимами.
+        </span>
+      </div>
 
       {formError && (
         <div className="ob-notice ob-notice--error" role="alert">
@@ -813,19 +841,28 @@ function ClassCard({
           {cls.teachers.map((teacher) => (
             <li key={teacher.id} className="su-teachers__item">
               <div className="su-teachers__text">
-                <strong>{teacher.name || 'Педагог'}</strong>
+                <strong>
+                  {teacher.name || 'Педагог'}
+                  {teacher.is_self ? ' (вы)' : ''}
+                </strong>
                 <span className="su-class__meta">
-                  {teacher.since ? `подключён ${formatShortDate(teacher.since)}` : 'дата подключения неизвестна'}
+                  {teacher.is_director
+                    ? 'директор, ведёт класс'
+                    : teacher.since
+                    ? `подключён ${formatShortDate(teacher.since)}`
+                    : 'дата подключения неизвестна'}
                 </span>
               </div>
-              <button
-                type="button"
-                className="su-link su-link--danger"
-                disabled={busy}
-                onClick={() => void confirmDisconnect(teacher)}
-              >
-                Отключить
-              </button>
+              {teacher.is_director ? null : (
+                <button
+                  type="button"
+                  className="su-link su-link--danger"
+                  disabled={busy}
+                  onClick={() => void confirmDisconnect(teacher)}
+                >
+                  Отключить
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -854,6 +891,7 @@ export function SchoolSetupScreen({
   onSelectSchool,
   onSetTimezone,
   onCreateSchool,
+  onTeachClass,
 }: {
   state: GameState;
   admin: SchoolAdminData;
@@ -868,7 +906,9 @@ export function SchoolSetupScreen({
   onSelectSchool: (schoolId: number) => Promise<boolean>;
   onSetTimezone: (schoolId: number, timezone: string) => Promise<boolean>;
   onCreateSchool: (payload: NewSchoolPayload) => ActionResult;
+  onTeachClass: (schoolId: number, classId: number | null) => Promise<boolean>;
 }) {
+  const { confirm, dialog: teachDialog } = useConfirm();
   const school: ManagedSchool | undefined =
     admin.schools.find((s) => s.id === admin.active_school_id) ?? admin.schools[0];
   const [newName, setNewName] = useState('');
@@ -876,6 +916,24 @@ export function SchoolSetupScreen({
   const [creating, setCreating] = useState(false);
 
   if (!school) return null;
+
+  const teachingHere = school.classes.find((c) => c.id === admin.teaching_class_id) ?? null;
+  const teachingElsewhere = admin.teaching_class_id !== null && !teachingHere;
+
+  const changeTeaching = async (value: string) => {
+    if (value === '') {
+      if (!teachingHere) return;
+      const ok = await confirm({
+        title: 'Перестать вести класс?',
+        message: `Вы больше не будете педагогом класса ${teachingHere.name}. Приложение вернётся в режим директора; ученики и задания класса сохранятся.`,
+        confirmLabel: 'Не веду класс',
+        danger: true,
+      });
+      if (ok) await onTeachClass(school.id, null);
+      return;
+    }
+    await onTeachClass(school.id, Number(value));
+  };
 
   const addClass = async (event: FormEvent) => {
     event.preventDefault();
@@ -968,6 +1026,36 @@ export function SchoolSetupScreen({
         </div>
       </section>
 
+      <section className="ob-card" aria-labelledby="su-teach-h">
+        <div>
+          <h2 className="su-h2" id="su-teach-h">Я веду класс</h2>
+          <p className="ob-lead">
+            Директор может быть и педагогом одного класса своей школы: проверять работы, давать
+            задания, принимать заявки. Режимы переключаются в шапке.
+          </p>
+        </div>
+        <div className="ob-field">
+          <label className="ob-label" htmlFor="su-teach-edit">Мой класс</label>
+          <select
+            id="su-teach-edit"
+            className="ob-select"
+            value={teachingHere ? String(teachingHere.id) : ''}
+            disabled={busy || school.status === 'rejected'}
+            onChange={(e) => void changeTeaching(e.target.value)}
+          >
+            <option value="">Не веду класс</option>
+            {school.classes.map((cls) => (
+              <option key={cls.id} value={cls.id}>{cls.name}</option>
+            ))}
+          </select>
+          {teachingElsewhere ? (
+            <span className="ob-hint">
+              Сейчас вы ведёте класс другой школы. Выбор класса здесь переключит вас на него.
+            </span>
+          ) : null}
+        </div>
+      </section>
+
       <section className="ob-card" aria-labelledby="su-codes-h">
         <div>
           <h2 className="su-h2" id="su-codes-h">
@@ -1048,6 +1136,7 @@ export function SchoolSetupScreen({
           )}
         </section>
       )}
+      {teachDialog}
     </div>
   );
 }

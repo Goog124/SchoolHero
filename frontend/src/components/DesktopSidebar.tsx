@@ -3,7 +3,8 @@ import { BrandLogo } from './BrandLogo';
 import { Icon } from './Icon';
 import { formatNumber } from '../game';
 import type { TabItem } from './TabBar';
-import type { TabId, Viewer } from '../types';
+import { uiRole, type TabId, type Viewer } from '../types';
+import { ViewSwitch } from './ViewSwitch';
 
 type Role = 'student' | 'teacher' | 'director';
 
@@ -19,6 +20,9 @@ type DesktopSidebarProps = {
   onRoleSwitch?: (role: Role) => void;
   /** Администратор платформы без роли: героя, ранга и баллов у него нет. */
   hideHero?: boolean;
+  /** Переключатель «Директор / Педагог»: только для директора с классом. */
+  onViewChange?: (view: 'director' | 'teacher') => void;
+  viewBusy?: boolean;
 };
 
 const ROLES: { id: Role; label: string }[] = [
@@ -37,14 +41,17 @@ export function DesktopSidebar({
   onProfile,
   onRoleSwitch,
   hideHero = false,
+  onViewChange,
+  viewBusy = false,
 }: DesktopSidebarProps) {
   const isStudent = viewer.role === 'student' && !hideHero;
+  const role = uiRole(viewer);
   const roleLabel =
     hideHero
       ? 'Администратор платформы'
-      : viewer.role === 'director'
+      : role === 'director'
       ? 'Администрация'
-      : viewer.role === 'teacher'
+      : role === 'teacher'
       ? 'Педагог'
       : viewer.class_name;
 
@@ -55,6 +62,12 @@ export function DesktopSidebar({
         {viewer.school_name ? (
           <div className="sidebar__school">
             <span title={viewer.school_name}>{viewer.school_name}</span>
+          </div>
+        ) : null}
+
+        {onViewChange ? (
+          <div className="sidebar__view">
+            <ViewSwitch viewer={viewer} onChange={onViewChange} busy={viewBusy} />
           </div>
         ) : null}
 

@@ -4,7 +4,7 @@ import { Icon } from './Icon';
 import { InfoButton } from './InfoButton';
 import { SparksInfo } from './infoTexts';
 import { formatNumber } from '../game';
-import type { Viewer } from '../types';
+import { uiRole, type Viewer } from '../types';
 
 type AppHeaderProps = {
   viewer: Viewer;
@@ -27,8 +27,8 @@ export function AppHeader({
   refreshing = false,
 }: AppHeaderProps) {
   const isStudent = viewer.role === 'student' && !hideHero;
-  const roleName =
-    viewer.role === 'director' ? 'Администрация' : viewer.role === 'teacher' ? 'Педагог' : '';
+  const role = uiRole(viewer);
+  const roleName = role === 'director' ? 'Администрация' : role === 'teacher' ? 'Педагог' : '';
   const subtitle = [viewer.class_name, roleName].filter(Boolean).join(' · ');
 
   return (

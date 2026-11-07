@@ -28,6 +28,13 @@ export type ViewerStats = {
   weekly_xp: number;
 };
 
+/** Роль, по которой строятся вкладки: директор в режиме педагога выглядит как педагог. */
+export function uiRole(viewer: Pick<Viewer, 'role' | 'active_view' | 'can_teach'>): Viewer['role'] {
+  return viewer.role === 'director' && viewer.can_teach && viewer.active_view === 'teacher'
+    ? 'teacher'
+    : viewer.role;
+}
+
 export type Viewer = {
   id: number;
   name: string;
@@ -35,6 +42,12 @@ export type Viewer = {
   last_name: string;
   username: string;
   role: 'student' | 'teacher' | 'director';
+  /** Только у директора: открытая сторона приложения. */
+  active_view: 'director' | 'teacher' | null;
+  /** Директор ведёт класс своей школы и может переключаться на режим педагога. */
+  can_teach: boolean;
+  /** Сколько ждёт в режиме, который сейчас не открыт (работы, заявки). */
+  other_view_pending: number;
   is_teacher_preview: boolean;
   class_id: number | null;
   class_name: string;
@@ -362,6 +375,9 @@ export type ManagedTeacher = {
   name: string;
   /** Когда педагог подключился к классу (ISO), если известно. */
   since: string | null;
+  /** Это директор школы, который ведёт класс сам. */
+  is_director?: boolean;
+  is_self?: boolean;
 };
 
 export type ManagedSchool = {
@@ -401,6 +417,8 @@ export type ClassJoinRequest = {
 };
 
 export type SchoolAdminData = {
+  /** Класс своей школы, который ведёт сам директор. */
+  teaching_class_id: number | null;
   join_requests: ClassJoinRequest[];
   active_school_id: number | null;
   max_schools: number;
@@ -435,6 +453,8 @@ export type NewSchoolPayload = {
   /** IANA-пояс из state.timezones; пусто: Москва. */
   timezone?: string;
   classes: Array<{ name: string; weekly_goal?: number }>;
+  /** Имя одного из создаваемых классов, который ведёт директор; пусто: не ведёт. */
+  teach_class?: string | null;
 };
 
 export type TimezoneOption = {

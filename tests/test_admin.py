@@ -575,11 +575,12 @@ def test_simultaneous_first_logins_give_one_admin(tmp_path):
     try:
         results = {}
 
+        # One client (one app lifespan) shared by all threads, like a real server:
+        # a TestClient per thread would also run startup migrations concurrently.
         def go(uid):
-            with TestClient(app) as cc:
-                results[uid] = cc.get("/api/state", headers=hdr(uid)).json()["viewer"][
-                    "is_platform_admin"
-                ]
+            results[uid] = c.get("/api/state", headers=hdr(uid)).json()["viewer"][
+                "is_platform_admin"
+            ]
 
         threads = [threading.Thread(target=go, args=(uid,)) for uid in range(1, 7)]
         for t in threads:

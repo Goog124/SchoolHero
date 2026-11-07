@@ -9,7 +9,7 @@ import { AchievementsInfo } from '../components/infoTexts';
 import { ScreenTitle } from '../components/ScreenTitle';
 import { formatNumber, formatXp } from '../game';
 import { tapHaptic } from '../max';
-import type { GameState, TabId } from '../types';
+import { uiRole, type GameState, type TabId } from '../types';
 import '../styles/profile.css';
 
 type ProfileScreenProps = {
@@ -70,7 +70,7 @@ export function ProfileScreen({
           )}
           <div className="pf-head__text">
             <h2 className="pf-name">{viewer.name}</h2>
-            <div className="pf-muted">{adminOnly ? 'Администратор платформы' : ROLE_LABEL[viewer.role] ?? ''}</div>
+            <div className="pf-muted">{adminOnly ? 'Администратор платформы' : ROLE_LABEL[uiRole(viewer)] ?? ''}</div>
             <div className="pf-muted">{place || (isStudent ? 'Класс не выбран' : '')}</div>
           </div>
         </div>

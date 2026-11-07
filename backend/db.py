@@ -35,6 +35,8 @@ USERS_COLUMNS = """    id INTEGER PRIMARY KEY AUTOINCREMENT,
     -- set by a platform admin: the user gets 403 on every /api/* but /api/health
     blocked_at TEXT,
     blocked_reason TEXT NOT NULL DEFAULT '',
+    -- a director who also teaches a class: which side of the app is open
+    active_view TEXT NOT NULL DEFAULT 'director' CHECK(active_view IN ('director', 'teacher')),
     xp INTEGER NOT NULL DEFAULT 0 CHECK(xp >= 0),
     sparks INTEGER NOT NULL DEFAULT 0 CHECK(sparks >= 0),
     streak INTEGER NOT NULL DEFAULT 0,
@@ -452,6 +454,12 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         if "sandbox_admin" in user_cols:
             # The sandbox switch now uses the same column.
             conn.execute("UPDATE users SET platform_admin = sandbox_admin")
+    if "active_view" not in user_cols:
+        # A director who also teaches a class: which side of the app is open.
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN active_view TEXT NOT NULL DEFAULT 'director' "
+            "CHECK(active_view IN ('director', 'teacher'))"
+        )
     if "blocked_at" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN blocked_at TEXT")
     if "blocked_reason" not in user_cols:

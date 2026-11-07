@@ -126,6 +126,17 @@ class NewSchoolBody(BaseModel):
     # IANA zone from the supported list (state.timezones); empty: Moscow.
     timezone: str = Field(default="", max_length=40)
     classes: list[NewClassBody] = Field(min_length=1, max_length=40)
+    # Name of one of the new classes the director leads as a teacher; empty: none.
+    teach_class: str | None = Field(default=None, max_length=12)
+
+
+class TeachBody(BaseModel):
+    # Class of the school the director leads; null stops leading a class.
+    class_id: OptionalClassId = None
+
+
+class ViewBody(BaseModel):
+    view: Literal["director", "teacher"]
 
 
 class SchoolTimezoneBody(BaseModel):
@@ -328,6 +339,17 @@ def school_create(
     return {"school_id": school_id, "state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
+@router.post("/school/{school_id}/teach")
+def school_teach(
+    school_id: IdPath, payload: TeachBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.set_teaching_class(
+        ctx.conn, ctx.user, ctx.settings, school_id, payload.class_id or None
+    )
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
 @router.post("/school/{school_id}/classes")
 def school_add_class(
     school_id: IdPath, payload: NewClassBody, ctx: Context = Depends(get_context)
@@ -480,6 +502,13 @@ def admin_user_admin(
 @router.post("/admin/users/{user_id}/unblock")
 def admin_user_unblock(user_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     return {"user": admin.unblock_user(ctx.conn, ctx.user, ctx.settings, user_id)}
+
+
+@router.post("/profile/view")
+def profile_view(payload: ViewBody, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    registration.set_view(ctx.conn, ctx.user, ctx.settings, payload.view)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
 @router.post("/profile/name")

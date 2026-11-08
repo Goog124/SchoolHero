@@ -18,13 +18,9 @@ services:
     env_file:
       - .env
     environment:
-      # Значения здесь важнее env_file: .env не может переключить боевой
-      # контейнер в demo или sandbox.
-      APP_MODE: prod
-      # MAX_BOT_TOKEN берётся из .env (env_file). Без токена приложение в prod
-      # не стартует и пишет причину в лог. Обязательную подстановку ${...:?} здесь
-      # не используем: compose проверяет её для всего файла, и тогда даже профиль
-      # demo не запускался бы без токена.
+      APP_MODE: ${APP_MODE:-prod}
+      ALLOW_PUBLIC_SANDBOX: ${ALLOW_PUBLIC_SANDBOX:-1}
+      ALLOW_PUBLIC_DEMO: ${ALLOW_PUBLIC_DEMO:-1}
       CATALOG_FILE: /data/catalog.json
       HOST: 0.0.0.0
       PORT: "8000"
@@ -88,6 +84,36 @@ services:
     cap_drop:
       - ALL
 
+  # Песочница: локальная проверка регистрации школы без MAX, порт 8010.
+  sandbox:
+    profiles: ["sandbox"]
+    build:
+      context: .
+    image: school-hero:latest
+    restart: "no"
+    init: true
+    environment:
+      APP_MODE: sandbox
+      ALLOW_PUBLIC_SANDBOX: "1"
+      HOST: 0.0.0.0
+      PORT: "8000"
+      STATIC_DIR: /app/static
+      DATABASE_PATH: /data/school_hero_sandbox.db
+      SERVE_FRONTEND: "true"
+    ports:
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - school_hero_sandbox_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: 128
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   caddy:
     # Версия закреплена; как обновить и закрепить по digest — docs/docker.md.
     image: caddy:2.10.0-alpine
@@ -115,5 +141,6 @@ services:
 volumes:
   school_hero_data:
   school_hero_demo_data:
+  school_hero_sandbox_data:
   caddy_data:
   caddy_config:

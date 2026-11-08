@@ -89,8 +89,9 @@ class Settings:
     bot_reply_interval: int = 60
     bot_notifications_enabled: bool = True
     bot_chat_commands: bool = True
-    # demo binds only to loopback unless explicitly allowed (ALLOW_PUBLIC_DEMO=1)
+    # demo and sandbox bind only to loopback unless explicitly allowed
     allow_public_demo: bool = False
+    allow_public_sandbox: bool = False
     # Photos sent as proof. Empty: the "uploads" directory next to the database
     # (DATA_DIR/uploads; in Docker /data/uploads in the volume). demo and sandbox
     # use their own directory so they never mix with production files.
@@ -119,12 +120,13 @@ class Settings:
         """Fail at startup instead of running half-configured."""
         if self.app_mode not in {"prod", "demo", "sandbox"}:
             raise RuntimeError("APP_MODE должен быть 'prod', 'demo' или 'sandbox'")
-        if self.sandbox_mode and self.host.strip().lower() not in LOOPBACK_HOSTS:
-            raise RuntimeError(
-                "APP_MODE=sandbox входит без подписи MAX и запускается только на "
-                "127.0.0.1, localhost или ::1 (сейчас HOST=" + self.host + ")"
-            )
         host = self.host.strip().lower()
+        if self.sandbox_mode and host not in LOOPBACK_HOSTS and not self.allow_public_sandbox:
+            raise RuntimeError(
+                "APP_MODE=sandbox входит без подписи MAX и по умолчанию запускается только на "
+                "127.0.0.1, localhost или ::1 (сейчас HOST=" + self.host + "). "
+                "Для запуска в контейнере задайте ALLOW_PUBLIC_SANDBOX=1"
+            )
         if self.demo_mode and host not in LOOPBACK_HOSTS and not self.allow_public_demo:
             raise RuntimeError(
                 "APP_MODE=demo входит без подписи MAX и по умолчанию запускается только на "
@@ -244,6 +246,7 @@ class Settings:
             bot_notifications_enabled=_bool_env("BOT_NOTIFICATIONS_ENABLED", True),
             bot_chat_commands=_bool_env("BOT_CHAT_COMMANDS", True),
             allow_public_demo=_bool_env("ALLOW_PUBLIC_DEMO", False),
+            allow_public_sandbox=_bool_env("ALLOW_PUBLIC_SANDBOX", False),
             uploads_dir=(
                 Path(os.environ["UPLOADS_DIR"].strip())
                 if os.getenv("UPLOADS_DIR", "").strip()

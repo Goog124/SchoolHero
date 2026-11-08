@@ -14,7 +14,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/school-hero"
-DATA_DIR="/var/lib/school-hero"
+DATA_DIR="$APP_DIR/data"
 APP_USER="schoolhero"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="${DOMAIN:-}"
@@ -81,6 +81,10 @@ apt-get install -y python3 python3-venv python3-pip rsync curl
 #   /var/lib/school-hero      schoolhero 700, файлы внутри 600 (UMask=0077 в юните).
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR" /var/www/certbot
+if [ -d "/var/lib/school-hero" ] && [ ! -f "$DATA_DIR/school_hero.db" ] && [ -f "/var/lib/school-hero/school_hero.db" ]; then
+  echo "Перенос данных из /var/lib/school-hero в $DATA_DIR..."
+  cp -a /var/lib/school-hero/* "$DATA_DIR/" 2>/dev/null || true
+fi
 rsync -a --delete \
   --exclude '.git' --exclude '.venv' --exclude '.idea' --exclude 'node_modules' \
   --exclude '__pycache__' --exclude '.pytest_cache' --exclude 'data' --exclude '.env' --exclude 'catalog.json' \

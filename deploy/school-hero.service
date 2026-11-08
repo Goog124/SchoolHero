@@ -13,12 +13,12 @@ WorkingDirectory=/opt/school-hero
 # право чтения). Записать в .env сервис не может.
 EnvironmentFile=/opt/school-hero/.env
 Environment=APP_MODE=prod
-Environment=CATALOG_FILE=/var/lib/school-hero/catalog.json
+Environment=CATALOG_FILE=/opt/school-hero/data/catalog.json
 Environment=HOST=127.0.0.1
 Environment=PORT=8000
 Environment=SERVE_FRONTEND=true
 Environment=STATIC_DIR=/opt/school-hero/static
-Environment=DATA_DIR=/var/lib/school-hero
+Environment=DATA_DIR=/opt/school-hero/data
 Environment=PYTHONDONTWRITEBYTECODE=1
 # env перебивает APP_MODE из EnvironmentFile: на сервере всегда prod.
 ExecStart=/usr/bin/env APP_MODE=prod /opt/school-hero/.venv/bin/python app.py
@@ -35,7 +35,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/school-hero
+ReadWritePaths=/opt/school-hero/data
 # Другие процессы в /proc не видны (systemd 247+, на более старых строка игнорируется с предупреждением).
 ProtectProc=invisible
 

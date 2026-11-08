@@ -102,8 +102,23 @@ def class_grade(name: str) -> str | None:
     return str(int(match.group(1))) if match else None
 
 
+def is_platform_admin(viewer: sqlite3.Row, settings: Settings) -> bool:
+    max_id = viewer["max_user_id"] if "max_user_id" in viewer.keys() else None
+    if max_id and str(max_id) in settings.platform_admin_max_ids:
+        return True
+    if "platform_admin" in viewer.keys() and viewer["platform_admin"]:
+        return True
+    if not settings.sandbox_mode:
+        return False
+    client_id = viewer["client_id"] if "client_id" in viewer.keys() else None
+    if client_id and str(client_id) in settings.platform_admin_client_ids:
+        return True
+    return False
+
+
 def effective_role(user: sqlite3.Row, settings: Settings) -> str:
-    if settings.demo_mode and user["preview_role"] in {"student", "teacher", "director"}:
+    is_admin = is_platform_admin(user, settings)
+    if (settings.demo_mode or is_admin) and user["preview_role"] in {"student", "teacher", "director"}:
         return str(user["preview_role"])
     return str(user["role"])
 
@@ -142,12 +157,20 @@ def director_school_ids(conn, viewer: sqlite3.Row, settings: Settings) -> list[i
             (viewer["id"],),
         ).fetchall()
     ]
-    if not ids and settings.demo_mode and viewer["class_id"] is not None:
-        row = conn.execute(
-            "SELECT school_id FROM classes WHERE id = ?", (viewer["class_id"],)
-        ).fetchone()
-        if row:
-            ids = [int(row["school_id"])]
+    if not ids and (settings.demo_mode or is_platform_admin(viewer, settings)):
+        if viewer["class_id"] is not None:
+            row = conn.execute(
+                "SELECT school_id FROM classes WHERE id = ?", (viewer["class_id"],)
+            ).fetchone()
+            if row:
+                ids = [int(row["school_id"])]
+        if not ids:
+            ids = [
+                int(r["id"])
+                for r in conn.execute(
+                    "SELECT id FROM schools WHERE status = 'active' ORDER BY id"
+                ).fetchall()
+            ]
     return ids
 
 
@@ -163,6 +186,8 @@ def can_manage_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: in
     """A teacher manages their own class, a director every class of their schools."""
     if class_id is None:
         return False
+    if is_platform_admin(viewer, settings):
+        return True
     role = effective_role(viewer, settings)
     if role == "teacher":
         return viewer["class_id"] is not None and int(viewer["class_id"]) == int(class_id)
@@ -1284,6 +1309,7 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "last_name": viewer["last_name"],
         "username": viewer["username"],
         "role": role,
+        "preview_role": viewer["preview_role"],
         "active_view": active_view,
         "can_teach": can_teach,
         "other_view_pending": (
@@ -2329,8 +2355,9 @@ def archive_challenge(
 
 
 def switch_role(conn, viewer: sqlite3.Row, settings: Settings, role: str) -> None:
-    if not settings.demo_mode:
-        raise GameError("Переключение роли доступно только в демо-режиме", 403)
+    is_admin = is_platform_admin(viewer, settings)
+    if not settings.demo_mode and not is_admin:
+        raise GameError("Переключение роли доступно в демо-режиме или администратору платформы", 403)
     if role not in {"student", "teacher", "director"}:
         raise GameError("Неизвестная роль")
     conn.execute(

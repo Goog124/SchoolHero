@@ -116,7 +116,7 @@ type SchoolsProps = {
 
 export function AdminSchoolsScreen({ busy, notify, onSetStatus, onDelete }: SchoolsProps) {
   const { confirm, ask, dialog } = useConfirm();
-  const [filter, setFilter] = useState<Filter>('pending');
+  const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const search = useDebounced(query.trim());
   const [items, setItems] = useState<AdminSchoolItem[]>([]);

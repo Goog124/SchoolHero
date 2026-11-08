@@ -83,6 +83,7 @@ function isAdminOnly(state: GameState): boolean {
   return (
     Boolean(state.platform_admin) &&
     state.viewer.role === 'student' &&
+    !state.viewer.preview_role &&
     (!state.viewer.onboarded || !state.viewer.class_id)
   );
 }
@@ -1179,9 +1180,9 @@ export default function App() {
 
         {sandboxBar}
 
-        {isDemo ? (
-          <div className="demo-bar" role="group" aria-label="Демо: выбор роли">
-            <span className="demo-bar__label">Демо</span>
+        {isDemo || Boolean(state.platform_admin) ? (
+          <div className="demo-bar" role="group" aria-label="Выбор роли">
+            <span className="demo-bar__label">{isDemo ? 'Демо' : 'Суперпользователь'}</span>
             <div className="demo-bar__roles">
               {roleOptions.map((option) => (
                 <button
@@ -1194,9 +1195,11 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <button type="button" className="demo-bar__reset" onClick={() => void handleReset()}>
-              Сбросить
-            </button>
+            {isDemo ? (
+              <button type="button" className="demo-bar__reset" onClick={() => void handleReset()}>
+                Сбросить
+              </button>
+            ) : null}
           </div>
         ) : null}
 

@@ -192,7 +192,15 @@ class Settings:
             max_bot_username=os.getenv("MAX_BOT_USERNAME", "").strip().lstrip("@"),
             max_ca_bundle=(
                 os.getenv("MAX_CA_BUNDLE", "").strip()
-                or (str(data_dir / "russian_trusted_ca.pem") if (data_dir / "russian_trusted_ca.pem").is_file() else "")
+                or next(
+                    (str(p) for p in (
+                        data_dir / "russian_trusted_ca.pem",
+                        BASE_DIR / "data" / "russian_trusted_ca.pem",
+                        Path("/var/lib/school-hero/russian_trusted_ca.pem"),
+                        Path("/opt/school-hero/data/russian_trusted_ca.pem"),
+                    ) if p.is_file()),
+                    ""
+                )
             ),
             public_url=(
                 os.getenv("PUBLIC_URL", "").strip().rstrip("/")

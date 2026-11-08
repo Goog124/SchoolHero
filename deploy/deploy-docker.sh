@@ -43,7 +43,7 @@ ensure_public_url .env
 
 if systemctl is-active --quiet school-hero 2>/dev/null; then
   echo "Работает systemd-сервис school-hero и занимает порт 8000."
-  echo "Остановите его: systemctl disable --now school-hero (данные: /var/lib/school-hero/school_hero.db)."
+  echo "Остановите его: systemctl disable --now school-hero (данные: /opt/school-hero/data/school_hero.db)."
   exit 1
 fi
 

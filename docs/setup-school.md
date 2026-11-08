@@ -97,7 +97,7 @@
 
 ```bash
 cd /opt/school-hero
-sudo -u schoolhero env DATA_DIR=/var/lib/school-hero .venv/bin/python tools/list_max_users.py
+sudo -u schoolhero env DATA_DIR=/opt/school-hero/data .venv/bin/python tools/list_max_users.py
 ```
 
 В Docker:

@@ -14,7 +14,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/school-hero"
-DATA_DIR="/var/lib/school-hero"
+DATA_DIR="$APP_DIR/data"
 APP_USER="schoolhero"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="${DOMAIN:-}"
@@ -78,9 +78,13 @@ apt-get install -y python3 python3-venv python3-pip rsync curl
 #   /opt/school-hero/.env     root:schoolhero 640 — systemd читает его как
 #                             EnvironmentFile от root, app.py ещё раз через
 #                             python-dotenv от schoolhero; записать сервис не может;
-#   /var/lib/school-hero      schoolhero 700, файлы внутри 600 (UMask=0077 в юните).
+#   /opt/school-hero/data     schoolhero 700, файлы внутри 600 (UMask=0077 в юните).
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR" /var/www/certbot
+if [ -d "/var/lib/school-hero" ] && [ ! -f "$DATA_DIR/school_hero.db" ] && [ -f "/var/lib/school-hero/school_hero.db" ]; then
+  echo "Перенос данных из /var/lib/school-hero в $DATA_DIR..."
+  cp -a /var/lib/school-hero/* "$DATA_DIR/" 2>/dev/null || true
+fi
 rsync -a --delete \
   --exclude '.git' --exclude '.venv' --exclude '.idea' --exclude 'node_modules' \
   --exclude '__pycache__' --exclude '.pytest_cache' --exclude 'data' --exclude '.env' --exclude 'catalog.json' \
@@ -94,6 +98,11 @@ CATALOG_DST="$DATA_DIR/catalog.json"
 # Каталог необязателен: школы можно создавать через регистрацию директора.
 if [ ! -f "$CATALOG_DST" ] && [ -f "$SRC/catalog.json" ]; then
   install -m 600 -o "$APP_USER" -g "$APP_USER" "$SRC/catalog.json" "$CATALOG_DST"
+fi
+
+CA_DST="$DATA_DIR/russian_trusted_ca.pem"
+if [ -f "$SRC/data/russian_trusted_ca.pem" ]; then
+  install -m 644 -o "$APP_USER" -g "$APP_USER" "$SRC/data/russian_trusted_ca.pem" "$CA_DST"
 fi
 chown -R root:root "$APP_DIR"
 chmod 755 "$APP_DIR"

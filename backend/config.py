@@ -89,8 +89,9 @@ class Settings:
     bot_reply_interval: int = 60
     bot_notifications_enabled: bool = True
     bot_chat_commands: bool = True
-    # demo binds only to loopback unless explicitly allowed (ALLOW_PUBLIC_DEMO=1)
+    # demo and sandbox bind only to loopback unless explicitly allowed
     allow_public_demo: bool = False
+    allow_public_sandbox: bool = False
     # Photos sent as proof. Empty: the "uploads" directory next to the database
     # (DATA_DIR/uploads; in Docker /data/uploads in the volume). demo and sandbox
     # use their own directory so they never mix with production files.
@@ -119,12 +120,13 @@ class Settings:
         """Fail at startup instead of running half-configured."""
         if self.app_mode not in {"prod", "demo", "sandbox"}:
             raise RuntimeError("APP_MODE должен быть 'prod', 'demo' или 'sandbox'")
-        if self.sandbox_mode and self.host.strip().lower() not in LOOPBACK_HOSTS:
-            raise RuntimeError(
-                "APP_MODE=sandbox входит без подписи MAX и запускается только на "
-                "127.0.0.1, localhost или ::1 (сейчас HOST=" + self.host + ")"
-            )
         host = self.host.strip().lower()
+        if self.sandbox_mode and host not in LOOPBACK_HOSTS and not self.allow_public_sandbox:
+            raise RuntimeError(
+                "APP_MODE=sandbox входит без подписи MAX и по умолчанию запускается только на "
+                "127.0.0.1, localhost или ::1 (сейчас HOST=" + self.host + "). "
+                "Для запуска в контейнере задайте ALLOW_PUBLIC_SANDBOX=1"
+            )
         if self.demo_mode and host not in LOOPBACK_HOSTS and not self.allow_public_demo:
             raise RuntimeError(
                 "APP_MODE=demo входит без подписи MAX и по умолчанию запускается только на "
@@ -157,16 +159,51 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         app_mode = os.getenv("APP_MODE", "prod").strip().lower()
-        data_dir = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
+        raw_data_dir = os.getenv("DATA_DIR", "").strip()
+        if not raw_data_dir or raw_data_dir == "/var/lib/school-hero":
+            data_dir = BASE_DIR / "data"
+        else:
+            data_dir = Path(raw_data_dir)
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
         db_name = MODE_DB_NAMES.get(app_mode, PROD_DB_NAME)
         raw_db = os.getenv("DATABASE_PATH", "").strip()
+        if raw_db.startswith("/var/lib/school-hero"):
+            raw_db = ""
         db_path = mode_db_path(app_mode, Path(raw_db) if raw_db else data_dir / db_name)
+
+        # Автоматический перенос базы из legacy /var/lib/school-hero если в data/ ещё нет
+        legacy_db = Path("/var/lib/school-hero") / db_name
+        if not db_path.exists() and legacy_db.is_file():
+            try:
+                import shutil
+                shutil.copy2(legacy_db, db_path)
+                for ext in ("-wal", "-shm"):
+                    leg_wal = Path(f"{legacy_db}{ext}")
+                    if leg_wal.is_file():
+                        shutil.copy2(leg_wal, Path(f"{db_path}{ext}"))
+                legacy_uploads = Path("/var/lib/school-hero/uploads")
+                target_uploads = data_dir / "uploads"
+                if legacy_uploads.is_dir() and not target_uploads.exists():
+                    shutil.copytree(legacy_uploads, target_uploads)
+            except Exception:
+                pass
+
+        raw_catalog = os.getenv("CATALOG_FILE", "").strip()
+        if not raw_catalog or raw_catalog == "/var/lib/school-hero/catalog.json":
+            catalog_file = data_dir / "catalog.json"
+        else:
+            catalog_file = Path(raw_catalog)
+
         return cls(
             app_mode=app_mode,
             host=os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1",
             sandbox_wipe=_bool_env("SANDBOX_WIPE", False),
             platform_admin_client_ids=_ids_env("PLATFORM_ADMIN_CLIENT_IDS"),
-            catalog_file=Path(os.getenv("CATALOG_FILE", str(data_dir / "catalog.json"))),
+            catalog_file=catalog_file,
             static_dir=Path(os.getenv("STATIC_DIR", str(BASE_DIR / "static"))),
             db_path=db_path,
             bot_token=os.getenv("MAX_BOT_TOKEN", "").strip(),
@@ -190,7 +227,17 @@ class Settings:
             ),
             max_webhook_secret=os.getenv("MAX_WEBHOOK_SECRET", "").strip(),
             max_bot_username=os.getenv("MAX_BOT_USERNAME", "").strip().lstrip("@"),
-            max_ca_bundle=os.getenv("MAX_CA_BUNDLE", "").strip(),
+            max_ca_bundle=(
+                os.getenv("MAX_CA_BUNDLE", "").strip()
+                or next(
+                    (str(p) for p in (
+                        data_dir / "russian_trusted_ca.pem",
+                        BASE_DIR / "data" / "russian_trusted_ca.pem",
+                        Path("/opt/school-hero/data/russian_trusted_ca.pem"),
+                    ) if p.is_file()),
+                    ""
+                )
+            ),
             public_url=(
                 os.getenv("PUBLIC_URL", "").strip().rstrip("/")
                 or os.getenv("MINIAPP_URL", "").strip().rstrip("/")
@@ -199,6 +246,7 @@ class Settings:
             bot_notifications_enabled=_bool_env("BOT_NOTIFICATIONS_ENABLED", True),
             bot_chat_commands=_bool_env("BOT_CHAT_COMMANDS", True),
             allow_public_demo=_bool_env("ALLOW_PUBLIC_DEMO", False),
+            allow_public_sandbox=_bool_env("ALLOW_PUBLIC_SANDBOX", False),
             uploads_dir=(
                 Path(os.environ["UPLOADS_DIR"].strip())
                 if os.getenv("UPLOADS_DIR", "").strip()

@@ -65,7 +65,10 @@ class MaxClient:
             raise MaxApiError("MAX_API_BASE должен начинаться с https://")
         self._base = base
         self._token = settings.bot_token
-        self._verify: Any = settings.max_ca_bundle or True
+        verify: Any = settings.max_ca_bundle or True
+        if isinstance(verify, str) and verify.lower() in ("insecure", "0", "false", "off", "no"):
+            verify = False
+        self._verify: Any = verify
 
     def _request(
         self,
@@ -89,10 +92,22 @@ class MaxClient:
                 follow_redirects=False,
             )
         except httpx.HTTPError as exc:
-            # Only the exception class: its text may echo request details.
-            raise MaxApiError(f"{method} {path}: {type(exc).__name__}") from None
+            cause = getattr(exc, "__cause__", None)
+            cause_msg = str(cause) if cause else ""
+            if self._token and self._token in cause_msg:
+                cause_msg = cause_msg.replace(self._token, "[REDACTED]")
+            suffix = f" ({cause_msg})" if cause_msg else ""
+            raise MaxApiError(f"{method} {path}: {type(exc).__name__}{suffix}") from None
         if response.status_code >= 400:
-            err = MaxApiError(f"{method} {path}: HTTP {response.status_code}")
+            msg = ""
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    msg = body.get("message") or body.get("error") or ""
+            except Exception:
+                pass
+            suffix = f" - {msg}" if msg else ""
+            err = MaxApiError(f"{method} {path}: HTTP {response.status_code}{suffix}")
             err.status = response.status_code  # type: ignore[attr-defined]
             raise err
         try:
@@ -122,6 +137,12 @@ class MaxClient:
 
     def unsubscribe(self, url: str) -> dict:
         return self._request("DELETE", "/subscriptions", params={"url": url})
+
+    def get_updates(self, marker: int | None = None, timeout: int = 25, limit: int = 100) -> dict:
+        params: dict[str, Any] = {"timeout": timeout, "limit": limit}
+        if marker is not None:
+            params["marker"] = marker
+        return self._request("GET", "/updates", params=params)
 
 
 def get_client(settings: Settings) -> MaxClient:

@@ -26,7 +26,7 @@
 - Версия nginx с директивой `http2 on;` (используется в шаблоне `deploy/nginx.conf.template`). Директиву поддерживает nginx 1.25.1 и новее; на более старых пакетах `nginx -t` завершится ошибкой, и конфиг придётся поправить (убрать `http2 on;`, добавить `http2` к `listen 443 ssl`).
 - Сборка фронтенда (`static/index.html`) или Node.js 20.19+ на сервере.
 
-Домен выбирается при запуске (см. ниже) и подставляется в шаблон `deploy/nginx.conf.template`; в репозитории домена нет. Пути зашиты в `deploy/deploy.sh`: `APP_DIR=/opt/school-hero`, `DATA_DIR=/var/lib/school-hero`, `APP_USER=schoolhero`. Общая логика (выбор домена, nginx, сертификат) вынесена в `deploy/lib.sh`.
+Домен выбирается при запуске (см. ниже) и подставляется в шаблон `deploy/nginx.conf.template`; в репозитории домена нет. Пути зашиты в `deploy/deploy.sh`: `APP_DIR=/opt/school-hero`, `DATA_DIR=/opt/school-hero/data`, `APP_USER=schoolhero`. Общая логика (выбор домена, nginx, сертификат) вынесена в `deploy/lib.sh`.
 
 ## Подготовка
 
@@ -64,7 +64,7 @@ PLATFORM_ADMIN_MAX_IDS=<MAX id администраторов, подтверж�
 
 ### 3. Каталог школ - необязательно
 
-`catalog.json` не нужен: школы создаёт директор ([setup-school.md](setup-school.md)). Если файл `catalog.json` лежит в корне проекта и в `/var/lib/school-hero/catalog.json` ещё нет, скрипт скопирует его (права 640). Существующий в `/var/lib/school-hero` файл не перезаписывается.
+`catalog.json` не нужен: школы создаёт директор ([setup-school.md](setup-school.md)). Если файл `catalog.json` лежит в корне проекта и в `/opt/school-hero/data/catalog.json` ещё нет, скрипт скопирует его (права 640). Существующий в `/opt/school-hero/data` файл не перезаписывается.
 
 ### 4. Перенести проект на сервер
 
@@ -87,10 +87,10 @@ sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
 
 1. **Проверка root.** Иначе выход.
 2. **`.env`.** Выбор источника (`/opt/school-hero/.env` или `<проект>/.env`), проверка, что `MAX_BOT_TOKEN` непуст.
-3. **Проверка старой базы.** Если `/var/lib/school-hero/school_hero.db` существует и в `users` есть строки без `max_user_id` (остатки демо-данных или старой версии), скрипт останавливается и просит остановить сервис и удалить базу. Обход: `ALLOW_LEGACY_DB=1 sudo -E bash deploy/deploy.sh` (осознанно). Проверка выполняется через `python3` до установки пакетов.
+3. **Проверка старой базы.** Если `/opt/school-hero/data/school_hero.db` существует и в `users` есть строки без `max_user_id` (остатки демо-данных или старой версии), скрипт останавливается и просит остановить сервис и удалить базу. Обход: `ALLOW_LEGACY_DB=1 sudo -E bash deploy/deploy.sh` (осознанно). Проверка выполняется через `python3` до установки пакетов.
 4. **Фронтенд.** Если `static/index.html` нет, выполняет `npm ci && npm run build` (нужен npm), иначе пропускает. **Уже существующий `static/` не пересобирается** - при обновлении собирайте заново сами.
 5. **Пакеты.** `apt-get update` и установка зависимостей.
-6. **Пользователь и каталоги.** Системный пользователь `schoolhero` (без оболочки), `/opt/school-hero`, `/var/lib/school-hero`, `/var/www/certbot`.
+6. **Пользователь и каталоги.** Системный пользователь `schoolhero` (без оболочки), `/opt/school-hero`, `/opt/school-hero/data`, `/var/www/certbot`.
 7. **Копирование.** `rsync -a --delete` проекта в `/opt/school-hero`, кроме `.git`, `.venv`, `.idea`, `node_modules`, `__pycache__`, `.pytest_cache`, `data`, `.env`, `catalog.json`, `dist`, `tests`. Выкладывается и `docs/`. Данные вне `/opt`, поэтому не затрагиваются.
 8. **`.env`, каталог и права.** Копирование `.env` (только если в `/opt` его нет) и необязательного `catalog.json`. Права:
 
@@ -98,8 +98,8 @@ sudo bash deploy/deploy.sh --domain app.example.org --email you@example.com
    | --- | --- | --- |
    | `/opt/school-hero` (код, `.venv`) | `root:root` | сервису только чтение |
    | `/opt/school-hero/.env` | `root:schoolhero` | `640` |
-   | `/var/lib/school-hero` | `schoolhero:schoolhero` | `700` |
-   | файлы в `/var/lib/school-hero` (база, `-wal`, `-shm`, `catalog.json`) | `schoolhero:schoolhero` | `600` |
+   | `/opt/school-hero/data` | `schoolhero:schoolhero` | `700` |
+   | файлы в `/opt/school-hero/data` (база, `-wal`, `-shm`, `catalog.json`) | `schoolhero:schoolhero` | `600` |
 
    Новые файлы базы сервис создаёт с правами `600` (`UMask=0077` в юните).
 9. **Python.** Виртуальное окружение `/opt/school-hero/.venv` (владелец root), `pip install -r requirements.txt` - только runtime-зависимости; `pytest` лежит в `requirements-dev.txt` и на сервер не ставится.
@@ -145,9 +145,9 @@ server {
 ### `deploy/school-hero.service`
 
 - Запуск от `schoolhero`, рабочий каталог `/opt/school-hero`, команда `/opt/school-hero/.venv/bin/python app.py`, `Restart=on-failure` с паузой 3 с.
-- `EnvironmentFile=/opt/school-hero/.env`, а также `Environment=`: `APP_MODE=prod`, `CATALOG_FILE=/var/lib/school-hero/catalog.json`, `HOST=127.0.0.1`, `PORT=8000`, `SERVE_FRONTEND=true`, `STATIC_DIR=/opt/school-hero/static`, `DATA_DIR=/var/lib/school-hero`.
+- `EnvironmentFile=/opt/school-hero/.env`, а также `Environment=`: `APP_MODE=prod`, `CATALOG_FILE=/opt/school-hero/data/catalog.json`, `HOST=127.0.0.1`, `PORT=8000`, `SERVE_FRONTEND=true`, `STATIC_DIR=/opt/school-hero/static`, `DATA_DIR=/opt/school-hero/data`.
 - `UMask=0077`: файлы базы создаются с правами 600.
-- Файловая система: `ProtectSystem=strict` (запись только в `ReadWritePaths=/var/lib/school-hero`), `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible` (systemd 247+), `PYTHONDONTWRITEBYTECODE=1`.
+- Файловая система: `ProtectSystem=strict` (запись только в `ReadWritePaths=/opt/school-hero/data`), `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible` (systemd 247+), `PYTHONDONTWRITEBYTECODE=1`.
 - Привилегии: `NoNewPrivileges`, пустые `CapabilityBoundingSet=` и `AmbientCapabilities=`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `RestrictNamespaces`.
 - Ядро: `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`.
 - Сеть: `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` - сеть нужна (порт 8000 и запросы бота к `https://platform-api2.max.ru`).
@@ -197,9 +197,9 @@ sudo certbot renew --dry-run
 Команда `sqlite3` не ставится скриптом: `sudo apt-get install sqlite3`. Копию делайте от имени `schoolhero`, чтобы не создать файлы базы с владельцем root.
 
 ```bash
-sudo install -d -m 700 -o schoolhero -g schoolhero /var/lib/school-hero/backups
-sudo -u schoolhero sqlite3 /var/lib/school-hero/school_hero.db \
-  ".backup '/var/lib/school-hero/backups/school_hero-$(date +%F).db'"
+sudo install -d -m 700 -o schoolhero -g schoolhero /opt/school-hero/data/backups
+sudo -u schoolhero sqlite3 /opt/school-hero/data/school_hero.db \
+  ".backup '/opt/school-hero/data/backups/school_hero-$(date +%F).db'"
 ```
 
 Без `sqlite3` то же средствами Python:
@@ -207,8 +207,8 @@ sudo -u schoolhero sqlite3 /var/lib/school-hero/school_hero.db \
 ```bash
 sudo -u schoolhero python3 - <<'PY'
 import sqlite3, datetime
-src = sqlite3.connect("/var/lib/school-hero/school_hero.db")
-dst = sqlite3.connect(f"/var/lib/school-hero/backups/school_hero-{datetime.date.today()}.db")
+src = sqlite3.connect("/opt/school-hero/data/school_hero.db")
+dst = sqlite3.connect(f"/opt/school-hero/data/backups/school_hero-{datetime.date.today()}.db")
 src.backup(dst)
 dst.close(); src.close()
 PY
@@ -220,13 +220,13 @@ PY
 
 ```bash
 sudo systemctl stop school-hero
-sudo rm -f /var/lib/school-hero/school_hero.db-wal /var/lib/school-hero/school_hero.db-shm
-sudo cp /var/lib/school-hero/backups/school_hero-ГГГГ-ММ-ДД.db /var/lib/school-hero/school_hero.db
-sudo chown schoolhero:schoolhero /var/lib/school-hero/school_hero.db
+sudo rm -f /opt/school-hero/data/school_hero.db-wal /opt/school-hero/data/school_hero.db-shm
+sudo cp /opt/school-hero/data/backups/school_hero-ГГГГ-ММ-ДД.db /opt/school-hero/data/school_hero.db
+sudo chown schoolhero:schoolhero /opt/school-hero/data/school_hero.db
 sudo systemctl start school-hero
 ```
 
-Фото-подтверждения лежат в каталоге `uploads` рядом с базой (`/var/lib/school-hero/uploads`, то есть `DATA_DIR/uploads`); резервная копия должна включать и его, например `sudo tar -C /var/lib/school-hero -czf uploads-$(date +%F).tar.gz uploads`. Восстанавливайте каталог с владельцем `schoolhero`.
+Фото-подтверждения лежат в каталоге `uploads` рядом с базой (`/opt/school-hero/data/uploads`, то есть `DATA_DIR/uploads`); резервная копия должна включать и его, например `sudo tar -C /opt/school-hero/data -czf uploads-$(date +%F).tar.gz uploads`. Восстанавливайте каталог с владельцем `schoolhero`.
 
 Копии храните вне сервера. Расписания резервного копирования в проекте нет; настройте cron/systemd-timer сами. Сохраняйте также `.env` (там токен бота) и `catalog.json`, если используется.
 
@@ -270,7 +270,7 @@ sudo nginx -t
 | В журнале `CatalogError` | Повреждён `catalog.json`; исправьте или удалите файл |
 | Certbot: порт 80 занят (при `--standalone`) | Скрипт использует webroot и порт не занимает. Для ручного `--standalone` остановите nginx или другой процесс (`ss -ltnp \| grep ':80 '`); лучше используйте `--webroot` |
 | Certbot не проходит проверку | DNS не указывает на сервер, порт 80 закрыт, либо временный конфиг не загрузился (`nginx -t`) |
-| Скрипт: «найдено пользователей без MAX id» | В базе остатки демо-данных. `systemctl stop school-hero; rm /var/lib/school-hero/school_hero.db*`, затем снова скрипт. Для осознанного пропуска `ALLOW_LEGACY_DB=1` |
+| Скрипт: «найдено пользователей без MAX id» | В базе остатки демо-данных. `systemctl stop school-hero; rm /opt/school-hero/data/school_hero.db*`, затем снова скрипт. Для осознанного пропуска `ALLOW_LEGACY_DB=1` |
 | Приложение открывается, но в `/api/health` `mode` не `prod` | В серверном `.env` другой `APP_MODE`. Исправьте и перезапустите сервис |
 | Все запросы возвращают 401 «Данные MAX устарели» | Приложение открыто дольше `INIT_DATA_MAX_AGE` (по умолчанию 24 часа), либо расходятся часы сервера и клиента. Откройте приложение заново, проверьте время сервера (`timedatectl`) |
 | Интерфейс показывает «Откройте приложение внутри MAX» | В `prod` приложение работает только внутри MAX, в обычном браузере вход невозможен |

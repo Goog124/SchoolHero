@@ -84,8 +84,8 @@
 
 | Что | Где (по умолчанию) | В production (systemd) | В Docker |
 | --- | --- | --- | --- |
-| База SQLite | `data/school_hero.db` (+ `-wal`, `-shm`) | `/var/lib/school-hero/school_hero.db` | `/data/school_hero.db` (том `school_hero_data`) |
-| Каталог школ | `data/catalog.json` | `/var/lib/school-hero/catalog.json` | `/data/catalog.json` |
+| База SQLite | `data/school_hero.db` (+ `-wal`, `-shm`) | `/opt/school-hero/data/school_hero.db` | `/data/school_hero.db` (том `school_hero_data`) |
+| Каталог школ | `data/catalog.json` | `/opt/school-hero/data/catalog.json` | `/data/catalog.json` |
 | Сборка фронтенда | `static/` | `/opt/school-hero/static` | `/app/static` (собирается в образе) |
 | Страница-портал | `landing/` | `/opt/school-hero/landing` | не копируется в образ, `/portal` вернёт 404 |
 

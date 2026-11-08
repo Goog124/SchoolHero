@@ -294,12 +294,12 @@ docker volume create school-hero_school_hero_data
 ```
 
 ```bash
-docker run --rm -v school-hero_school_hero_data:/data -v /var/lib/school-hero:/old:ro alpine sh -c "cp /old/school_hero.db /data/ && chown 10001:10001 /data/school_hero.db"
+docker run --rm -v school-hero_school_hero_data:/data -v /opt/school-hero/data:/old:ro alpine sh -c "cp /old/school_hero.db /data/ && chown 10001:10001 /data/school_hero.db"
 ```
 
 3. Запустите `deploy/deploy-docker.sh`. Файл `-wal` старой базы переносить не нужно, если сервис остановлен штатно.
 
-Каталог `/var/lib/school-hero/catalog.json`, если он был, копируется командой `docker compose cp` (см. выше).
+Каталог `/opt/school-hero/data/catalog.json`, если он был, копируется командой `docker compose cp` (см. выше).
 
 ## Что не запускается в Docker
 

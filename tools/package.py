@@ -39,7 +39,7 @@ EXCLUDE_FROM_ARCHIVE = (".idea",)
 
 # Пути (относительно корня проекта), которых не должно быть в архиве.
 FORBIDDEN_EXACT = {".env"}
-FORBIDDEN_PREFIXES = ("data/", "static/", "dist/", ".venv/", ".idea/")
+FORBIDDEN_PREFIXES = ("static/", "dist/", ".venv/", ".idea/")
 FORBIDDEN_PARTS = {"node_modules", "__pycache__", ".pytest_cache"}
 FORBIDDEN_SUFFIXES = (".db", ".db-wal", ".db-shm", ".pyc")
 
@@ -77,6 +77,10 @@ def sha256_file(path: Path) -> Path:
 
 def forbidden(rel: str) -> bool:
     if rel in FORBIDDEN_EXACT or rel.endswith("/.env"):
+        return True
+    if rel == "data/":
+        return False
+    if rel.startswith("data/") and not rel.endswith(".pem"):
         return True
     if rel.startswith(FORBIDDEN_PREFIXES) or rel.endswith(FORBIDDEN_SUFFIXES):
         return True

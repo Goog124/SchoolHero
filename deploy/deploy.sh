@@ -95,6 +95,11 @@ CATALOG_DST="$DATA_DIR/catalog.json"
 if [ ! -f "$CATALOG_DST" ] && [ -f "$SRC/catalog.json" ]; then
   install -m 600 -o "$APP_USER" -g "$APP_USER" "$SRC/catalog.json" "$CATALOG_DST"
 fi
+
+CA_DST="$DATA_DIR/russian_trusted_ca.pem"
+if [ -f "$SRC/data/russian_trusted_ca.pem" ]; then
+  install -m 644 -o "$APP_USER" -g "$APP_USER" "$SRC/data/russian_trusted_ca.pem" "$CA_DST"
+fi
 chown -R root:root "$APP_DIR"
 chmod 755 "$APP_DIR"
 chown root:"$APP_USER" "$APP_DIR/.env"

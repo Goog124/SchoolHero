@@ -42,6 +42,7 @@ export type Viewer = {
   last_name: string;
   username: string;
   role: 'student' | 'teacher' | 'director';
+  preview_role?: 'student' | 'teacher' | 'director' | null;
   /** Только у директора: открытая сторона приложения. */
   active_view: 'director' | 'teacher' | null;
   /** Директор ведёт класс своей школы и может переключаться на режим педагога. */

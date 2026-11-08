@@ -32,7 +32,7 @@ services:
       # MAX требует HTTPS, а приложение без прокси HTTPS не отдаёт.
       - "127.0.0.1:8000:8000"
     volumes:
-      - school_hero_data:/data
+      - ./data:/data
     # Корневая ФС только для чтения: приложение пишет лишь в /data (база,
     # каталог) и, возможно, во временные файлы SQLite в /tmp. Байткод Python
     # не пишется (PYTHONDONTWRITEBYTECODE=1 в образе).
@@ -73,7 +73,7 @@ services:
     ports:
       - "127.0.0.1:8001:8000"
     volumes:
-      - school_hero_demo_data:/data
+      - ./data:/data
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -103,7 +103,7 @@ services:
     ports:
       - "127.0.0.1:8010:8000"
     volumes:
-      - school_hero_sandbox_data:/data
+      - ./data:/data
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

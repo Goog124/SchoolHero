@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
+log = logging.getLogger("uvicorn.error")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -75,6 +78,8 @@ class Settings:
     school_approval: str = "auto"  # auto | manual
     platform_admin_max_ids: set[str] = field(default_factory=set)
     max_schools_per_user: int = 3
+    # prod: the first MAX user of an empty database becomes a platform admin
+    bootstrap_first_admin: bool = True
     # MAX bot (webhook + приветствие)
     max_api_base: str = "https://platform-api2.max.ru"
     max_webhook_secret: str = ""
@@ -82,6 +87,8 @@ class Settings:
     max_ca_bundle: str = ""
     public_url: str = ""
     bot_reply_interval: int = 60
+    bot_notifications_enabled: bool = True
+    bot_chat_commands: bool = True
     # demo binds only to loopback unless explicitly allowed (ALLOW_PUBLIC_DEMO=1)
     allow_public_demo: bool = False
     # Photos sent as proof. Empty: the "uploads" directory next to the database
@@ -175,6 +182,7 @@ class Settings:
             ),
             school_approval=os.getenv("SCHOOL_APPROVAL", "auto").strip().lower() or "auto",
             platform_admin_max_ids=_ids_env("PLATFORM_ADMIN_MAX_IDS"),
+            bootstrap_first_admin=_bool_env("BOOTSTRAP_FIRST_ADMIN", True),
             serve_frontend=_bool_env("SERVE_FRONTEND", False),
             max_api_base=(
                 os.getenv("MAX_API_BASE", "").strip().rstrip("/")
@@ -188,6 +196,8 @@ class Settings:
                 or os.getenv("MINIAPP_URL", "").strip().rstrip("/")
             ),
             bot_reply_interval=_int_env("BOT_REPLY_INTERVAL", 60),
+            bot_notifications_enabled=_bool_env("BOT_NOTIFICATIONS_ENABLED", True),
+            bot_chat_commands=_bool_env("BOT_CHAT_COMMANDS", True),
             allow_public_demo=_bool_env("ALLOW_PUBLIC_DEMO", False),
             uploads_dir=(
                 Path(os.environ["UPLOADS_DIR"].strip())

@@ -7,13 +7,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Iterator, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import connect
 from . import admin, joins, registration
 from .security import AuthError, Identity, identity_from_request
+from .maxbot import notify_review_result, notify_teacher_submission
 from .service import (
     archive_challenge,
     award_student_by_teacher,
@@ -126,6 +127,17 @@ class NewSchoolBody(BaseModel):
     # IANA zone from the supported list (state.timezones); empty: Moscow.
     timezone: str = Field(default="", max_length=40)
     classes: list[NewClassBody] = Field(min_length=1, max_length=40)
+    # Name of one of the new classes the director leads as a teacher; empty: none.
+    teach_class: str | None = Field(default=None, max_length=12)
+
+
+class TeachBody(BaseModel):
+    # Class of the school the director leads; null stops leading a class.
+    class_id: OptionalClassId = None
+
+
+class ViewBody(BaseModel):
+    view: Literal["director", "teacher"]
 
 
 class SchoolTimezoneBody(BaseModel):
@@ -155,6 +167,10 @@ class DeleteSchoolBody(BaseModel):
 
 class BlockUserBody(BaseModel):
     reason: str = Field(default="", max_length=200)
+
+
+class SetAdminBody(BaseModel):
+    enabled: bool
 
 
 class RemoveStudentBody(BaseModel):
@@ -324,6 +340,17 @@ def school_create(
     return {"school_id": school_id, "state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
+@router.post("/school/{school_id}/teach")
+def school_teach(
+    school_id: IdPath, payload: TeachBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    registration.set_teaching_class(
+        ctx.conn, ctx.user, ctx.settings, school_id, payload.class_id or None
+    )
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
 @router.post("/school/{school_id}/classes")
 def school_add_class(
     school_id: IdPath, payload: NewClassBody, ctx: Context = Depends(get_context)
@@ -464,9 +491,25 @@ def admin_user_block(
     return {"user": admin.block_user(ctx.conn, ctx.user, ctx.settings, user_id, payload.reason)}
 
 
+@router.post("/admin/users/{user_id}/admin")
+def admin_user_admin(
+    user_id: IdPath, payload: SetAdminBody, ctx: Context = Depends(get_context)
+) -> dict[str, Any]:
+    user = admin.set_admin(ctx.conn, ctx.user, ctx.settings, user_id, payload.enabled)
+    ctx.user = ctx.conn.execute("SELECT * FROM users WHERE id = ?", (ctx.user["id"],)).fetchone()
+    return {"user": user, "state": build_state(ctx.conn, ctx.user, ctx.settings)}
+
+
 @router.post("/admin/users/{user_id}/unblock")
 def admin_user_unblock(user_id: IdPath, ctx: Context = Depends(get_context)) -> dict[str, Any]:
     return {"user": admin.unblock_user(ctx.conn, ctx.user, ctx.settings, user_id)}
+
+
+@router.post("/profile/view")
+def profile_view(payload: ViewBody, ctx: Context = Depends(get_context)) -> dict[str, Any]:
+    registration.set_view(ctx.conn, ctx.user, ctx.settings, payload.view)
+    ctx.conn.commit()
+    return {"state": build_state(ctx.conn, ctx.user, ctx.settings)}
 
 
 @router.post("/profile/name")
@@ -514,6 +557,7 @@ def buy(payload: BuyBody, ctx: Context = Depends(get_context)) -> dict[str, Any]
 def submit(
     challenge_id: IdPath,
     payload: SubmitBody,
+    background: BackgroundTasks,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
     result = submit_challenge(
@@ -526,6 +570,15 @@ def submit(
         payload.upload_id,
     )
     ctx.conn.commit()
+    if result.get("teacher_max_user_id"):
+        background.add_task(
+            notify_teacher_submission,
+            ctx.settings,
+            result["teacher_max_user_id"],
+            result.get("student_name", ""),
+            result.get("class_name", ""),
+            result.get("challenge_title", ""),
+        )
     return {
         "state": build_state(ctx.conn, ctx.user, ctx.settings),
         "result": result,
@@ -559,6 +612,7 @@ def archive(
 @router.post("/reviews/batch")
 def batch_review(
     payload: BatchReviewBody,
+    background: BackgroundTasks,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
     result = batch_review_completions(
@@ -570,6 +624,18 @@ def batch_review(
         payload.reason,
     )
     ctx.conn.commit()
+    for item in result.get("results", []):
+        if item.get("student_max_user_id"):
+            background.add_task(
+                notify_review_result,
+                ctx.settings,
+                item["student_max_user_id"],
+                item.get("challenge_title", ""),
+                item.get("status", ""),
+                item.get("xp_awarded", 0),
+                item.get("student_level", 1),
+                item.get("reject_reason", ""),
+            )
     return {
         "state": build_state(ctx.conn, ctx.user, ctx.settings),
         "result": result,
@@ -579,6 +645,7 @@ def batch_review(
 def review(
     completion_id: IdPath,
     payload: ReviewBody,
+    background: BackgroundTasks,
     ctx: Context = Depends(get_context),
 ) -> dict[str, Any]:
     result = review_completion(
@@ -590,6 +657,17 @@ def review(
         payload.reason,
     )
     ctx.conn.commit()
+    if result.get("student_max_user_id"):
+        background.add_task(
+            notify_review_result,
+            ctx.settings,
+            result["student_max_user_id"],
+            result.get("challenge_title", ""),
+            result.get("status", ""),
+            result.get("xp_awarded", 0),
+            result.get("student_level", 1),
+            result.get("reject_reason", ""),
+        )
     return {
         "state": build_state(ctx.conn, ctx.user, ctx.settings),
         "result": result,

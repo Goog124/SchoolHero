@@ -1748,3 +1748,77 @@ button.stat-tile:hover,
 @import './onboarding.css';
 @import './profile.css';
 @import './portal.css';
+
+/* ==========================================================================
+   Переключатель «Директор / Педагог»
+   ========================================================================== */
+
+.viewbar {
+  padding: 8px 16px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (min-width: 1024px) {
+  .viewbar {
+    display: none;
+  }
+}
+
+.sidebar__view {
+  margin: 12px 0 4px;
+}
+
+.view-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.view-switch__row {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  min-width: 0;
+  padding: 3px;
+  border-radius: var(--radius-card);
+  background: var(--bg-subtle);
+}
+
+.view-switch__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.view-switch__item.is-active {
+  background: var(--sferum-blue);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.view-switch__item:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.view-switch__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex: none;
+}

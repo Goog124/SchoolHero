@@ -226,7 +226,7 @@ COSMETICS: list[Cosmetic] = [
         "Фирменный жилет",
         unlock_level=4,
         swatch="#cbd5e1",
-        description="Удобная форма для лабораторий и Кванториума.",
+        description="Удобная форма для лабораторий и технопарка.",
     ),
     Cosmetic(
         "suit_cosmic",

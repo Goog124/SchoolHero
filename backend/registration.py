@@ -13,7 +13,7 @@ from .db import immediate, school_key
 from .game import DEFAULT_TIMEZONE, TIMEZONE_NAMES, iso_utc, normalize_timezone, utc_sql
 from .joins import pending_requests
 from .ratelimit import limiter
-from .service import GameError, director_school_ids
+from .service import GameError, director_school_ids, teaching_class_id
 
 # No 0/O, 1/I/L: codes are read aloud and typed on a phone.
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -48,13 +48,15 @@ def is_platform_admin(viewer: sqlite3.Row, settings: Settings) -> bool:
     max_id = viewer["max_user_id"]
     if max_id and str(max_id) in settings.platform_admin_max_ids:
         return True
+    # Granted by the first-user bootstrap, by another admin or the sandbox switch.
+    if "platform_admin" in viewer.keys() and viewer["platform_admin"]:
+        return True
     if not settings.sandbox_mode:
         return False
     client_id = viewer["client_id"]
     if client_id and str(client_id) in settings.platform_admin_client_ids:
         return True
-    # Switch in the sandbox panel; the column is ignored in prod and demo.
-    return bool(viewer["sandbox_admin"]) if "sandbox_admin" in viewer.keys() else False
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +172,10 @@ def create_school(
         seen.add(key)
         classes.append((class_name, goal))
 
+    teach_name = _clean(payload.get("teach_class")) if payload.get("teach_class") else ""
+    if teach_name and teach_name.casefold() not in seen:
+        raise GameError("Выберите свой класс из создаваемых классов")
+
     limit, window = SCHOOL_CREATE_LIMIT
     if not limiter.hit(_rate_key(settings, int(viewer["id"]), "school"), limit, window):
         raise GameError("Слишком много попыток. Повторите позже.", 429)
@@ -198,18 +204,74 @@ def create_school(
     except sqlite3.IntegrityError:
         raise GameError("Школа с таким названием в этом городе уже зарегистрирована") from None
     school_id = int(cursor.lastrowid)
+    teach_id: int | None = None
     for class_name, goal in classes:
-        _insert_class(conn, school_id, class_name, goal)
+        new_id = _insert_class(conn, school_id, class_name, goal)
+        if teach_name and class_name.casefold() == teach_name.casefold():
+            teach_id = new_id
     conn.execute(
         "INSERT OR IGNORE INTO school_staff (user_id, school_id) VALUES (?, ?)",
         (viewer["id"], school_id),
     )
+    # An existing director who already leads a class keeps it unless a new one is chosen.
+    keep_class = viewer["class_id"] if viewer["role"] == "director" else None
+    new_class = teach_id if teach_id is not None else keep_class
     conn.execute(
-        "UPDATE users SET role = 'director', school_id = ?, class_id = NULL, onboarded = 1 "
-        "WHERE id = ?",
-        (school_id, viewer["id"]),
+        "UPDATE users SET role = 'director', school_id = ?, class_id = ?, class_since = ?, "
+        "onboarded = 1 WHERE id = ?",
+        (
+            school_id,
+            new_class,
+            utc_sql() if teach_id is not None else (viewer["class_since"] if keep_class else None),
+            viewer["id"],
+        ),
     )
     return school_id
+
+
+def set_teaching_class(
+    conn, viewer: sqlite3.Row, settings: Settings, school_id: int, class_id: int | None
+) -> None:
+    """A director starts or stops leading a class of their own school.
+
+    The role stays ``director``; the class is ``users.class_id``. Stopping
+    also returns the app to the director mode and is allowed in a school the
+    platform rejected (taking access away must always work).
+    """
+    _require_director_of(conn, viewer, settings, school_id, manage=class_id is not None)
+    with immediate(conn):
+        if class_id is None:
+            current = conn.execute(
+                "SELECT c.school_id FROM users u JOIN classes c ON c.id = u.class_id "
+                "WHERE u.id = ?",
+                (viewer["id"],),
+            ).fetchone()
+            if current and int(current["school_id"]) == school_id:
+                conn.execute(
+                    "UPDATE users SET class_id = NULL, class_since = NULL, "
+                    "active_view = 'director' WHERE id = ?",
+                    (viewer["id"],),
+                )
+            return
+        cls = conn.execute(
+            "SELECT id, school_id FROM classes WHERE id = ?", (class_id,)
+        ).fetchone()
+        if cls is None or int(cls["school_id"]) != school_id:
+            raise GameError("Класс не найден в этой школе", 404)
+        conn.execute(
+            "UPDATE users SET class_id = ?, class_since = datetime('now'), staff_detached = 0 "
+            "WHERE id = ?",
+            (class_id, viewer["id"]),
+        )
+
+
+def set_view(conn, viewer: sqlite3.Row, settings: Settings, view: str) -> None:
+    """Switch a director who leads a class between the director and teacher modes."""
+    if view not in {"director", "teacher"}:
+        raise GameError("Неизвестный режим")
+    if teaching_class_id(conn, viewer, settings) is None:
+        raise GameError("Режим педагога доступен директору, который ведёт класс", 400)
+    conn.execute("UPDATE users SET active_view = ? WHERE id = ?", (view, viewer["id"]))
 
 
 REJECTED_SCHOOL_MESSAGE = (
@@ -304,7 +366,8 @@ def delete_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int) -
     _require_class_of_director(conn, viewer, settings, class_id)
     with immediate(conn):
         busy = conn.execute(
-            "SELECT (SELECT COUNT(*) FROM users WHERE class_id = ?) AS members, "
+            "SELECT (SELECT COUNT(*) FROM users WHERE class_id = ? AND role != 'director') "
+            "AS members, "
             "(SELECT COUNT(*) FROM challenges WHERE class_id = ?) AS tasks, "
             "(SELECT COUNT(*) FROM xp_events WHERE class_id = ?) AS events",
             (class_id, class_id, class_id),
@@ -313,6 +376,12 @@ def delete_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: int) -
             raise GameError("В классе есть ученики или педагоги, удалить его нельзя")
         if busy["tasks"] or busy["events"]:
             raise GameError("У класса есть задания или история опыта, удалить его нельзя")
+        # A director who led this class simply stops leading it.
+        conn.execute(
+            "UPDATE users SET class_id = NULL, class_since = NULL, active_view = 'director' "
+            "WHERE class_id = ? AND role = 'director'",
+            (class_id,),
+        )
         conn.execute("DELETE FROM class_exclusions WHERE class_id = ?", (class_id,))
         conn.execute("DELETE FROM join_requests WHERE class_id = ?", (class_id,))
         conn.execute("DELETE FROM class_staff WHERE class_id = ?", (class_id,))
@@ -438,9 +507,9 @@ def school_admin_data(
     teachers: dict[int, list[dict[str, Any]]] = {}
     for row in conn.execute(
         f"""
-        SELECT u.id, u.class_id, u.first_name, u.last_name, u.class_since FROM users u
+        SELECT u.id, u.class_id, u.first_name, u.last_name, u.class_since, u.role FROM users u
         JOIN classes c ON c.id = u.class_id
-        WHERE u.role = 'teacher' AND c.school_id IN ({marks}) ORDER BY u.id
+        WHERE u.role IN ('teacher', 'director') AND c.school_id IN ({marks}) ORDER BY u.id
         """,
         ids,
     ).fetchall():
@@ -449,6 +518,8 @@ def school_admin_data(
                 "id": int(row["id"]),
                 "name": f"{row['first_name']} {row['last_name']}".strip(),
                 "since": iso_utc(row["class_since"]) if row["class_since"] else None,
+                "is_director": row["role"] == "director",
+                "is_self": int(row["id"]) == int(viewer["id"]),
             }
         )
     by_school: dict[int, list[dict[str, Any]]] = {}
@@ -471,6 +542,7 @@ def school_admin_data(
     class_ids = [int(r["id"]) for r in class_rows]
     return {
         "join_requests": pending_requests(conn, class_ids),
+        "teaching_class_id": teaching_class_id(conn, viewer, settings),
         "active_school_id": active_school_id,
         "max_schools": settings.max_schools_per_user,
         "schools_left": max(0, settings.max_schools_per_user - int(owned)),
@@ -551,5 +623,5 @@ def set_sandbox_admin(conn, viewer: sqlite3.Row, settings: Settings, enabled: bo
     if not settings.sandbox_mode:
         raise GameError("Не найдено", 404)
     conn.execute(
-        "UPDATE users SET sandbox_admin = ? WHERE id = ?", (1 if enabled else 0, viewer["id"])
+        "UPDATE users SET platform_admin = ? WHERE id = ?", (1 if enabled else 0, viewer["id"])
     )

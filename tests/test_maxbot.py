@@ -172,3 +172,103 @@ def test_no_public_url_and_no_username_sends_text_without_keyboard(tmp_path, mon
     settings = make_settings(tmp_path, app_mode="prod", bot_token=TOKEN, max_webhook_secret=SECRET)
     assert settings.public_url == ""
     assert maxbot.build_buttons(settings, NoMe()) == []
+
+
+def test_chat_command_help(bot):
+    r = bot.post("/api/max/webhook", json=message(user_id=101, mid="m_help", text="/help"), headers=HEADERS)
+    assert r.status_code == 200
+    assert len(FakeClient.sent) == 1
+    uid, reply, _ = FakeClient.sent[-1]
+    assert uid == 101
+    assert "Команды в чате:" in reply
+    assert "/status" in reply and "/tasks" in reply
+    # No emojis
+    assert all(ord(c) < 0x1F000 for c in reply)
+
+
+def test_chat_command_status_and_tasks(bot):
+    from backend import db
+    # Insert test user and challenge into bot's db
+    settings = bot.app.state.settings
+    with db.connect(settings.db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO schools (id, name, city) VALUES (1, 'Школа 10', 'Москва')"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO classes (id, school_id, name) VALUES (1, 1, '8А')"
+        )
+        conn.execute(
+            "INSERT INTO users (id, max_user_id, first_name, last_name, role, class_id, school_id, xp, streak, avatar) "
+            "VALUES (999, '202', 'Иван', 'Иванов', 'student', 1, 1, 120, 3, 'default')"
+        )
+        conn.execute(
+            "INSERT INTO challenges (id, class_id, title, category, xp, deadline, active) "
+            "VALUES (999, 1, 'Олимпиада по физике', 'study', 100, '2026-11-20', 1)"
+        )
+        conn.commit()
+
+    # /status
+    r = bot.post("/api/max/webhook", json=message(user_id=202, mid="m_stat", text="/status"), headers=HEADERS)
+    assert r.status_code == 200
+    assert len(FakeClient.sent) == 1
+    reply = FakeClient.sent[-1][1]
+    assert "Иван Иванов" in reply
+    assert "8А" in reply
+    assert "120 XP" in reply
+    assert "3 дн." in reply
+    assert all(ord(c) < 0x1F000 for c in reply)
+
+    # /tasks
+    maxbot._flood.clear()
+    r = bot.post("/api/max/webhook", json=message(user_id=202, mid="m_task", text="/tasks"), headers=HEADERS)
+    assert r.status_code == 200
+    assert len(FakeClient.sent) == 2
+    reply = FakeClient.sent[-1][1]
+    assert "Олимпиада по физике" in reply
+    assert "100 XP" in reply
+    assert all(ord(c) < 0x1F000 for c in reply)
+
+
+def test_chat_commands_can_be_disabled(tmp_path, monkeypatch):
+    FakeClient.sent = []
+    maxbot.reset_state()
+    monkeypatch.setattr(maxbot, "get_client", lambda settings: FakeClient())
+    settings = make_settings(
+        tmp_path,
+        app_mode="prod",
+        bot_token=TOKEN,
+        max_webhook_secret=SECRET,
+        public_url="https://app.example.org",
+        bot_chat_commands=False,
+    )
+    client = build_client(settings)
+    r = client.post("/api/max/webhook", json=message(user_id=505, mid="m_off", text="/status"), headers=HEADERS)
+    assert r.status_code == 200
+    assert len(FakeClient.sent) == 1
+    assert FakeClient.sent[0][1] == maxbot.HINT_TEXT
+    client.close()
+    maxbot.reset_state()
+
+
+def test_notify_review_result(tmp_path, monkeypatch):
+    FakeClient.sent = []
+    settings = make_settings(tmp_path, app_mode="prod", bot_token=TOKEN)
+    monkeypatch.setattr(maxbot, "get_client", lambda s: FakeClient())
+
+    # Approved notification
+    maxbot.notify_review_result(settings, 303, "Физика", "approved", xp_awarded=50, student_level=2)
+    assert len(FakeClient.sent) == 1
+    uid, text, _ = FakeClient.sent[0]
+    assert uid == 303
+    assert text == "Задание «Физика» проверено педагогом. Начислено 50 XP. Текущий уровень: 2."
+    assert all(ord(c) < 0x1F000 for c in text)
+
+    # Rejected notification with reason
+    maxbot.notify_review_result(settings, 303, "Физика", "rejected", reason="Прикрепите PDF")
+    assert len(FakeClient.sent) == 2
+    assert FakeClient.sent[1][1] == "Задание «Физика» возвращено на доработку. Комментарий: Прикрепите PDF."
+
+    # Notifications disabled via flag
+    settings_off = make_settings(tmp_path, app_mode="prod", bot_token=TOKEN, bot_notifications_enabled=False)
+    maxbot.notify_review_result(settings_off, 303, "Физика", "approved", xp_awarded=50)
+    assert len(FakeClient.sent) == 2  # No new message sent

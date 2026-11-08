@@ -678,3 +678,18 @@ button.st-stat:focus-visible { outline: 2px solid var(--sferum-blue); outline-of
 }
 .st-chip:hover { background: var(--bg-subtle); }
 .st-hint { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); }
+
+/* Фильтр статусов заданий: все варианты видны без прокрутки (2×2 на телефоне). */
+.st-tabs--grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: visible;
+}
+.st-tabs--grid .st-tab {
+  min-width: 0;
+}
+@media (min-width: 640px) {
+  .st-tabs--grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

@@ -38,6 +38,15 @@ WELCOME_TEXT = (
 HINT_TEXT = "Школьный герой работает в приложении. Откройте его кнопкой ниже."
 BUTTON_TEXT = "Открыть приложение"
 
+HELP_TEXT = (
+    "Школьный герой: справка\n\n"
+    "Команды в чате:\n"
+    "/status — информация о профиле, уровне и серии\n"
+    "/tasks — список актуальных заданий класса\n"
+    "/help — справка по командам\n\n"
+    "Для сдачи отчётов и кастомизации персонажа откройте приложение кнопкой ниже."
+)
+
 SEND_ATTEMPTS = 3
 RETRY_DELAYS = (1.0, 3.0)
 HTTP_TIMEOUT = 10.0
@@ -198,7 +207,12 @@ def build_buttons(settings: Settings, client: MaxClient) -> list[list[dict]]:
     return [[{"type": "link", "text": BUTTON_TEXT, "url": settings.public_url}]]
 
 
-def deliver(settings: Settings, user_id: int, text: str) -> None:
+def deliver(
+    settings: Settings,
+    user_id: int,
+    text: str,
+    buttons: list[list[dict]] | None = None,
+) -> None:
     """Send text + app button with a timeout and a few retries (runs in background)."""
     try:
         client = get_client(settings)
@@ -208,8 +222,8 @@ def deliver(settings: Settings, user_id: int, text: str) -> None:
     last: Exception | None = None
     for attempt in range(SEND_ATTEMPTS):
         try:
-            buttons = build_buttons(settings, client)
-            client.send_message(user_id, text, buttons)
+            btns = build_buttons(settings, client) if buttons is None else buttons
+            client.send_message(user_id, text, btns)
             return
         except MaxApiError as exc:
             last = exc
@@ -219,6 +233,165 @@ def deliver(settings: Settings, user_id: int, text: str) -> None:
                 break
             time.sleep(RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)])
     log.error("не удалось отправить сообщение боту MAX: %s", last)
+
+
+def _format_status(max_user_id: int, settings: Settings) -> str:
+    try:
+        from . import db
+        with db.connect(settings.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT u.*, c.name AS class_name, s.name AS school_name
+                FROM users u
+                LEFT JOIN classes c ON c.id = u.class_id
+                LEFT JOIN schools s ON s.id = u.school_id
+                WHERE u.max_user_id = ?
+                """,
+                (str(max_user_id),),
+            ).fetchone()
+            if not row:
+                return (
+                    "Школьный герой: профиль\n\n"
+                    "Пользователь не найден в системе. Откройте приложение кнопкой ниже для входа."
+                )
+
+            role_titles = {"student": "ученик", "teacher": "педагог", "director": "директор"}
+            role_name = role_titles.get(row["role"], row["role"])
+            name = f"{row['first_name']} {row['last_name']}".strip()
+            class_name = row["class_name"] or "без привязки к классу"
+            school_name = row["school_name"] or "школа не указана"
+
+            lines = [
+                "Школьный герой: профиль",
+                "",
+                f"Пользователь: {name}",
+                f"Роль: {role_name}",
+                f"Класс: {class_name}",
+                f"Школа: {school_name}",
+            ]
+            if row["role"] == "student":
+                from .game import level_for
+                level = level_for(int(row["xp"]))
+                lines.extend([
+                    f"Уровень: {level} ({row['xp']} XP)",
+                    f"Серия активности: {row['streak']} дн.",
+                ])
+            return "\n".join(lines)
+    except Exception as exc:
+        log.warning("Ошибка получения статуса для бота: %s", exc)
+        return HINT_TEXT
+
+
+def _format_tasks(max_user_id: int, settings: Settings) -> str:
+    try:
+        from . import db
+        with db.connect(settings.db_path) as conn:
+            user = conn.execute(
+                "SELECT id, class_id FROM users WHERE max_user_id = ?",
+                (str(max_user_id),),
+            ).fetchone()
+            if not user or not user["class_id"]:
+                return (
+                    "Школьный герой: задания\n\n"
+                    "Для просмотра заданий войдите в приложение и выберите класс."
+                )
+
+            tasks = conn.execute(
+                "SELECT title, xp, deadline FROM challenges "
+                "WHERE class_id = ? AND active = 1 ORDER BY id DESC LIMIT 5",
+                (user["class_id"],),
+            ).fetchall()
+            if not tasks:
+                return (
+                    "Школьный герой: актуальные задания\n\n"
+                    "Сейчас нет активных заданий для вашего класса."
+                )
+
+            lines = ["Школьный герой: актуальные задания", ""]
+            for i, t in enumerate(tasks, 1):
+                deadline_str = f" (срок: {t['deadline'][:10]})" if t["deadline"] else ""
+                lines.append(f"{i}. {t['title']} — {t['xp']} XP{deadline_str}")
+            return "\n".join(lines)
+    except Exception as exc:
+        log.warning("Ошибка получения заданий для бота: %s", exc)
+        return HINT_TEXT
+
+
+def handle_command(user_id: int, text: str, settings: Settings) -> str | None:
+    """Handle text commands if enabled. Returns reply text or None for standard hint."""
+    if not settings.bot_chat_commands:
+        return None
+    cleaned = text.strip()
+    first_word = cleaned.split()[0].lower() if cleaned else ""
+
+    if first_word in {"/status", "/профиль", "статус", "профиль"}:
+        return _format_status(user_id, settings)
+    if first_word in {"/tasks", "/задания", "задания"}:
+        return _format_tasks(user_id, settings)
+    if first_word in {"/help", "/помощь", "помощь"}:
+        return HELP_TEXT
+    return None
+
+
+def notify_user(
+    settings: Settings,
+    max_user_id: str | int | None,
+    text: str,
+    buttons: list[list[dict]] | None = None,
+) -> None:
+    """Send notification to MAX chat if notifications are enabled."""
+    if not settings.bot_notifications_enabled or not settings.bot_token or not max_user_id:
+        return
+    try:
+        uid = int(str(max_user_id).strip())
+    except (ValueError, TypeError):
+        return
+    deliver(settings, uid, text, buttons=buttons)
+
+
+def notify_review_result(
+    settings: Settings,
+    student_max_id: str | int | None,
+    challenge_title: str,
+    status: str,
+    xp_awarded: int = 0,
+    student_level: int = 1,
+    reason: str = "",
+) -> None:
+    """Send verification result notification to a student."""
+    if not settings.bot_notifications_enabled or not student_max_id:
+        return
+    title = (challenge_title or "").strip()
+    if status == "approved":
+        text = (
+            f"Задание «{title}» проверено педагогом. "
+            f"Начислено {xp_awarded} XP. Текущий уровень: {student_level}."
+        )
+    elif status == "rejected":
+        if reason.strip():
+            text = f"Задание «{title}» возвращено на доработку. Комментарий: {reason.strip()}."
+        else:
+            text = f"Задание «{title}» отклонено педагогом."
+    else:
+        return
+    notify_user(settings, student_max_id, text)
+
+
+def notify_teacher_submission(
+    settings: Settings,
+    teacher_max_id: str | int | None,
+    student_name: str,
+    class_name: str,
+    challenge_title: str,
+) -> None:
+    """Send new submission notification to a teacher."""
+    if not settings.bot_notifications_enabled or not teacher_max_id:
+        return
+    text = (
+        f"Новый ответ на проверку: {student_name.strip()}, класс {class_name.strip()}. "
+        f"Задание: «{challenge_title.strip()}»."
+    )
+    notify_user(settings, teacher_max_id, text)
 
 
 def _as_int(value: Any) -> int | None:
@@ -264,7 +437,15 @@ def plan_reply(update: dict, settings: Settings) -> tuple[int, str] | None:
             return None
         if _flood.seen_or_add(user_id, ttl=settings.bot_reply_interval):
             return None
-        return user_id, HINT_TEXT
+
+        reply_text = None
+        if isinstance(body, dict):
+            text = (body.get("text") or "").strip()
+            if text and settings.bot_chat_commands:
+                reply_text = handle_command(user_id, text, settings)
+        if not reply_text:
+            reply_text = HINT_TEXT
+        return user_id, reply_text
     return None
 
 

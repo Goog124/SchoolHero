@@ -244,6 +244,21 @@ export const api = {
     });
   },
 
+  setView(view: 'director' | 'teacher'): Promise<MutationResponse> {
+    return request<MutationResponse>('/api/profile/view', {
+      method: 'POST',
+      body: JSON.stringify({ view }),
+    });
+  },
+
+  /** Директор ведёт класс своей школы (null: не ведёт). */
+  teachClass(schoolId: number, classId: number | null): Promise<MutationResponse> {
+    return request<MutationResponse>(`/api/school/${schoolId}/teach`, {
+      method: 'POST',
+      body: JSON.stringify({ class_id: classId }),
+    });
+  },
+
   addClass(schoolId: number, name: string): Promise<MutationResponse> {
     return request<MutationResponse>(`/api/school/${schoolId}/classes`, {
       method: 'POST',
@@ -366,6 +381,16 @@ export const api = {
     return request<{ user: AdminUserItem }>(`/api/admin/users/${userId}/block`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
+    });
+  },
+
+  adminSetAdmin(
+    userId: number,
+    enabled: boolean,
+  ): Promise<{ user: AdminUserItem; state: GameState }> {
+    return request<{ user: AdminUserItem; state: GameState }>(`/api/admin/users/${userId}/admin`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     });
   },
 

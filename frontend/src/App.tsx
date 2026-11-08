@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api';
 import { AppHeader } from './components/AppHeader';
+import { ViewSwitch } from './components/ViewSwitch';
 import { AvatarFrame } from './components/AvatarFrame';
 import { ChallengeSheet } from './components/ChallengeSheet';
 import { DesktopSidebar } from './components/DesktopSidebar';
@@ -61,6 +62,7 @@ import type {
   SubmitResult,
   TabId,
 } from './types';
+import { uiRole } from './types';
 
 type LevelUpData = {
   level: LevelInfo;
@@ -310,7 +312,7 @@ export default function App() {
 
   useEffect(() => {
     if (!state) return;
-    const role = state.viewer.role;
+    const role = uiRole(state.viewer);
     const base = role === 'director' ? DIRECTOR_TABS : role === 'teacher' ? TEACHER_TABS : STUDENT_TABS;
     const allowed: TabId[] = isAdminOnly(state)
       ? ADMIN_ONLY_TABS
@@ -377,18 +379,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const role = state?.viewer.role;
+    const role = state ? uiRole(state.viewer) : undefined;
     document.title =
       role === 'director'
         ? 'Администрация школы · Школьный герой'
         : role === 'teacher'
         ? 'Кабинет педагога · Школьный герой'
         : 'Школьный герой';
-  }, [state?.viewer.role]);
+  }, [state?.viewer.role, state?.viewer.active_view, state?.viewer.can_teach]);
 
   const navigate = useCallback(
     (next: TabId) => {
-      const role = state?.viewer.role ?? 'student';
+      const role = state ? uiRole(state.viewer) : 'student';
       if (role === 'director') lastDirectorTab.current = next;
       else if (role === 'teacher') lastTeacherTab.current = next;
       else lastStudentTab.current = next;
@@ -399,7 +401,7 @@ export default function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       tapHaptic();
     },
-    [state?.viewer.role],
+    [state?.viewer.role, state?.viewer.active_view, state?.viewer.can_teach],
   );
 
   async function mutate<T>(
@@ -576,6 +578,28 @@ export default function App() {
       student: 'Роль: ученик',
     };
     showToast(labels[role], 'info', 'shield');
+    return true;
+  };
+
+  /** Директор с классом: переключение «Директор / Педагог», сохраняется на сервере. */
+  const handleView = async (view: 'director' | 'teacher'): Promise<boolean> => {
+    const response = await mutate('view', () => api.setView(view));
+    if (!response) return false;
+    const role = view === 'teacher' ? 'teacher' : 'director';
+    const nextTab: TabId = view === 'teacher' ? 'teacher-class' : 'director-overview';
+    if (view === 'teacher') lastTeacherTab.current = nextTab;
+    else lastDirectorTab.current = nextTab;
+    setTab(nextTab);
+    window.history.pushState({}, '', pathForTab(nextTab, role));
+    setChallengeId(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return true;
+  };
+
+  const handleTeachClass = async (schoolId: number, classId: number | null): Promise<boolean> => {
+    const response = await mutate('teach', () => api.teachClass(schoolId, classId));
+    if (!response) return false;
+    showToast(classId === null ? 'Вы больше не ведёте класс' : 'Вы ведёте класс', 'success', 'users');
     return true;
   };
 
@@ -1019,7 +1043,7 @@ export default function App() {
     );
   }
 
-  const role = state.viewer.role;
+  const role = uiRole(state.viewer);
   const isTeacher = role === 'teacher';
   const isDirector = role === 'director';
   const teacher = state.teacher;
@@ -1115,6 +1139,8 @@ export default function App() {
         onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         onProfile={() => navigate('profile')}
         hideHero={adminOnly}
+        onViewChange={state.viewer.can_teach && !adminOnly ? (view) => void handleView(view) : undefined}
+        viewBusy={busy === 'view'}
       />
 
       <div className="shell">
@@ -1126,6 +1152,16 @@ export default function App() {
           onRefresh={() => void refresh(true)}
           refreshing={refreshing}
         />
+
+        {state.viewer.can_teach && !adminOnly ? (
+          <div className="viewbar">
+            <ViewSwitch
+              viewer={state.viewer}
+              onChange={(view) => void handleView(view)}
+              busy={busy === 'view'}
+            />
+          </div>
+        ) : null}
 
         <header className="desk-head">
           <div className="desk-head__crumbs">
@@ -1256,6 +1292,7 @@ export default function App() {
               onSelectSchool={handleSelectSchool}
               onSetTimezone={handleSetTimezone}
               onCreateSchool={handleCreateSchool}
+              onTeachClass={handleTeachClass}
             />
           ) : null}
 
@@ -1269,7 +1306,7 @@ export default function App() {
           ) : null}
 
           {tab === 'admin-users' && state.platform_admin ? (
-            <AdminUsersScreen notify={showToast} />
+            <AdminUsersScreen notify={showToast} onStateChange={setState} />
           ) : null}
 
           {isDirector && !state.school_admin && !director && tab.startsWith('director-') ? (

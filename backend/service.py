@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from datetime import date, datetime, time, timezone
@@ -173,6 +174,33 @@ def can_manage_class(conn, viewer: sqlite3.Row, settings: Settings, class_id: in
     return False
 
 
+def teaching_class_id(conn, viewer: sqlite3.Row, settings: Settings) -> int | None:
+    """Class a real director leads as a teacher (own school only), else None.
+
+    The class is ``users.class_id``; a class of a school the director does not
+    run (e.g. an old default class) does not count.
+    """
+    if settings.demo_mode or viewer["role"] != "director" or viewer["class_id"] is None:
+        return None
+    row = conn.execute(
+        "SELECT school_id FROM classes WHERE id = ?", (viewer["class_id"],)
+    ).fetchone()
+    if row and int(row["school_id"]) in director_school_ids(conn, viewer, settings):
+        return int(viewer["class_id"])
+    return None
+
+
+def director_view(conn, viewer: sqlite3.Row, settings: Settings) -> str:
+    """'teacher' while a director with a class works in the teacher mode."""
+    if (
+        viewer["active_view"] == "teacher"
+        and effective_role(viewer, settings) == "director"
+        and teaching_class_id(conn, viewer, settings) is not None
+    ):
+        return "teacher"
+    return "director"
+
+
 def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row:
     if identity.kind == "max":
         row = conn.execute(
@@ -236,14 +264,30 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
     role = identity.role_hint if identity.kind == "max" else "student"
     onboarded = 0 if role == "student" else 1
 
+    bootstrap = (
+        identity.kind == "max"
+        and settings.app_mode == "prod"
+        and settings.bootstrap_first_admin
+        and not settings.platform_admin_max_ids
+    )
+    first_admin = 0
     try:
+        if bootstrap:
+            # Check "the database is empty" and insert in one write transaction:
+            # two simultaneous first logins cannot both become admins.
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            if (
+                conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+            ):
+                first_admin = 1
         cursor = conn.execute(
             """
             INSERT INTO users
                 (max_user_id, client_id, first_name, last_name, username,
                  photo_url, role, class_id, xp, sparks, streak,
-                 last_active_date, avatar, owned, onboarded)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, NULL, ?, '[]', ?)
+                 last_active_date, avatar, owned, onboarded, platform_admin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, NULL, ?, '[]', ?, ?)
             """,
             (
                 identity.max_user_id,
@@ -259,10 +303,16 @@ def _load_or_create(conn, identity: Identity, settings: Settings) -> sqlite3.Row
                 40 if not demo else 0,
                 dump_avatar(DEFAULT_AVATAR if not demo else BASIC_AVATAR),
                 onboarded,
+                first_admin,
             ),
         )
         user_id = int(cursor.lastrowid)
         conn.commit()
+        if first_admin:
+            logging.getLogger("uvicorn.error").warning(
+                "Первый пользователь %s назначен администратором платформы",
+                identity.max_user_id,
+            )
     except sqlite3.IntegrityError:
         conn.rollback()
         if identity.kind == "max":
@@ -1115,6 +1165,33 @@ def _director_data(conn, viewer: sqlite3.Row, school_id: int) -> dict[str, Any]:
     }
 
 
+def _other_view_pending(conn, viewer: sqlite3.Row, settings: Settings, view: str) -> int:
+    """Waiting items in the mode the director is NOT in now."""
+    from .joins import pending_requests
+
+    if view == "director":
+        class_id = teaching_class_id(conn, viewer, settings)
+        works = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM completions cp
+            JOIN challenges c ON c.id = cp.challenge_id
+            JOIN users u ON u.id = cp.user_id AND u.class_id = c.class_id
+            WHERE c.class_id = ? AND cp.status = 'pending' AND u.role = 'student'
+            """,
+            (class_id,),
+        ).fetchone()["n"]
+        return int(works) + len(pending_requests(conn, [class_id]))
+    ids = director_school_ids(conn, viewer, settings)
+    if not ids:
+        return 0
+    marks = ",".join("?" for _ in ids)
+    class_ids = [
+        int(r["id"])
+        for r in conn.execute(f"SELECT id FROM classes WHERE school_id IN ({marks})", ids)
+    ]
+    return len(pending_requests(conn, class_ids))
+
+
 def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]:
     from .joins import viewer_join_request
     from .registration import is_platform_admin, platform_admin_data, school_admin_data
@@ -1134,8 +1211,26 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
             (class_id,),
         ).fetchone()
 
+    can_teach = (
+        role == "director" and teaching_class_id(conn, viewer, settings) is not None
+    )
+    active_view = director_view(conn, viewer, settings) if role == "director" else None
+    if (
+        role == "director"
+        and not can_teach
+        and viewer["active_view"] != "director"
+        and not settings.demo_mode
+    ):
+        # The class is gone: the saved mode falls back to the director's.
+        conn.execute("UPDATE users SET active_view = 'director' WHERE id = ?", (viewer["id"],))
+        conn.commit()
+    teacher_mode = role == "director" and active_view == "teacher"
+
     admin_school_id = active_school_id(conn, viewer, settings) if role == "director" else None
-    view_school_id = int(class_row["school_id"]) if class_row else admin_school_id
+    if role == "director" and not teacher_mode and admin_school_id is not None:
+        view_school_id = admin_school_id
+    else:
+        view_school_id = int(class_row["school_id"]) if class_row else admin_school_id
     school_row = class_row
     if school_row is None and view_school_id is not None:
         school_row = conn.execute(
@@ -1171,11 +1266,14 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
     teacher = None
     director = None
     school_admin = None
-    if role == "teacher" and class_row is not None:
+    if (role == "teacher" or teacher_mode) and class_row is not None:
         teacher = _teacher_data(conn, viewer, class_students, week, challenges, leaderboard)
     elif role == "director":
         if admin_school_id is not None:
             director = _director_data(conn, viewer, admin_school_id)
+        school_admin = school_admin_data(conn, viewer, settings, admin_school_id)
+    if teacher_mode:
+        # The school settings stay reachable (profile, "I lead a class" block).
         school_admin = school_admin_data(conn, viewer, settings, admin_school_id)
 
     weekly_goal = int(class_row["weekly_goal"]) if class_row else 0
@@ -1186,6 +1284,11 @@ def build_state(conn, viewer: sqlite3.Row, settings: Settings) -> dict[str, Any]
         "last_name": viewer["last_name"],
         "username": viewer["username"],
         "role": role,
+        "active_view": active_view,
+        "can_teach": can_teach,
+        "other_view_pending": (
+            _other_view_pending(conn, viewer, settings, active_view) if can_teach else 0
+        ),
         "is_teacher_preview": settings.demo_mode
         and viewer["preview_role"] == "teacher",
         "class_id": class_id,
@@ -1935,7 +2038,23 @@ def submit_challenge(
             )
         # Sending own work is the student's activity for the day (streak).
         mark_active(conn, int(viewer["id"]), class_timezone(conn, int(user["class_id"])))
-    return {"status": "pending", "challenge_title": challenge["title"]}
+        teacher_row = conn.execute(
+            "SELECT max_user_id FROM users WHERE class_id = ? AND role = 'teacher' AND max_user_id IS NOT NULL LIMIT 1",
+            (user["class_id"],),
+        ).fetchone()
+        if not teacher_row:
+            teacher_row = conn.execute(
+                "SELECT max_user_id FROM class_staff WHERE class_id = ? LIMIT 1",
+                (user["class_id"],),
+            ).fetchone()
+        class_row = conn.execute("SELECT name FROM classes WHERE id = ?", (user["class_id"],)).fetchone()
+    return {
+        "status": "pending",
+        "challenge_title": challenge["title"],
+        "teacher_max_user_id": teacher_row["max_user_id"] if teacher_row else None,
+        "class_name": class_row["name"] if class_row else "",
+        "student_name": f"{user['first_name']} {user['last_name']}".strip(),
+    }
 
 
 def review_completion(
@@ -1955,7 +2074,7 @@ def review_completion(
             """
             SELECT cp.*, c.title, c.xp, c.category, c.class_id,
                    u.first_name, u.last_name, u.role AS student_role,
-                   u.class_id AS student_class
+                   u.class_id AS student_class, u.max_user_id
             FROM completions cp
             JOIN challenges c ON c.id = cp.challenge_id
             JOIN users u ON u.id = cp.user_id
@@ -1988,7 +2107,14 @@ def review_completion(
             )
             if cursor.rowcount != 1:
                 raise GameError("Эта заявка уже проверена")
-            return {"status": "rejected", "student_name": student_name, "xp_awarded": 0}
+            return {
+                "status": "rejected",
+                "student_name": student_name,
+                "xp_awarded": 0,
+                "student_max_user_id": row["max_user_id"],
+                "challenge_title": row["title"],
+                "reject_reason": str(reason or "").strip(),
+            }
 
         # Only the request that actually moved the row out of 'pending' awards XP.
         cursor = conn.execute(
@@ -2015,6 +2141,8 @@ def review_completion(
         "xp_awarded": int(row["xp"]),
         "student_level": award["level"],
         "level_up": award["level_up"],
+        "student_max_user_id": row["max_user_id"],
+        "challenge_title": row["title"],
     }
 
 

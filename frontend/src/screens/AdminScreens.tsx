@@ -11,6 +11,7 @@ import type {
   AdminSummary,
   AdminUserItem,
   DeletedSchoolSummary,
+  GameState,
   SchoolStatus,
 } from '../types';
 import '../styles/admin.css';
@@ -97,6 +98,7 @@ function SummaryBlock({ summary }: { summary: AdminSummary | null }) {
       />
       <Tile label="Активных учеников за 7 дней" value={summary.active_students_week} />
       <Tile label="Работ на проверке" value={summary.pending_works} />
+      <Tile label="Администраторов" value={summary.admins} />
     </section>
   );
 }
@@ -518,7 +520,13 @@ function AdminSchoolView({
 // Пользователи
 // ---------------------------------------------------------------------------
 
-export function AdminUsersScreen({ notify }: { notify: Notify }) {
+export function AdminUsersScreen({
+  notify,
+  onStateChange,
+}: {
+  notify: Notify;
+  onStateChange?: (state: GameState) => void;
+}) {
   const { confirm, ask, dialog } = useConfirm();
   const [query, setQuery] = useState('');
   const search = useDebounced(query.trim());
@@ -578,6 +586,33 @@ export function AdminUsersScreen({ notify }: { notify: Notify }) {
       void load(0);
     } catch (e) {
       notify(errorText(e, 'Не удалось заблокировать'), 'error');
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const toggleAdmin = async (user: AdminUserItem) => {
+    const enable = !user.is_admin;
+    const ok = await confirm({
+      title: enable ? 'Сделать администратором?' : 'Снять права администратора?',
+      message: enable
+        ? `${user.name} сможет подтверждать и удалять школы, блокировать пользователей и назначать других администраторов. Роль в школе не изменится.`
+        : user.is_self
+          ? 'Вы потеряете доступ к вкладкам администратора. Роль в школе не изменится.'
+          : `${user.name} потеряет доступ к вкладкам администратора. Роль в школе не изменится.`,
+      confirmLabel: enable ? 'Сделать администратором' : 'Снять права',
+      danger: !enable,
+    });
+    if (!ok) return;
+    setWorking(user.id);
+    try {
+      const response = await api.adminSetAdmin(user.id, enable);
+      replace(response.user);
+      onStateChange?.(response.state);
+      notify(enable ? 'Права администратора выданы' : 'Права администратора сняты', 'info');
+      void load(0);
+    } catch (e) {
+      notify(errorText(e, 'Не удалось изменить права'), 'error');
     } finally {
       setWorking(null);
     }
@@ -650,6 +685,12 @@ export function AdminUsersScreen({ notify }: { notify: Notify }) {
               <h3 className="ad-card__name">{user.name}</h3>
               <span className="ad-status ad-status--role">{ROLE_LABEL[user.role]}</span>
             </div>
+            {user.is_admin ? (
+              <p className="ad-card__meta">
+                <strong>Администратор платформы</strong>
+                {user.admin_from_env ? ' (из настроек сервера)' : ''}
+              </p>
+            ) : null}
             <p className="ad-card__meta ad-card__id">{user.external_id || 'без идентификатора'}</p>
             <dl className="ad-facts">
               <div>
@@ -677,7 +718,7 @@ export function AdminUsersScreen({ notify }: { notify: Notify }) {
             <div className="ad-actions">
               {user.is_admin || user.is_self ? (
                 <span className="ad-card__meta">
-                  {user.is_self ? 'Это вы' : 'Администратор платформы'}: заблокировать нельзя
+                  {user.is_self ? 'Это вы' : 'Администратора'}: заблокировать нельзя
                 </span>
               ) : user.blocked ? (
                 <button type="button" className="btn btn--secondary btn--sm" disabled={working === user.id} onClick={() => void unblock(user)}>
@@ -686,6 +727,15 @@ export function AdminUsersScreen({ notify }: { notify: Notify }) {
               ) : (
                 <button type="button" className="btn btn--danger btn--sm" disabled={working === user.id} onClick={() => void block(user)}>
                   Заблокировать
+                </button>
+              )}
+              {user.admin_from_env ? null : user.is_admin ? (
+                <button type="button" className="btn btn--secondary btn--sm" disabled={working === user.id} onClick={() => void toggleAdmin(user)}>
+                  Снять права администратора
+                </button>
+              ) : user.blocked ? null : (
+                <button type="button" className="btn btn--secondary btn--sm" disabled={working === user.id} onClick={() => void toggleAdmin(user)}>
+                  Сделать администратором
                 </button>
               )}
             </div>

@@ -57,16 +57,20 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = Settings.from_env()
-    db_path = Path(args.db) if args.db else settings.db_path
+    prod_db = settings.base_dir / "data" / "school_hero.db"
+    db_path = Path(args.db) if args.db else (prod_db if prod_db.is_file() and settings.app_mode == "demo" else settings.db_path)
     if not db_path.is_absolute():
         db_path = (Path.cwd() if args.db else settings.base_dir) / db_path
 
     if not db_path.is_file():
-        print(f"База не найдена: {db_path}")
-        if not args.db:
-            print(f"Режим из настроек: APP_MODE={settings.app_mode}. "
-                  "Укажите боевую базу явно: --db путь/к/school_hero.db")
-        return 1
+        if prod_db.is_file():
+            db_path = prod_db
+        else:
+            print(f"База не найдена: {db_path}")
+            if not args.db:
+                print(f"Режим из настроек: APP_MODE={settings.app_mode}. "
+                      "Укажите боевую базу явно: --db путь/к/school_hero.db")
+            return 1
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     # LIKE в SQLite не учитывает регистр только для латиницы; для кириллицы сравниваем через casefold.
@@ -115,11 +119,37 @@ def main() -> int:
     print(f"База: {db_path}")
     if not rows:
         print("MAX-пользователей пока нет." if not args.find else "Никого не нашлось.")
+        if settings.bot_token:
+            try:
+                from backend.maxbot import MaxClient
+                client = MaxClient(settings)
+                res = client.get_updates(timeout=1)
+                api_users = {}
+                for upd in res.get("updates", []):
+                    u = upd.get("user")
+                    if not u and isinstance(upd.get("message"), dict):
+                        u = upd["message"].get("sender")
+                    if isinstance(u, dict) and u.get("user_id") and not u.get("is_bot"):
+                        api_users[u["user_id"]] = (u, upd.get("update_type", "message"))
+                if api_users:
+                    print("\nОбнаружены пользователи, обращавшиеся к боту в MAX (из очереди API):")
+                    print(f"{'MAX user id':>14}  {'Имя':<26} {'username':<16} последнее событие")
+                    print("-" * 75)
+                    for uid, (u, ev) in api_users.items():
+                        name = " ".join(part for part in (u.get("first_name"), u.get("last_name")) if part)
+                        print(f"{uid:>14}  {name[:26]:<26} {(u.get('username') or '—')[:16]:<16} {ev}")
+                    print("\nЧтобы назначить роль, впишите id в .env:")
+                    print(f"  DIRECTOR_MAX_IDS={','.join(str(k) for k in api_users.keys())}")
+                    print(f"  PLATFORM_ADMIN_MAX_IDS={','.join(str(k) for k in api_users.keys())}")
+                    return 0
+            except Exception:
+                pass
+
         if not args.db and settings.app_mode != "prod":
             print(f"Сейчас APP_MODE={settings.app_mode}: в этой базе нет пользователей MAX. "
                   "Укажите боевую базу: --db путь/к/school_hero.db")
         else:
-            print("Откройте мини-приложение в MAX под нужным аккаунтом и повторите.")
+            print("Откройте мини-приложение в MAX или напишите боту в чате и повторите.")
         return 1
 
     print(f"Пользователей MAX: {len(rows)}\n")

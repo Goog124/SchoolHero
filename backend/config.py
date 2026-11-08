@@ -190,7 +190,10 @@ class Settings:
             ),
             max_webhook_secret=os.getenv("MAX_WEBHOOK_SECRET", "").strip(),
             max_bot_username=os.getenv("MAX_BOT_USERNAME", "").strip().lstrip("@"),
-            max_ca_bundle=os.getenv("MAX_CA_BUNDLE", "").strip(),
+            max_ca_bundle=(
+                os.getenv("MAX_CA_BUNDLE", "").strip()
+                or (str(data_dir / "russian_trusted_ca.pem") if (data_dir / "russian_trusted_ca.pem").is_file() else "")
+            ),
             public_url=(
                 os.getenv("PUBLIC_URL", "").strip().rstrip("/")
                 or os.getenv("MINIAPP_URL", "").strip().rstrip("/")

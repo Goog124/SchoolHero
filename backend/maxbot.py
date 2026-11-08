@@ -123,6 +123,12 @@ class MaxClient:
     def unsubscribe(self, url: str) -> dict:
         return self._request("DELETE", "/subscriptions", params={"url": url})
 
+    def get_updates(self, marker: int | None = None, timeout: int = 25, limit: int = 100) -> dict:
+        params: dict[str, Any] = {"timeout": timeout, "limit": limit}
+        if marker is not None:
+            params["marker"] = marker
+        return self._request("GET", "/updates", params=params)
+
 
 def get_client(settings: Settings) -> MaxClient:
     """Factory; tests replace it with a fake."""

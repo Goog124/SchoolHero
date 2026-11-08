@@ -92,10 +92,22 @@ class MaxClient:
                 follow_redirects=False,
             )
         except httpx.HTTPError as exc:
-            # Only the exception class: its text may echo request details.
-            raise MaxApiError(f"{method} {path}: {type(exc).__name__}") from None
+            cause = getattr(exc, "__cause__", None)
+            cause_msg = str(cause) if cause else ""
+            if self._token and self._token in cause_msg:
+                cause_msg = cause_msg.replace(self._token, "[REDACTED]")
+            suffix = f" ({cause_msg})" if cause_msg else ""
+            raise MaxApiError(f"{method} {path}: {type(exc).__name__}{suffix}") from None
         if response.status_code >= 400:
-            err = MaxApiError(f"{method} {path}: HTTP {response.status_code}")
+            msg = ""
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    msg = body.get("message") or body.get("error") or ""
+            except Exception:
+                pass
+            suffix = f" - {msg}" if msg else ""
+            err = MaxApiError(f"{method} {path}: HTTP {response.status_code}{suffix}")
             err.status = response.status_code  # type: ignore[attr-defined]
             raise err
         try:

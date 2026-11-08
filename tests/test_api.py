@@ -50,8 +50,8 @@ def test_seeded_demo_state(demo_client):
     assert state["verified"] is False
     assert state["demo_teacher_available"] is True
     assert state["teacher"] is None
-    assert viewer["name"] == "Глеб Кузнецов"
-    assert viewer["first_name"] == "Глеб"
+    assert viewer["name"] == "Алексей Новиков"
+    assert viewer["first_name"] == "Алексей"
     assert viewer["xp"] == 420
     assert viewer["level"]["level"] == 3
     assert viewer["level"]["title"] == "Знаток"
@@ -409,9 +409,9 @@ def test_reset_restores_pristine_demo_profile(demo_client):
     state = reset.json()["state"]
     viewer = state["viewer"]
 
-    assert viewer["first_name"] == "Глеб"
-    assert viewer["last_name"] == "Кузнецов"
-    assert viewer["username"] == "gleb"
+    assert viewer["first_name"] == "Алексей"
+    assert viewer["last_name"] == "Новиков"
+    assert viewer["username"] == "alexey"
     assert viewer["xp"] == 420
     assert viewer["sparks"] == 120
     assert viewer["streak"] == 6
@@ -468,8 +468,8 @@ def test_max_mode_requires_valid_init_data(max_client):
 def test_max_teacher_gets_cabinet(max_client):
     teacher_user = {
         "id": 9001,
-        "first_name": "Константин",
-        "last_name": "Зверев",
+        "first_name": "Ирина",
+        "last_name": "Волгина",
         "username": "zverev",
     }
     init_data = sign_init_data(teacher_user, bot_token=MAX_TOKEN)
@@ -566,14 +566,14 @@ def test_teacher_reward_student(demo_client):
 
 
 def test_school_check_code_and_catalog(demo_client):
-    # Test valid code KVANT-8A
-    resp = demo_client.post("/api/school/check-code", json={"code": "KVANT-8A"}, headers=DEMO_HEADERS)
+    # Test valid code HRZ-8A
+    resp = demo_client.post("/api/school/check-code", json={"code": "HRZ-8A"}, headers=DEMO_HEADERS)
     assert resp.status_code == 200
     data = resp.json()
     assert data["valid"] is True
     assert data["class_name"] == "8А"
-    assert "Кванториум" in data["school_name"]
-    assert data["teacher_name"] == "Константин Зверев"
+    assert "Горизонт" in data["school_name"]
+    assert data["teacher_name"] == "Ирина Волгина"
 
     # Test invalid code
     bad_resp = demo_client.post("/api/school/check-code", json={"code": "NONEXISTENT"}, headers=DEMO_HEADERS)
@@ -584,12 +584,12 @@ def test_school_check_code_and_catalog(demo_client):
     cat_resp = demo_client.get("/api/school/catalog", headers=DEMO_HEADERS)
     assert cat_resp.status_code == 200
     cat_data = cat_resp.json()
-    assert "Великий Новгород" in cat_data["cities"]
+    assert "Северогорск" in cat_data["cities"]
     assert len(cat_data["schools"]) >= 5
     assert len(cat_data["classes"]) >= 8
 
     # Test join class
-    join_resp = demo_client.post("/api/school/join", json={"invite_code": "KVANT-8A"}, headers=DEMO_HEADERS)
+    join_resp = demo_client.post("/api/school/join", json={"invite_code": "HRZ-8A"}, headers=DEMO_HEADERS)
     assert join_resp.status_code == 200
     assert join_resp.json()["state"]["viewer"]["class_name"] == "8А"
 
@@ -599,7 +599,7 @@ def test_school_check_code_and_catalog(demo_client):
         json={
             "first_name": "Сергей",
             "last_name": "Иванов",
-            "invite_code": "KVANT-8A",
+            "invite_code": "HRZ-8A",
             "avatar": {"skin": "skin_warm", "hair": "hair_short"},
         },
         headers=DEMO_HEADERS,

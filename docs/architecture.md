@@ -90,7 +90,7 @@ MAX (клиент) -> HTTPS -> nginx (app.example.org) -> uvicorn 127.0.0.1:8000
 | Режим | Что читается | Результат |
 | --- | --- | --- |
 | `prod` | `X-Max-Init-Data` (подпись обязательна). `X-Client-Id` игнорируется | `Identity(kind="max")`, ключ пользователя - `users.max_user_id` |
-| `demo` | `X-Client-Id` должен соответствовать `^[A-Za-z0-9_-]{8,64}$`, `initData` игнорируется | Всегда один и тот же пользователь: `client_id` подменяется константой `demo-viewer`, имя «Глеб Кузнецов». Так посетители не плодят копии ученика в рейтинге |
+| `demo` | `X-Client-Id` должен соответствовать `^[A-Za-z0-9_-]{8,64}$`, `initData` игнорируется | Всегда один и тот же пользователь: `client_id` подменяется константой `demo-viewer`, имя «Алексей Новиков». Так посетители не плодят копии ученика в рейтинге |
 | `sandbox` | `X-Client-Id` с тем же шаблоном, `initData` игнорируется | `Identity(kind="sandbox")`, ключ пользователя - сам `X-Client-Id` (`users.client_id`). Каждый id - отдельный пользователь с ролью ученика, имя «Герой», 40 искр. Роли списками id не назначаются (`role_hint` всегда `student`); ролями становятся через регистрацию школы и коды |
 
 Некорректный или отсутствующий `X-Client-Id` в `demo`/`sandbox` - `401`. В `sandbox` администратор платформы определяется по `PLATFORM_ADMIN_CLIENT_IDS` (в `prod` - по `PLATFORM_ADMIN_MAX_IDS`). Запрет запуска вне loopback и очистка базы при старте описаны в [configuration.md](configuration.md) и [development.md](development.md).

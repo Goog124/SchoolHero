@@ -87,6 +87,8 @@ class Settings:
     max_ca_bundle: str = ""
     public_url: str = ""
     bot_reply_interval: int = 60
+    bot_notifications_enabled: bool = True
+    bot_chat_commands: bool = True
     # demo binds only to loopback unless explicitly allowed (ALLOW_PUBLIC_DEMO=1)
     allow_public_demo: bool = False
     # Photos sent as proof. Empty: the "uploads" directory next to the database
@@ -194,6 +196,8 @@ class Settings:
                 or os.getenv("MINIAPP_URL", "").strip().rstrip("/")
             ),
             bot_reply_interval=_int_env("BOT_REPLY_INTERVAL", 60),
+            bot_notifications_enabled=_bool_env("BOT_NOTIFICATIONS_ENABLED", True),
+            bot_chat_commands=_bool_env("BOT_CHAT_COMMANDS", True),
             allow_public_demo=_bool_env("ALLOW_PUBLIC_DEMO", False),
             uploads_dir=(
                 Path(os.environ["UPLOADS_DIR"].strip())

@@ -22,9 +22,9 @@ HASH_RE = re.compile(r"[0-9a-f]{64}")
 DEMO_CLIENT_ID = "demo-viewer"
 # Name given to a user MAX did not name; staff are asked for a real one.
 DEFAULT_FIRST_NAME = "Герой"
-DEMO_FIRST_NAME = "Глеб"
-DEMO_LAST_NAME = "Кузнецов"
-DEMO_USERNAME = "gleb"
+DEMO_FIRST_NAME = "Алексей"
+DEMO_LAST_NAME = "Новиков"
+DEMO_USERNAME = "alexey"
 
 
 class AuthError(Exception):

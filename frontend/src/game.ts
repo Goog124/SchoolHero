@@ -137,7 +137,7 @@ export function formatRelative(iso: string | null | undefined): string {
 
 export function greeting(): string {
   const hour = new Date().getHours();
-  if (hour < 6) return 'Ещё не спишь?';
+  if (hour < 6) return 'Доброй ночи';
   if (hour < 12) return 'Доброе утро';
   if (hour < 18) return 'Добрый день';
   return 'Добрый вечер';

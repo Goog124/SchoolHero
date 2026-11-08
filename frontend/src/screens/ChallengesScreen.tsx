@@ -118,7 +118,7 @@ export function ChallengesScreen({ state, onOpenChallenge }: ChallengesScreenPro
           </div>
 
           <div className="st-filters">
-            <div className="st-tabs" role="group" aria-label="Фильтр по статусу">
+            <div className="st-tabs st-tabs--grid" role="group" aria-label="Фильтр по статусу">
               {STATUS_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}

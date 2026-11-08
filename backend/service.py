@@ -2038,7 +2038,23 @@ def submit_challenge(
             )
         # Sending own work is the student's activity for the day (streak).
         mark_active(conn, int(viewer["id"]), class_timezone(conn, int(user["class_id"])))
-    return {"status": "pending", "challenge_title": challenge["title"]}
+        teacher_row = conn.execute(
+            "SELECT max_user_id FROM users WHERE class_id = ? AND role = 'teacher' AND max_user_id IS NOT NULL LIMIT 1",
+            (user["class_id"],),
+        ).fetchone()
+        if not teacher_row:
+            teacher_row = conn.execute(
+                "SELECT max_user_id FROM class_staff WHERE class_id = ? LIMIT 1",
+                (user["class_id"],),
+            ).fetchone()
+        class_row = conn.execute("SELECT name FROM classes WHERE id = ?", (user["class_id"],)).fetchone()
+    return {
+        "status": "pending",
+        "challenge_title": challenge["title"],
+        "teacher_max_user_id": teacher_row["max_user_id"] if teacher_row else None,
+        "class_name": class_row["name"] if class_row else "",
+        "student_name": f"{user['first_name']} {user['last_name']}".strip(),
+    }
 
 
 def review_completion(
@@ -2058,7 +2074,7 @@ def review_completion(
             """
             SELECT cp.*, c.title, c.xp, c.category, c.class_id,
                    u.first_name, u.last_name, u.role AS student_role,
-                   u.class_id AS student_class
+                   u.class_id AS student_class, u.max_user_id
             FROM completions cp
             JOIN challenges c ON c.id = cp.challenge_id
             JOIN users u ON u.id = cp.user_id
@@ -2091,7 +2107,14 @@ def review_completion(
             )
             if cursor.rowcount != 1:
                 raise GameError("Эта заявка уже проверена")
-            return {"status": "rejected", "student_name": student_name, "xp_awarded": 0}
+            return {
+                "status": "rejected",
+                "student_name": student_name,
+                "xp_awarded": 0,
+                "student_max_user_id": row["max_user_id"],
+                "challenge_title": row["title"],
+                "reject_reason": str(reason or "").strip(),
+            }
 
         # Only the request that actually moved the row out of 'pending' awards XP.
         cursor = conn.execute(
@@ -2118,6 +2141,8 @@ def review_completion(
         "xp_awarded": int(row["xp"]),
         "student_level": award["level"],
         "level_up": award["level_up"],
+        "student_max_user_id": row["max_user_id"],
+        "challenge_title": row["title"],
     }
 
 

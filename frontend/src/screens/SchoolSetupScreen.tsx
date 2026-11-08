@@ -296,7 +296,7 @@ export function NewSchoolForm({
           value={city}
           maxLength={60}
           autoComplete="off"
-          placeholder="Например, Великий Новгород"
+          placeholder="Например, Казань"
           aria-invalid={Boolean(errors.city)}
           aria-describedby={errors.city ? 'su-city-err' : 'su-city-hint'}
           onChange={(e) => setCity(e.target.value)}
@@ -305,7 +305,7 @@ export function NewSchoolForm({
           <span id="su-city-err" className="ob-error">{errors.city}</span>
         ) : (
           <span id="su-city-hint" className="ob-hint">
-            Укажите город так, как его будут искать ученики, например Великий Новгород.
+            Укажите город так, как его будут искать ученики, например Казань.
           </span>
         )}
       </div>

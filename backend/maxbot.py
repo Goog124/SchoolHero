@@ -65,7 +65,10 @@ class MaxClient:
             raise MaxApiError("MAX_API_BASE должен начинаться с https://")
         self._base = base
         self._token = settings.bot_token
-        self._verify: Any = settings.max_ca_bundle or True
+        verify: Any = settings.max_ca_bundle or True
+        if isinstance(verify, str) and verify.lower() in ("insecure", "0", "false", "off", "no"):
+            verify = False
+        self._verify: Any = verify
 
     def _request(
         self,
